@@ -22,7 +22,7 @@ public final class GameLauncherMain {
     }
 
     private static void showLauncher() {
-        JFrame frame = new JFrame("Voxel Survival Launcher");
+        JFrame frame = new JFrame("Adventura Launcher");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setSize(420, 360);
         frame.setLocationRelativeTo(null);

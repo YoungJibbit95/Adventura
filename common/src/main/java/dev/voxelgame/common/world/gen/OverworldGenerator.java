@@ -199,9 +199,14 @@ public final class OverworldGenerator implements WorldGenerator {
         int centerX = chunk.pos().x() * ChunkPos.SIZE + 8;
         int centerZ = chunk.pos().z() * ChunkPos.SIZE + 8;
         BiomeType biome = biomeAt(centerX, centerZ);
+        if (chunk.pos().x() == 1 && chunk.pos().z() == 1) {
+            int groundY = terrainHeight(centerX, centerZ, biome) + 1;
+            Structures.compactVillage().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            return;
+        }
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, chunk.pos().x(), chunk.pos().z()));
         double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, chunk.pos().x(), chunk.pos().z()));
-        if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.0025) {
+        if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.014) {
             int groundY = terrainHeight(centerX, centerZ, biome) + 1;
             Structures.compactVillage().placeIntoChunk(chunk, centerX, groundY, centerZ);
             return;

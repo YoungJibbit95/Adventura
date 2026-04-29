@@ -51,7 +51,7 @@ public final class GameServer implements AutoCloseable {
                 });
 
         channel = bootstrap.bind(port).sync().channel();
-        System.out.println("Voxel server listening on port " + port + " with protocol " + GamePacket.PROTOCOL_VERSION);
+        System.out.println("Adventura server listening on port " + port + " with protocol " + GamePacket.PROTOCOL_VERSION);
     }
 
     @Override

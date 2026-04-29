@@ -56,6 +56,7 @@ public final class PacketCodec {
                 }
                 case GamePacket.BlockAction action -> {
                     out.writeUTF(action.action().name());
+                    out.writeInt(action.selectedSlot());
                     out.writeInt(action.targetX());
                     out.writeInt(action.targetY());
                     out.writeInt(action.targetZ());
@@ -71,6 +72,12 @@ public final class PacketCodec {
                     out.writeFloat(move.yaw());
                     out.writeFloat(move.pitch());
                     out.writeBoolean(move.onGround());
+                }
+                case GamePacket.BlockInteract interact -> {
+                    out.writeInt(interact.selectedSlot());
+                    out.writeInt(interact.targetX());
+                    out.writeInt(interact.targetY());
+                    out.writeInt(interact.targetZ());
                 }
                 case GamePacket.EntitySnapshots snapshots -> {
                     out.writeInt(snapshots.snapshots().size());
@@ -125,9 +132,11 @@ public final class PacketCodec {
                         in.readInt(),
                         in.readInt(),
                         in.readInt(),
+                        in.readInt(),
                         in.readShort()
                 );
                 case PLAYER_MOVE -> new GamePacket.PlayerMove(in.readDouble(), in.readDouble(), in.readDouble(), in.readFloat(), in.readFloat(), in.readBoolean());
+                case BLOCK_INTERACT -> new GamePacket.BlockInteract(in.readInt(), in.readInt(), in.readInt(), in.readInt());
                 case ENTITY_SNAPSHOT -> {
                     int count = checkedLength(in.readInt());
                     List<EntitySnapshot> snapshots = new ArrayList<>(count);

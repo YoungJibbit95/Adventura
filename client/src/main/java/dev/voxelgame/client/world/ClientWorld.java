@@ -38,6 +38,7 @@ public final class ClientWorld {
     private final Set<ChunkPos> dirtyChunks = new LinkedHashSet<>();
     private final Map<Long, EntitySnapshot> entities = new HashMap<>();
     private UUID ownPlayerId;
+    private boolean spawnEntitiesSeeded;
 
     public ClientWorld(long seed) {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
@@ -56,6 +57,7 @@ public final class ClientWorld {
 
     public synchronized void generatePreview(int radius) {
         ensurePreviewAround(new ChunkPos(0, 0), radius);
+        seedSpawnEntities();
     }
 
     public synchronized void ensurePreviewAround(Vector3f position, int radius) {
@@ -260,12 +262,23 @@ public final class ClientWorld {
             lightEngine.rebuildChunkLighting(world, pos);
             markDirtyWithNeighbors(pos);
         }
+        seedSpawnEntities();
     }
 
     private void spawnAmbientEntities(ChunkPos pos) {
         for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnForChunk(seed, generator, pos)) {
             entities.putIfAbsent(snapshot.entityId(), snapshot);
         }
+    }
+
+    private void seedSpawnEntities() {
+        if (spawnEntitiesSeeded) {
+            return;
+        }
+        for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnAroundSpawn(seed, 1)) {
+            entities.putIfAbsent(snapshot.entityId(), snapshot);
+        }
+        spawnEntitiesSeeded = true;
     }
 
     private List<ChunkPos> takeDirtyPositions(int maxBuilds) {

@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class ChunkMesher {
-    public static final int FLOATS_PER_VERTEX = 9;
+    public static final int FLOATS_PER_VERTEX = 11;
 
     private static final Face[] FACES = {
             new Face(1, 0, 0, new float[][]{{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}}),
@@ -62,6 +62,10 @@ public final class ChunkMesher {
                         if (filterLayer && block.renderLayer() != layer) {
                             continue;
                         }
+                        if (block.renderLayer() == BlockRenderLayer.CUTOUT && !block.collidable()) {
+                            addCrossSprite(vertices, indices, world, x, y, z, block.id(), light(world, x, y + 1, z), ambientOcclusion);
+                            continue;
+                        }
                         for (Face face : FACES) {
                             BlockType neighbor = world.blockType(world.blockId(x + face.nx, y + face.ny, z + face.nz));
                             if (neighbor.id() == block.id() && block.renderLayer() == BlockRenderLayer.TRANSLUCENT) {
@@ -104,6 +108,9 @@ public final class ChunkMesher {
             vertices.add((float) blockId);
             vertices.add(light);
             vertices.add(ambientOcclusion ? ambientOcclusion(world, x, y, z, face, corner) : 1.0f);
+            float[] uv = faceUv(face, corner);
+            vertices.add(uv[0]);
+            vertices.add(uv[1]);
         }
         indices.add(baseVertex);
         indices.add(baseVertex + 1);
@@ -111,6 +118,32 @@ public final class ChunkMesher {
         indices.add(baseVertex);
         indices.add(baseVertex + 2);
         indices.add(baseVertex + 3);
+    }
+
+    private static void addCrossSprite(List<Float> vertices, List<Integer> indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion) {
+        addSpriteQuad(vertices, indices, world, x, y, z, blockId, light, ambientOcclusion, new Face(0, 0, 1, new float[][]{
+                {0.0f, 0.0f, 0.5f},
+                {1.0f, 0.0f, 0.5f},
+                {1.0f, 1.0f, 0.5f},
+                {0.0f, 1.0f, 0.5f}
+        }));
+        addSpriteQuad(vertices, indices, world, x, y, z, blockId, light, ambientOcclusion, new Face(1, 0, 0, new float[][]{
+                {0.5f, 0.0f, 1.0f},
+                {0.5f, 0.0f, 0.0f},
+                {0.5f, 1.0f, 0.0f},
+                {0.5f, 1.0f, 1.0f}
+        }));
+    }
+
+    private static void addSpriteQuad(List<Float> vertices, List<Integer> indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion, Face face) {
+        addFace(vertices, indices, world, x, y, z, face, blockId, light, ambientOcclusion);
+        int firstBase = indices.get(indices.size() - 6);
+        indices.add(firstBase + 2);
+        indices.add(firstBase + 1);
+        indices.add(firstBase);
+        indices.add(firstBase + 3);
+        indices.add(firstBase + 2);
+        indices.add(firstBase);
     }
 
     private static float ambientOcclusion(WorldView world, int x, int y, int z, Face face, float[] corner) {
@@ -141,6 +174,16 @@ public final class ChunkMesher {
 
     private static boolean opaque(WorldView world, int x, int y, int z) {
         return world.dimension().containsY(y) && world.blockType(world.blockId(x, y, z)).opaque();
+    }
+
+    private static float[] faceUv(Face face, float[] corner) {
+        if (face.ny != 0) {
+            return new float[]{corner[0], corner[2]};
+        }
+        if (face.nx != 0) {
+            return new float[]{corner[2], corner[1]};
+        }
+        return new float[]{corner[0], corner[1]};
     }
 
     private static float[] toFloatArray(List<Float> values) {

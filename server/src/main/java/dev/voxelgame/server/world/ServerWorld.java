@@ -58,15 +58,23 @@ public final class ServerWorld {
     }
 
     public Optional<String> dropFor(int x, int y, int z) {
-        if (!world.dimension().containsY(y)) {
+        Optional<BlockType> targetBlock = blockAt(x, y, z);
+        if (targetBlock.isEmpty()) {
             return Optional.empty();
         }
-        getOrGenerateChunk(ChunkPos.fromBlock(x, z));
-        BlockType target = world.blockType(world.blockId(x, y, z));
+        BlockType target = targetBlock.get();
         if (target.id() == Blocks.AIR || target.id() == Blocks.WATER || target.dropItemKey() == null) {
             return Optional.empty();
         }
         return Optional.of(target.dropItemKey());
+    }
+
+    public Optional<BlockType> blockAt(int x, int y, int z) {
+        if (!world.dimension().containsY(y)) {
+            return Optional.empty();
+        }
+        getOrGenerateChunk(ChunkPos.fromBlock(x, z));
+        return Optional.of(world.blockType(world.blockId(x, y, z)));
     }
 
     public Optional<String> blockKey(short blockId) {

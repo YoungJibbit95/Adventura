@@ -1,3 +1,3 @@
-rootProject.name = "VoxelSurvival"
+rootProject.name = "Adventura"
 
 include("common", "client", "server", "tools", "launcher")

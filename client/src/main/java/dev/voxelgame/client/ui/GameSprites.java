@@ -9,6 +9,7 @@ import java.util.Set;
 
 public final class GameSprites implements AutoCloseable {
     private final Map<String, UiSprite> itemSprites = new HashMap<>();
+    private final Map<String, UiSprite> hudSprites = new HashMap<>();
     private final Set<UiSpriteSheet> sheets = new LinkedHashSet<>();
 
     private GameSprites() {
@@ -20,6 +21,14 @@ public final class GameSprites implements AutoCloseable {
         UiSpriteSheet blocks = sprites.sheet("assets/game/bloecke_blocks.png", true);
         UiSpriteSheet nature = sprites.sheet("assets/game/natursachen_nature.png", true);
         UiSpriteSheet decor = sprites.sheet("assets/game/deko_decor.png", true);
+        UiSpriteSheet hud = sprites.sheet("assets/game/misc_wasser_ui_paletten.png", true);
+
+        sprites.hud("heart_full", hud.sprite(19, 103, 21, 19));
+        sprites.hud("heart_empty", hud.sprite(133, 103, 23, 19));
+        sprites.hud("hunger_full", hud.sprite(176, 103, 19, 19));
+        sprites.hud("hunger_empty", hud.sprite(300, 103, 22, 18));
+        sprites.hud("armor_full", hud.sprite(19, 154, 19, 17));
+        sprites.hud("air_full", hud.sprite(176, 154, 18, 16));
 
         sprites.item("voxel:stone", items.sprite(27, 40, 44, 41));
         sprites.item("voxel:dirt", items.sprite(88, 37, 49, 46));
@@ -120,6 +129,10 @@ public final class GameSprites implements AutoCloseable {
         return Optional.ofNullable(itemSprites.get(itemKey));
     }
 
+    public Optional<UiSprite> hud(String spriteKey) {
+        return Optional.ofNullable(hudSprites.get(spriteKey));
+    }
+
     public Collection<String> mappedItemKeys() {
         return itemSprites.keySet();
     }
@@ -151,5 +164,9 @@ public final class GameSprites implements AutoCloseable {
 
     private void item(String key, UiSprite sprite) {
         itemSprites.put(key, sprite);
+    }
+
+    private void hud(String key, UiSprite sprite) {
+        hudSprites.put(key, sprite);
     }
 }

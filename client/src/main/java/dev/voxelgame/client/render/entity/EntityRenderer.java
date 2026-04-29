@@ -78,8 +78,11 @@ public final class EntityRenderer implements AutoCloseable {
                     ? 0.0f
                     : (float) Math.sin(timeSeconds * 2.5 + snapshot.entityId() * 0.001) * 0.08f;
             float scale = entityScale(snapshot.typeKey());
+            float baseY = "voxel:player".equals(snapshot.typeKey())
+                    ? (float) snapshot.y() - 1.62f
+                    : (float) snapshot.y();
             Matrix4f model = new Matrix4f()
-                    .translate((float) snapshot.x(), (float) snapshot.y() - 1.62f + bob, (float) snapshot.z())
+                    .translate((float) snapshot.x(), baseY + bob, (float) snapshot.z())
                     .rotateY((float) Math.toRadians(-snapshot.yaw()))
                     .scale(scale);
             shader.setMatrix4("uModel", model);

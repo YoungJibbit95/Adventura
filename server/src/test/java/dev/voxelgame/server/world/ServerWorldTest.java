@@ -14,6 +14,7 @@ class ServerWorldTest {
         GamePacket.BlockAction place = new GamePacket.BlockAction(
                 GamePacket.BlockAction.Action.PLACE,
                 0,
+                0,
                 249,
                 0,
                 0,
@@ -29,6 +30,7 @@ class ServerWorldTest {
 
         GamePacket.BlockAction breakAction = new GamePacket.BlockAction(
                 GamePacket.BlockAction.Action.BREAK,
+                0,
                 0,
                 250,
                 0,
@@ -47,6 +49,7 @@ class ServerWorldTest {
         ServerWorld world = new ServerWorld(123L);
         GamePacket.BlockAction place = new GamePacket.BlockAction(
                 GamePacket.BlockAction.Action.PLACE,
+                0,
                 0,
                 249,
                 0,

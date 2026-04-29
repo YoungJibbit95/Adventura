@@ -14,7 +14,7 @@ public final class AmbientEntitySpawner {
 
     public static List<EntitySnapshot> spawnForChunk(long seed, OverworldGenerator generator, ChunkPos pos) {
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0xE17171E5L, pos.x(), pos.z()));
-        if (roll > 0.30) {
+        if (roll > 0.68) {
             return List.of();
         }
 
@@ -44,7 +44,25 @@ public final class AmbientEntitySpawner {
                 snapshots.addAll(spawnForChunk(seed, generator, new ChunkPos(x, z)));
             }
         }
+        addSpawnAnchors(seed, generator, snapshots);
         return snapshots;
+    }
+
+    private static void addSpawnAnchors(long seed, OverworldGenerator generator, List<EntitySnapshot> snapshots) {
+        addAnchor(seed, generator, snapshots, 12, 10, "voxel:cozy_sheep", 10);
+        addAnchor(seed, generator, snapshots, -7, 13, "voxel:forest_bunny", 6);
+        addAnchor(seed, generator, snapshots, 18, -5, "voxel:little_boar", 12);
+        addAnchor(seed, generator, snapshots, 4, 23, "voxel:moss_snail", 6);
+        addAnchor(seed, generator, snapshots, 16, 17, "voxel:firefly_swarm", 4);
+    }
+
+    private static void addAnchor(long seed, OverworldGenerator generator, List<EntitySnapshot> snapshots, int x, int z, String type, int health) {
+        BiomeType biome = generator.biomeAt(x, z);
+        int y = generator.terrainHeight(x, z, biome) + 1;
+        long entityId = ValueNoise.columnSeed(seed ^ 0x5AFE5A10L, x, z);
+        double entityY = "voxel:firefly_swarm".equals(type) ? y + 1.35 : y;
+        float yaw = (float) (normalize(ValueNoise.hashUnit(seed ^ 0xC05EFA11L, x, z)) * 360.0);
+        snapshots.add(new EntitySnapshot(entityId, type, null, x + 0.5, entityY, z + 0.5, yaw, 0.0f, health));
     }
 
     private static String typeFor(long seed, BiomeType biome, ChunkPos pos) {

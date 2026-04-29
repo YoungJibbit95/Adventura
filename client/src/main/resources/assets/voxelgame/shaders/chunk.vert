@@ -5,6 +5,7 @@ layout (location = 1) in vec3 aNormal;
 layout (location = 2) in float aBlockId;
 layout (location = 3) in float aLight;
 layout (location = 4) in float aAo;
+layout (location = 5) in vec2 aFaceUv;
 
 uniform mat4 uProjection;
 uniform mat4 uView;
@@ -22,6 +23,7 @@ out float vDistance;
 out float vAo;
 out vec3 vWorldPosition;
 out vec3 vNormal;
+out vec2 vFaceUv;
 
 void main() {
     vLight = max(aLight, 0.12);
@@ -40,6 +42,7 @@ void main() {
     }
     vWorldPosition = position;
     vNormal = aNormal;
+    vFaceUv = aFaceUv;
     vDistance = distance(position, uCameraPosition);
     gl_Position = uProjection * uView * vec4(position, 1.0);
 }

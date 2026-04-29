@@ -44,6 +44,7 @@ class PacketCodecTest {
     void roundTripsBlockAction() {
         GamePacket decoded = PacketCodec.decode(PacketCodec.encode(new GamePacket.BlockAction(
                 GamePacket.BlockAction.Action.PLACE,
+                2,
                 10,
                 64,
                 10,
@@ -55,9 +56,22 @@ class PacketCodecTest {
 
         GamePacket.BlockAction action = (GamePacket.BlockAction) decoded;
         assertEquals(GamePacket.BlockAction.Action.PLACE, action.action());
+        assertEquals(2, action.selectedSlot());
         assertEquals(10, action.targetX());
         assertEquals(65, action.placeY());
         assertEquals(3, action.blockId());
+    }
+
+    @Test
+    void roundTripsBlockInteract() {
+        GamePacket.BlockInteract decoded = (GamePacket.BlockInteract) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.BlockInteract(4, 12, 70, -3)
+        ));
+
+        assertEquals(4, decoded.selectedSlot());
+        assertEquals(12, decoded.targetX());
+        assertEquals(70, decoded.targetY());
+        assertEquals(-3, decoded.targetZ());
     }
 
     @Test

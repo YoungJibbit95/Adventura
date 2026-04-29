@@ -14,6 +14,7 @@ import dev.voxelgame.client.ui.UiSpriteRenderer;
 import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.net.GamePacket;
 import org.joml.Matrix4f;
@@ -24,6 +25,7 @@ import org.lwjgl.system.MemoryStack;
 import java.nio.DoubleBuffer;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
@@ -61,6 +63,7 @@ import static org.lwjgl.glfw.GLFW.glfwPollEvents;
 import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetCharCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetInputMode;
+import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowTitle;
 import static org.lwjgl.glfw.GLFW.glfwSetWindowShouldClose;
 import static org.lwjgl.glfw.GLFW.glfwShowWindow;
@@ -120,6 +123,8 @@ public final class GameClient {
     private String statusMessage = "Ready";
     private GameState settingsReturnState = GameState.MAIN_MENU;
     private double nextBlockActionTime;
+    private double pendingScrollY;
+    private double frameTimeSeconds;
 
     public GameClient(ConnectionOptions connectionOptions) {
         this.connectionOptions = connectionOptions;
@@ -144,7 +149,7 @@ public final class GameClient {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        window = glfwCreateWindow(1280, 720, "Voxel Survival", 0, 0);
+        window = glfwCreateWindow(1280, 720, "Adventura", 0, 0);
         if (window == 0) {
             throw new IllegalStateException("Failed to create GLFW window");
         }
@@ -161,6 +166,11 @@ public final class GameClient {
             glViewport(0, 0, framebufferWidth, framebufferHeight);
         });
         glfwSetCharCallback(window, (handle, codepoint) -> appendChatCharacter(codepoint));
+        glfwSetScrollCallback(window, (handle, xoffset, yoffset) -> {
+            if (gameState == GameState.PLAYING) {
+                pendingScrollY += yoffset;
+            }
+        });
         worldRenderer = new WorldRenderer();
         entityRenderer = new EntityRenderer();
         uiRenderer = new UiRenderer();
@@ -179,6 +189,7 @@ public final class GameClient {
         double lastTime = System.nanoTime() / 1_000_000_000.0;
         while (!glfwWindowShouldClose(window)) {
             double now = System.nanoTime() / 1_000_000_000.0;
+            frameTimeSeconds = now;
             float deltaSeconds = (float) Math.min(0.05, now - lastTime);
             lastTime = now;
             updateFps(now);
@@ -197,8 +208,8 @@ public final class GameClient {
                 boolean sprinting = camera.wantsSprint(window) && moving && playerStats.canSprint();
                 camera.update(window, deltaSeconds, settings.mouseSensitivity(), world, gameMode, playerStats.canSprint());
                 float fallImpact = camera.consumeFallImpactSpeed();
-                if (gameMode == GameMode.SURVIVAL && fallImpact > 18.0f) {
-                    playerStats.hurt(Math.round((fallImpact - 16.0f) * 0.45f));
+                if (gameMode == GameMode.SURVIVAL && fallImpact > 13.0f) {
+                    playerStats.hurt(Math.round((fallImpact - 12.0f) * 0.55f));
                 }
                 playerStats.tick(deltaSeconds, gameMode, world != null && world.isUnderwater(camera.position()), sprinting, moving);
                 if (!onlineMode) {
@@ -206,7 +217,7 @@ public final class GameClient {
                 } else {
                     sendMovementIfDue(now);
                 }
-                if (hotbar.updateSelection(window)) {
+                if (hotbar.updateSelection(window) || consumeHotbarScroll()) {
                     audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
@@ -285,6 +296,7 @@ public final class GameClient {
                 if (onlineMode) {
                     connection.send(new GamePacket.BlockAction(
                             GamePacket.BlockAction.Action.BREAK,
+                            hotbar.selectedIndex(),
                             hit.x(),
                             hit.y(),
                             hit.z(),
@@ -316,10 +328,24 @@ public final class GameClient {
                 audio.play(AudioCue.EAT);
                 return;
             }
-            hotbar.selectedPlaceBlockId().ifPresent(blockId -> world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
+            Optional<Short> placeBlockId = hotbar.selectedPlaceBlockId();
+            world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
+                if (placeBlockId.isEmpty()) {
+                    if (onlineMode) {
+                        connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
+                        statusMessage = "Interaction requested";
+                        nextBlockActionTime = now + 0.15;
+                        updateWindowTitle();
+                    } else {
+                        handleLocalBlockInteract(hit, now);
+                    }
+                    return;
+                }
+                short blockId = placeBlockId.get();
                 if (onlineMode) {
                     connection.send(new GamePacket.BlockAction(
                             GamePacket.BlockAction.Action.PLACE,
+                            hotbar.selectedIndex(),
                             hit.x(),
                             hit.y(),
                             hit.z(),
@@ -336,26 +362,45 @@ public final class GameClient {
                         audio.play(AudioCue.BLOCK_PLACE);
                     }
                 }
-            }));
+            });
         }
+    }
+
+    private void handleLocalBlockInteract(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
+        world.targetBlock(hit)
+                .flatMap(InteractionRules::blockInteraction)
+                .ifPresent(interaction -> {
+                    if (hotbar.addItem(interaction.itemKey(), interaction.count())) {
+                        statusMessage = interaction.message();
+                        nextBlockActionTime = now + interaction.cooldownSeconds();
+                        audio.play(AudioCue.INVENTORY_CLICK);
+                        updateWindowTitle();
+                    } else {
+                        statusMessage = "Inventory full";
+                        updateWindowTitle();
+                    }
+                });
+    }
+
+    private boolean consumeHotbarScroll() {
+        double scroll = pendingScrollY;
+        pendingScrollY = 0.0;
+        if (Math.abs(scroll) < 0.01) {
+            return false;
+        }
+        return hotbar.scroll(scroll > 0.0 ? -1 : 1);
     }
 
     private void collectDrops(BlockType target, dev.voxelgame.common.math.Raycast.Hit hit, float multiplier) {
         world.dropFor(hit).ifPresent(drop -> {
             int count = 1;
-            if (target.preferredTool().name().equals("KNIFE") && multiplier > 2.0f) {
-                count++;
-            }
+            count = InteractionRules.dropCount(target, multiplier);
             hotbar.addItem(drop, count);
         });
     }
 
     private static double breakDelay(BlockType target, float multiplier) {
-        if (target.hardness() <= 0.0f) {
-            return 0.08;
-        }
-        double delay = target.hardness() * 0.34 / Math.max(0.35f, multiplier);
-        return Math.max(0.08, Math.min(0.85, delay));
+        return InteractionRules.breakDelaySeconds(target, multiplier);
     }
 
     private void handleGlobalKeys() {
@@ -535,7 +580,7 @@ public final class GameClient {
     private void showKeybinds() {
         chatLog.add("Keys: WASD move, Space jump/up, Ctrl down, Shift sprint");
         chatLog.add("Keys: E crafting, O settings, R spawn, F1 HUD, F3 debug, F4 mode");
-        chatLog.add("Keys: T chat, / command, 1-9 hotbar, mouse break/place");
+        chatLog.add("Keys: T chat, / command, 1-9 or mouse wheel hotbar, mouse break/place");
     }
 
     private void teleport(String[] parts) {
@@ -639,7 +684,7 @@ public final class GameClient {
                 case CRAFTING -> "Crafting";
                 case PLAYING -> hotbar.selectedLabel();
             };
-            glfwSetWindowTitle(window, "Voxel Survival - " + suffix);
+            glfwSetWindowTitle(window, "Adventura - " + suffix);
         }
     }
 
@@ -668,8 +713,8 @@ public final class GameClient {
     private void renderMainMenu(MousePosition mouse, boolean clicked) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.03f, 0.05f, 0.05f, 1.0f));
         uiRenderer.rect(0, framebufferHeight * 0.60f, framebufferWidth, framebufferHeight * 0.40f, new UiColor(0.07f, 0.12f, 0.10f, 0.9f));
-        uiRenderer.centeredText("VOXEL SURVIVAL", framebufferWidth * 0.5f, 88.0f, 7.0f, UiColor.WHITE);
-        uiRenderer.centeredText("JAVA LWJGL ENGINE BUILD", framebufferWidth * 0.5f, 154.0f, 2.0f, UiColor.MUTED);
+        uiRenderer.centeredText("ADVENTURA", framebufferWidth * 0.5f, 88.0f, 7.0f, UiColor.WHITE);
+        uiRenderer.centeredText("COZY VOXEL SURVIVAL", framebufferWidth * 0.5f, 154.0f, 2.0f, UiColor.MUTED);
 
         float buttonWidth = Math.min(360.0f, framebufferWidth - 80.0f);
         float buttonHeight = 48.0f;
@@ -699,20 +744,20 @@ public final class GameClient {
         drawButton(new UiButton(x, y + 58.0f, buttonWidth, buttonHeight, "SETTINGS", true), mouse, clicked, () -> openSettings(GameState.PAUSED));
         drawButton(new UiButton(x, y + 116.0f, buttonWidth, buttonHeight, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
         drawButton(new UiButton(x, y + 174.0f, buttonWidth, buttonHeight, "QUIT", true), mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
-        renderCraftingMenu(mouse, clicked, x + buttonWidth + 34.0f, y);
     }
 
     private void renderCraftingScreen(MousePosition mouse, boolean clicked) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.72f));
         uiRenderer.centeredText("CRAFTING", framebufferWidth * 0.5f, 70.0f, 5.0f, UiColor.WHITE);
-        uiRenderer.centeredText("E CLOSE  O SETTINGS  F4 MODE  R SPAWN", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
+        uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
 
-        float contentWidth = Math.min(920.0f, framebufferWidth - 80.0f);
+        float contentWidth = Math.min(980.0f, framebufferWidth - 64.0f);
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
-        float y = 160.0f;
+        float y = Math.max(142.0f, framebufferHeight * 0.20f);
         renderInventoryTabs(x, y - 52.0f, contentWidth);
-        renderCraftingMenu(mouse, clicked, x, y);
-        renderInventoryGrid(x + Math.min(440.0f, contentWidth * 0.48f) + 42.0f, y);
+        renderWorkbenchPreview(previewCraftingRecipe(), x, y);
+        renderCraftingMenu(mouse, clicked, x + 360.0f, y);
+        renderInventoryGridCompact(x, y + 266.0f);
     }
 
     private void renderInventoryTabs(float x, float y, float width) {
@@ -728,18 +773,23 @@ public final class GameClient {
     }
 
     private void renderSettingsMenu(MousePosition mouse, boolean clicked) {
-        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.04f, 0.055f, 0.06f, 0.95f));
-        uiRenderer.centeredText("SETTINGS", framebufferWidth * 0.5f, 72.0f, 6.0f, UiColor.WHITE);
+        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.035f, 0.047f, 0.045f, 0.96f));
+        uiRenderer.centeredText("SETTINGS", framebufferWidth * 0.5f, 54.0f, 5.2f, UiColor.WHITE);
+        uiRenderer.centeredText("BALANCE PERFORMANCE, LOOKS AND COMFORT", framebufferWidth * 0.5f, 96.0f, 1.45f, UiColor.MUTED);
 
-        float panelWidth = Math.min(620.0f, framebufferWidth - 80.0f);
+        float panelWidth = Math.min(920.0f, framebufferWidth - 72.0f);
         float x = framebufferWidth * 0.5f - panelWidth * 0.5f;
-        float y = 124.0f;
-        uiRenderer.rect(x - 18.0f, y - 24.0f, panelWidth + 36.0f, 510.0f, UiColor.PANEL);
+        float y = 128.0f;
+        float gap = 22.0f;
+        float columnWidth = (panelWidth - gap) * 0.5f;
+        float leftX = x;
+        float rightX = x + columnWidth + gap;
 
-        settingStepper(mouse, clicked, x, y, panelWidth, "RENDER DIST", settings.renderDistanceChunks() + " CHUNKS",
+        settingsSection(leftX, y, columnWidth, 330.0f, "WORLD & RENDERING");
+        settingStepperCompact(mouse, clicked, leftX + 18.0f, y + 52.0f, columnWidth - 36.0f, "Render distance", settings.renderDistanceChunks() + " chunks",
                 () -> settings.adjustRenderDistance(-1),
                 () -> settings.adjustRenderDistance(1));
-        settingStepper(mouse, clicked, x, y + 54.0f, panelWidth, "WORLD PREVIEW", settings.previewRadiusChunks() + " CHUNKS",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f, y + 104.0f, columnWidth - 36.0f, "World preview", settings.previewRadiusChunks() + " chunks",
                 () -> {
                     settings.adjustPreviewRadius(-1);
                     refreshPreview();
@@ -748,40 +798,41 @@ public final class GameClient {
                     settings.adjustPreviewRadius(1);
                     refreshPreview();
                 });
-        settingStepper(mouse, clicked, x, y + 108.0f, panelWidth, "FIELD OF VIEW", settings.fieldOfViewDegrees() + " DEG",
-                () -> settings.adjustFieldOfView(-5),
-                () -> settings.adjustFieldOfView(5));
-        settingStepper(mouse, clicked, x, y + 162.0f, panelWidth, "MOUSE SPEED", settings.mouseSensitivityPercent() + "%",
-                () -> settings.adjustMouseSensitivity(-10),
-                () -> settings.adjustMouseSensitivity(10));
-        settingStepper(mouse, clicked, x, y + 216.0f, panelWidth, "MESH BUDGET", settings.meshBuildBudgetChunks() + " CHUNKS",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f, y + 156.0f, columnWidth - 36.0f, "Mesh budget", settings.meshBuildBudgetChunks() + " chunks",
                 () -> settings.adjustMeshBuildBudget(-1),
                 () -> settings.adjustMeshBuildBudget(1));
-
-        float leftWidth = panelWidth * 0.46f;
-        float rightX = x + panelWidth * 0.52f;
-        float rightWidth = panelWidth * 0.48f;
-        settingToggle(mouse, clicked, x, y + 270.0f, leftWidth, "FOG", settings.fogEnabled(), settings::toggleFog);
-        settingToggle(mouse, clicked, x, y + 324.0f, leftWidth, "AMBIENT AO", settings.ambientOcclusionEnabled(), () -> {
-            settings.toggleAmbientOcclusion();
-            if (world != null) {
-                world.markAllLoadedDirty();
-            }
-        });
-        settingToggle(mouse, clicked, x, y + 378.0f, leftWidth, "SOFT SHADOWS", settings.softShadowsEnabled(), settings::toggleSoftShadows);
-        settingToggle(mouse, clicked, x, y + 432.0f, leftWidth, "VSYNC", settings.vsyncEnabled(), () -> {
-            settings.toggleVsync();
-            glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
-        });
-        settingToggle(mouse, clicked, rightX, y + 270.0f, rightWidth, "HUD", settings.hudEnabled(), settings::toggleHud);
-        settingToggle(mouse, clicked, rightX, y + 324.0f, rightWidth, "DEBUG", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
-        settingToggle(mouse, clicked, rightX, y + 378.0f, rightWidth, "CHAT", settings.chatEnabled(), settings::toggleChat);
-        settingToggle(mouse, clicked, rightX, y + 432.0f, rightWidth, "WATER", settings.transparentWaterEnabled(), () -> {
+        settingStepperCompact(mouse, clicked, leftX + 18.0f, y + 208.0f, columnWidth - 36.0f, "Field of view", settings.fieldOfViewDegrees() + " deg",
+                () -> settings.adjustFieldOfView(-5),
+                () -> settings.adjustFieldOfView(5));
+        settingToggleCompact(mouse, clicked, leftX + 18.0f, y + 266.0f, columnWidth * 0.5f - 26.0f, "Fog", settings.fogEnabled(), settings::toggleFog);
+        settingToggleCompact(mouse, clicked, leftX + columnWidth * 0.5f + 6.0f, y + 266.0f, columnWidth * 0.5f - 24.0f, "Water", settings.transparentWaterEnabled(), () -> {
             settings.toggleTransparentWater();
             if (world != null) {
                 world.markAllLoadedDirty();
             }
         });
+
+        settingsSection(rightX, y, columnWidth, 330.0f, "QUALITY & INTERFACE");
+        settingStepperCompact(mouse, clicked, rightX + 18.0f, y + 52.0f, columnWidth - 36.0f, "Mouse speed", settings.mouseSensitivityPercent() + "%",
+                () -> settings.adjustMouseSensitivity(-10),
+                () -> settings.adjustMouseSensitivity(10));
+        settingToggleCompact(mouse, clicked, rightX + 18.0f, y + 108.0f, columnWidth * 0.5f - 26.0f, "Ambient AO", settings.ambientOcclusionEnabled(), () -> {
+            settings.toggleAmbientOcclusion();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
+        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 108.0f, columnWidth * 0.5f - 24.0f, "Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
+        settingToggleCompact(mouse, clicked, rightX + 18.0f, y + 168.0f, columnWidth * 0.5f - 26.0f, "HUD", settings.hudEnabled(), settings::toggleHud);
+        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 168.0f, columnWidth * 0.5f - 24.0f, "Chat", settings.chatEnabled(), settings::toggleChat);
+        settingToggleCompact(mouse, clicked, rightX + 18.0f, y + 228.0f, columnWidth * 0.5f - 26.0f, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 228.0f, columnWidth * 0.5f - 24.0f, "VSync", settings.vsyncEnabled(), () -> {
+            settings.toggleVsync();
+            glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
+        });
+
+        uiRenderer.rect(x, y + 352.0f, panelWidth, 54.0f, new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
+        uiRenderer.text("Tip: lower World Preview and Mesh Budget first if chunk loading stutters.", x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
 
         float buttonWidth = Math.min(280.0f, framebufferWidth - 80.0f);
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, framebufferHeight - 86.0f, buttonWidth, 46.0f, "BACK", true), mouse, clicked, () -> {
@@ -791,19 +842,42 @@ public final class GameClient {
         });
     }
 
+    private void settingsSection(float x, float y, float width, float height, String title) {
+        uiRenderer.rect(x, y, width, height, UiColor.PANEL);
+        uiRenderer.rect(x, y, width, 3.0f, UiColor.ACCENT);
+        uiRenderer.text(title, x + 18.0f, y + 18.0f, 2.0f, UiColor.WHITE);
+    }
+
+    private void settingStepperCompact(MousePosition mouse, boolean clicked, float x, float y, float width, String label, String value, Runnable minus, Runnable plus) {
+        uiRenderer.rect(x, y, width, 40.0f, UiColor.SLOT);
+        uiRenderer.text(label.toUpperCase(Locale.ROOT), x + 10.0f, y + 7.0f, 1.15f, UiColor.MUTED);
+        uiRenderer.text(value.toUpperCase(Locale.ROOT), x + 10.0f, y + 23.0f, 1.2f, UiColor.WHITE);
+        drawButton(new UiButton(x + width - 78.0f, y + 5.0f, 30.0f, 30.0f, "-", true), mouse, clicked, minus);
+        drawButton(new UiButton(x + width - 38.0f, y + 5.0f, 30.0f, 30.0f, "+", true), mouse, clicked, plus);
+    }
+
+    private void settingToggleCompact(MousePosition mouse, boolean clicked, float x, float y, float width, String label, boolean enabled, Runnable toggle) {
+        uiRenderer.rect(x, y, width, 44.0f, UiColor.SLOT);
+        uiRenderer.text(label.toUpperCase(Locale.ROOT), x + 10.0f, y + 8.0f, 1.2f, UiColor.WHITE);
+        drawButton(new UiButton(x + width - 80.0f, y + 7.0f, 68.0f, 30.0f, enabled ? "ON" : "OFF", true), mouse, clicked, toggle);
+    }
+
     private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y) {
-        float panelWidth = Math.min(440.0f, framebufferWidth - x - 32.0f);
+        float panelWidth = Math.min(560.0f, framebufferWidth - x - 32.0f);
         if (panelWidth < 260.0f) {
             return;
         }
-        float panelHeight = 72.0f + hotbar.recipes().size() * 48.0f;
+        int visibleRecipes = Math.min(9, hotbar.recipes().size());
+        float panelHeight = 70.0f + visibleRecipes * 42.0f + (hotbar.recipes().size() > visibleRecipes ? 24.0f : 0.0f);
         uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
-        uiRenderer.text("CRAFTING", x, y - 30.0f, 3.0f, UiColor.WHITE);
-        float buttonHeight = 38.0f;
-        int index = 0;
-        for (CraftingRecipe recipe : hotbar.recipes()) {
+        uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text("CLICK TO CRAFT", x + panelWidth - 150.0f, y - 25.0f, 1.2f, UiColor.MUTED);
+        float buttonHeight = 34.0f;
+        for (int index = 0; index < visibleRecipes; index++) {
+            CraftingRecipe recipe = hotbar.recipes().get(index);
             boolean canCraft = hotbar.canCraft(recipe);
-            UiButton button = new UiButton(x, y + index * 48.0f, panelWidth, buttonHeight, recipe.label().toUpperCase(), canCraft);
+            float rowY = y + index * 42.0f;
+            UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, recipe.label().toUpperCase(Locale.ROOT), canCraft);
             drawButton(button, mouse, clicked, () -> {
                 if (onlineMode) {
                     connection.send(new GamePacket.CraftRequest(recipe.key()));
@@ -815,10 +889,65 @@ public final class GameClient {
                     updateWindowTitle();
                 }
             });
-            uiRenderer.text(hotbar.recipeSummary(recipe), x + 42.0f, y + index * 48.0f + 28.0f, 1.4f, canCraft ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, y + index * 48.0f + 5.0f, 28.0f);
-            index++;
+            uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 48), x + 42.0f, rowY + 24.0f, 1.15f, canCraft ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, rowY + 4.0f, 26.0f);
         }
+        if (hotbar.recipes().size() > visibleRecipes) {
+            uiRenderer.text("More recipes unlock in the list as the system grows.", x, y + visibleRecipes * 42.0f + 10.0f, 1.15f, UiColor.MUTED);
+        }
+    }
+
+    private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y) {
+        float panelWidth = 316.0f;
+        float panelHeight = 232.0f;
+        uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.76f));
+        uiRenderer.text("WORKBENCH", x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text("3 x 3", x + panelWidth - 62.0f, y - 25.0f, 1.25f, UiColor.MUTED);
+
+        float slot = 42.0f;
+        float gap = 7.0f;
+        for (int row = 0; row < 3; row++) {
+            for (int column = 0; column < 3; column++) {
+                float sx = x + column * (slot + gap);
+                float sy = y + row * (slot + gap);
+                uiRenderer.rect(sx, sy, slot, slot, UiColor.SLOT);
+            }
+        }
+
+        if (recipe != null) {
+            for (int i = 0; i < recipe.ingredients().size() && i < 9; i++) {
+                CraftingRecipe.Ingredient ingredient = recipe.ingredients().get(i);
+                int column = i % 3;
+                int row = i / 3;
+                float sx = x + column * (slot + gap);
+                float sy = y + row * (slot + gap);
+                drawItemIcon(hotbar.itemKey(ingredient.itemId()), sx + 6.0f, sy + 5.0f, 30.0f);
+                uiRenderer.text(String.valueOf(ingredient.count()), sx + 29.0f, sy + 27.0f, 1.05f, UiColor.WHITE);
+            }
+            float arrowX = x + 164.0f;
+            float arrowY = y + 58.0f;
+            uiRenderer.rect(arrowX, arrowY + 9.0f, 34.0f, 5.0f, UiColor.MUTED);
+            uiRenderer.rect(arrowX + 28.0f, arrowY + 4.0f, 10.0f, 15.0f, UiColor.MUTED);
+            float outX = x + 222.0f;
+            float outY = y + 48.0f;
+            boolean canCraft = hotbar.canCraft(recipe);
+            uiRenderer.rect(outX - 4.0f, outY - 4.0f, 58.0f, 58.0f, canCraft ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), outX + 4.0f, outY + 4.0f, 42.0f);
+            if (recipe.result().count() > 1) {
+                uiRenderer.text(String.valueOf(recipe.result().count()), outX + 38.0f, outY + 39.0f, 1.15f, UiColor.WHITE);
+            }
+            uiRenderer.text(clampText(recipe.label(), 28), x, y + 158.0f, 1.55f, UiColor.WHITE);
+            uiRenderer.text(canCraft ? "READY TO CRAFT" : "MISSING INGREDIENTS", x, y + 180.0f, 1.25f, canCraft ? UiColor.ACCENT : UiColor.MUTED);
+        }
+    }
+
+    private CraftingRecipe previewCraftingRecipe() {
+        for (CraftingRecipe recipe : hotbar.recipes()) {
+            if (hotbar.canCraft(recipe)) {
+                return recipe;
+            }
+        }
+        return hotbar.recipes().isEmpty() ? null : hotbar.recipes().get(0);
     }
 
     private void renderInventoryGrid(float x, float y) {
@@ -849,27 +978,65 @@ public final class GameClient {
         }
     }
 
+    private void renderInventoryGridCompact(float x, float y) {
+        float slot = 42.0f;
+        float gap = 6.0f;
+        int columns = 9;
+        int rows = 4;
+        float gridWidth = columns * slot + (columns - 1) * gap;
+        float panelWidth = Math.min(gridWidth + 28.0f, framebufferWidth - 48.0f);
+        if (x + panelWidth > framebufferWidth - 24.0f) {
+            x = Math.max(24.0f, framebufferWidth * 0.5f - panelWidth * 0.5f);
+        }
+        uiRenderer.rect(x - 14.0f, y - 42.0f, panelWidth, rows * (slot + gap) + 48.0f, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
+        uiRenderer.text("INVENTORY", x, y - 28.0f, 2.4f, UiColor.WHITE);
+        for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), columns * rows); i++) {
+            int column = i % columns;
+            int row = i / columns;
+            float sx = x + column * (slot + gap);
+            float sy = y + row * (slot + gap);
+            boolean selected = i == hotbar.selectedIndex();
+            Hotbar.SlotView slotView = hotbar.slotView(i);
+            uiRenderer.rect(sx - 2.0f, sy - 2.0f, slot + 4.0f, slot + 4.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.45f));
+            uiRenderer.rect(sx, sy, slot, slot, i < Hotbar.HOTBAR_SLOTS ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            if (!slotView.isEmpty()) {
+                drawItemIcon(slotView.itemKey(), sx + 6.0f, sy + 5.0f, 30.0f);
+                if (slotView.count() > 1) {
+                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f, sy + 28.0f, 1.05f, UiColor.WHITE);
+                }
+                if (slotView.hasDurability()) {
+                    drawDurabilityBar(sx + 7.0f, sy + 36.0f, 28.0f, slotView.durabilityLeft(), slotView.maxDurability());
+                }
+            }
+        }
+    }
+
     private void renderHud() {
-        if ((gameState != GameState.PLAYING && gameState != GameState.CHAT && gameState != GameState.CRAFTING) || world == null || !settings.hudEnabled()) {
+        if ((gameState != GameState.PLAYING && gameState != GameState.CHAT) || world == null || !settings.hudEnabled()) {
             return;
         }
         uiRenderer.rect(framebufferWidth * 0.5f - 5.0f, framebufferHeight * 0.5f - 1.0f, 10.0f, 2.0f, UiColor.WHITE);
         uiRenderer.rect(framebufferWidth * 0.5f - 1.0f, framebufferHeight * 0.5f - 5.0f, 2.0f, 10.0f, UiColor.WHITE);
-        float statsY = framebufferHeight - 145.0f;
-        uiRenderer.rect(14.0f, statsY - 10.0f, 342.0f, 88.0f, new UiColor(0.035f, 0.045f, 0.04f, 0.58f));
-        drawMeterBar("HEARTS", playerStats.health(), 20, 28.0f, statsY, UiColor.HEART);
-        drawMeterBar("HUNGER", playerStats.hunger(), 20, 28.0f, statsY + 24.0f, UiColor.HUNGER);
-        drawMeterBar("ENERGY", playerStats.stamina(), 20, 28.0f, statsY + 48.0f, UiColor.ENERGY);
-        uiRenderer.text("MODE " + gameMode.name(), 228.0f, statsY + 50.0f, 1.25f, UiColor.MUTED);
-        if (playerStats.breath() < 20) {
-            drawMeterBar("AIR", playerStats.breath(), 20, 28.0f, statsY - 24.0f, UiColor.WATER);
-        }
-        uiRenderer.text(clampText(hotbar.selectedTooltip(), 64), 20.0f, framebufferHeight - 32.0f, 1.65f, UiColor.WHITE);
+
         float hotbarWidth = Hotbar.HOTBAR_SLOTS * 72.0f + (Hotbar.HOTBAR_SLOTS - 1) * 6.0f;
         float hotbarX = Math.max(20.0f, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
+        float hotbarY = framebufferHeight - 78.0f;
+        float statsY = hotbarY - 54.0f;
+        uiRenderer.rect(hotbarX - 12.0f, statsY - 12.0f, hotbarWidth + 24.0f, 116.0f, new UiColor(0.025f, 0.032f, 0.03f, 0.54f));
+        uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 32.0f, 1.55f, UiColor.WHITE);
+        drawIconMeter("heart_full", "heart_empty", playerStats.health(), 20, hotbarX + 10.0f, statsY, 18.0f);
+        drawIconMeter("hunger_full", "hunger_empty", playerStats.hunger(), 20, hotbarX + hotbarWidth - 226.0f, statsY, 18.0f);
+        drawMeterBar("ENERGY", playerStats.stamina(), 20, hotbarX + hotbarWidth * 0.5f - 132.0f, statsY + 27.0f, UiColor.ENERGY);
+        uiRenderer.text("MODE " + gameMode.name(), hotbarX + hotbarWidth - 116.0f, statsY + 29.0f, 1.15f, UiColor.MUTED);
+        if (playerStats.breath() < 20) {
+            drawIconMeter("air_full", "", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY - 26.0f, 16.0f);
+        }
+        if (playerStats.armor() > 0) {
+            drawIconMeter("armor_full", "armor_full", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 51.0f, 16.0f);
+        }
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {
             float x = hotbarX + i * 78.0f;
-            float y = framebufferHeight - 82.0f;
+            float y = hotbarY;
             Hotbar.SlotView slot = hotbar.slotView(i);
             boolean selected = i == hotbar.selectedIndex();
             uiRenderer.rect(x - 2.0f, y - 2.0f, 74.0f, 44.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.55f));
@@ -885,9 +1052,23 @@ public final class GameClient {
                 }
             }
         }
+        if (gameState == GameState.PLAYING || gameState == GameState.CHAT) {
+            renderHeldItem();
+        }
         if (settings.debugOverlayEnabled()) {
             renderDebugOverlay();
         }
+    }
+
+    private void renderHeldItem() {
+        hotbar.selectedItemKey().ifPresent(itemKey -> {
+            float size = Math.max(82.0f, Math.min(128.0f, framebufferHeight * 0.16f));
+            float bob = (float) Math.sin(frameTimeSeconds * 5.0) * 3.0f;
+            float x = framebufferWidth - size - 54.0f;
+            float y = framebufferHeight - size - 26.0f + bob;
+            uiRenderer.rect(x + 10.0f, y + 12.0f, size - 14.0f, size - 10.0f, new UiColor(0.02f, 0.02f, 0.018f, 0.30f));
+            drawItemIcon(itemKey, x, y, size);
+        });
     }
 
     private void drawMeterBar(String label, int value, int max, float x, float y, UiColor fill) {
@@ -897,6 +1078,22 @@ public final class GameClient {
         uiRenderer.rect(x + 78.0f, y, width, 14.0f, UiColor.SLOT);
         uiRenderer.rect(x + 80.0f, y + 2.0f, (width - 4.0f) * ratio, 10.0f, fill);
         uiRenderer.text(value + "/" + max, x + 214.0f, y + 2.0f, 1.05f, UiColor.WHITE);
+    }
+
+    private void drawIconMeter(String fullKey, String emptyKey, int value, int max, float x, float y, float size) {
+        if (sprites == null || spriteRenderer == null) {
+            return;
+        }
+        int slots = 10;
+        for (int i = 0; i < slots; i++) {
+            boolean filled = value > Math.round(i * (max / (float) slots));
+            String key = filled ? fullKey : emptyKey;
+            if (key.isBlank()) {
+                continue;
+            }
+            float sx = x + i * (size + 4.0f);
+            sprites.hud(key).ifPresent(sprite -> spriteRenderer.sprite(sprite, sx, y, size, size));
+        }
     }
 
     private void drawDurabilityBar(float x, float y, float width, int value, int max) {

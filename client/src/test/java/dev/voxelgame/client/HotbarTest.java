@@ -44,4 +44,15 @@ class HotbarTest {
         assertEquals("voxel:dirt", first.itemKey());
         assertEquals(16, first.count());
     }
+
+    @Test
+    void mouseWheelScrollWrapsSelection() {
+        Hotbar hotbar = new Hotbar();
+        hotbar.resetForNewGame();
+
+        assertTrue(hotbar.scroll(-1));
+        assertEquals(8, hotbar.selectedIndex());
+        assertTrue(hotbar.scroll(1));
+        assertEquals(0, hotbar.selectedIndex());
+    }
 }

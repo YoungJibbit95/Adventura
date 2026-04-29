@@ -1,6 +1,6 @@
-# Voxel Survival
+# Adventura
 
-A Java/LWJGL voxel survival game prototype with a client/server architecture from day one.
+Adventura is a Java/LWJGL cozy voxel survival-adventure prototype with a client/server architecture from day one.
 
 ## Prerequisites
 
@@ -53,17 +53,17 @@ Client controls in the current preview:
 - `F3`: toggle debug overlay
 - `F4`: cycle survival/creative/spectator
 - Left mouse: break block
-- Right mouse: place selected block
+- Right mouse: place selected block or interact with harvestable blocks
 - `1`-`9`: select hotbar slot
 - `T`: open chat
 - `/`: open chat with command prefix
-- `Esc`: pause/resume while in game; crafting buttons are in the pause menu
+- `Esc`: pause/resume while in game; crafting is on `E`
 
 Chat commands currently include `/help`, `/keys`, `/seed`, `/pos`, `/tp x y z`, `/spawn`, `/gamemode survival|creative|spectator`, `/renderdistance n`, `/preview n`, `/meshbudget n`, `/fov n`, `/fog`, `/ao`, `/shadows`, `/hud`, `/debug`, `/water`, `/settings`, `/clear` and `/say text`.
 
-The main menu and pause menu include a settings screen for render distance, offline preview radius, mesh build budget, field of view, mouse sensitivity, fog, ambient occlusion, soft shadows, transparent water, HUD, chat, debug overlay and VSync. If performance stutters while chunks load, lower `Mesh Budget`, `Render Distance`, `World Preview`, or disable `Ambient AO`/`Water`.
+The main menu and pause menu include a grouped settings screen for render distance, offline preview radius, mesh build budget, field of view, mouse sensitivity, fog, ambient occlusion, soft shadows, transparent water, HUD, chat, debug overlay and VSync. If performance stutters while chunks load, lower `Mesh Budget`, `Render Distance`, `World Preview`, or disable `Ambient AO`/`Water`.
 
-The current survival loop has inventory stacks, starter items, richer cozy resources, expanded crafting, placeable decor, food, hunger, stamina, regeneration, tool durability, block drops, placement consumption, survival/creative/spectator movement modes, collision, gravity, jumping, swimming water physics, underwater breath and fall damage. Offline play applies those locally; online play sends block and crafting intents to the authoritative server, which validates inventory, applies accepted world edits, and returns full inventory snapshots.
+The current survival loop has inventory stacks, starter items, richer cozy resources, expanded crafting, placeable decor, food, hunger, stamina, regeneration, tool durability, block drops, placement consumption, harvest interactions for berry bushes and herb planters, survival/creative/spectator movement modes, collision, gravity, jumping, swimming water physics, underwater breath and fall damage. Offline play applies those locally; online play sends block, interaction and crafting intents to the authoritative server, which validates selected hotbar slot, reach, cooldowns, inventory, accepted world edits and returns full inventory snapshots.
 
 Current world content includes expanded terrain shaping, rivers, caves, ores, cozy meadows, flower fields, pine forests, mushroom groves, lakesides, old ruins, dunes, highlands, frost peaks, mires, trees, pines, mushrooms, berry bushes, herb patches, small stones, tree stumps, cacti, boulders, campsites, watchtowers, houses, desert wells, compact villages with a market stall and ambient entities such as cozy sheep, bunnies, snails, fireflies and little boars. Rendering has culling, transparent water, fog, vertex AO, soft directional shading, animated water and simple animated entity rendering.
 
@@ -82,4 +82,3 @@ Inventory and HUD item sprites are rendered from the new `generated_*` sheets fi
 ## Asset Needs
 
 See [docs/ASSET_REQUESTS.md](docs/ASSET_REQUESTS.md) for the current short asset generation list.
-# AdventureCraft

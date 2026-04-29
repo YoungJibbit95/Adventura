@@ -285,19 +285,9 @@ public final class BlockTextureAtlas implements AutoCloseable {
         String nature = "assets/game/natursachen_nature.png";
         String decor = "assets/game/deko_decor.png";
         String misc = "assets/game/misc_wasser_ui_paletten.png";
-        String generatedBlocks = "assets/game/generated_blocks_sheet.png";
         String generatedDecor = "assets/game/generated_decor_props_sheet.png";
         String generatedPlants = "assets/game/generated_plants_sheet.png";
 
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, generatedBlocks, "generated_stone", 35, 98, 124, 129);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, generatedBlocks, "generated_dirt", 594, 97, 124, 130);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAND, generatedBlocks, "generated_sand", 1012, 97, 126, 131);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_STONE, generatedBlocks, "generated_mossy_stone", 455, 97, 124, 130);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GRAVEL, generatedBlocks, "generated_gravel", 1291, 98, 124, 129);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COAL_ORE, generatedBlocks, "generated_coal_ore", 35, 566, 124, 129);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.IRON_ORE, generatedBlocks, "generated_iron_ore", 174, 566, 125, 129);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COPPER_ORE, generatedBlocks, "generated_copper_ore", 315, 566, 126, 129);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, generatedBlocks, "generated_planks", 594, 722, 124, 130);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FLOWER_POT, generatedDecor, "flower_pot", 585, 127, 118, 166);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.LANTERN, generatedDecor, "lantern", 765, 140, 102, 153);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE, generatedDecor, "campfire", 921, 136, 159, 165);
@@ -306,10 +296,8 @@ public final class BlockTextureAtlas implements AutoCloseable {
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOODEN_CHAIR, generatedDecor, "wooden_chair", 556, 360, 161, 145);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOVEN_RUG, generatedDecor, "woven_rug", 742, 365, 150, 143);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GARDEN_FENCE, generatedDecor, "garden_fence", 55, 352, 125, 163);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_PATH, generatedBlocks, "generated_mossy_path", 455, 97, 124, 130);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.BERRY_BUSH, generatedPlants, "berry_bush", 710, 126, 122, 119);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.HERB_PLANTER, generatedPlants, "herbs", 1150, 131, 95, 114);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SMALL_STONE, generatedBlocks, "small_stone", 35, 98, 124, 129);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TREE_STUMP, generatedPlants, "tree_stump", 551, 132, 120, 113);
 
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 19, 29, 58, 56);

@@ -2,7 +2,7 @@ package dev.voxelgame.client;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
-import dev.voxelgame.common.block.ToolType;
+import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.Inventory;
@@ -64,6 +64,18 @@ public final class Hotbar {
         return false;
     }
 
+    public synchronized boolean scroll(int direction) {
+        if (direction == 0) {
+            return false;
+        }
+        int nextIndex = Math.floorMod(selectedIndex + direction, HOTBAR_SLOTS);
+        if (nextIndex == selectedIndex) {
+            return false;
+        }
+        selectedIndex = nextIndex;
+        return true;
+    }
+
     public synchronized void applySnapshot(List<ItemStack> slots) {
         inventory.replaceSlots(slots);
     }
@@ -99,36 +111,11 @@ public final class Hotbar {
     }
 
     public synchronized float selectedBreakMultiplier(BlockType target) {
-        ItemStack stack = inventory.slot(selectedIndex);
-        if (stack.isEmpty()) {
-            return target.preferredTool() == ToolType.NONE ? 1.0f : 0.65f;
-        }
-        ItemType item = items.requireById(stack.itemId());
-        if (item.toolType() == target.preferredTool() && item.isTool()) {
-            return switch (item.toolType()) {
-                case PICKAXE -> 3.0f;
-                case SHOVEL -> 2.6f;
-                case AXE -> 2.8f;
-                case KNIFE -> 3.4f;
-                case NONE -> 1.0f;
-            };
-        }
-        if (target.preferredTool() == ToolType.NONE) {
-            return item.toolType() == ToolType.KNIFE ? 1.4f : 1.0f;
-        }
-        return item.isTool() ? 0.85f : 0.55f;
+        return InteractionRules.breakMultiplier(inventory.slot(selectedIndex), items, target);
     }
 
     public synchronized void damageSelectedTool(BlockType target) {
-        ItemStack stack = inventory.slot(selectedIndex);
-        if (stack.isEmpty()) {
-            return;
-        }
-        ItemType item = items.requireById(stack.itemId());
-        if (!item.isTool()) {
-            return;
-        }
-        int amount = item.toolType() == target.preferredTool() ? 1 : 2;
+        int amount = InteractionRules.toolDamage(inventory.slot(selectedIndex), items, target);
         inventory.damageSlot(selectedIndex, amount, items);
     }
 
@@ -156,6 +143,14 @@ public final class Hotbar {
             return "Empty";
         }
         return label(items.requireById(stack.itemId()).key()) + " x" + stack.count();
+    }
+
+    public synchronized Optional<String> selectedItemKey() {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(items.requireById(stack.itemId()).key());
     }
 
     public synchronized String slotLabel(int index) {

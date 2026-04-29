@@ -16,13 +16,14 @@ public sealed interface GamePacket permits
         GamePacket.ChunkData,
         GamePacket.BlockUpdate,
         GamePacket.BlockAction,
+        GamePacket.BlockInteract,
         GamePacket.PlayerMove,
         GamePacket.EntitySnapshots,
         GamePacket.InventorySnapshot,
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 4;
+    int PROTOCOL_VERSION = 6;
 
     PacketType type();
 
@@ -106,6 +107,7 @@ public sealed interface GamePacket permits
 
     record BlockAction(
             Action action,
+            int selectedSlot,
             int targetX,
             int targetY,
             int targetZ,
@@ -116,6 +118,9 @@ public sealed interface GamePacket permits
     ) implements GamePacket {
         public BlockAction {
             Objects.requireNonNull(action, "action");
+            if (selectedSlot < 0) {
+                throw new IllegalArgumentException("selectedSlot must be >= 0");
+            }
         }
 
         @Override
@@ -133,6 +138,19 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.PLAYER_MOVE;
+        }
+    }
+
+    record BlockInteract(int selectedSlot, int targetX, int targetY, int targetZ) implements GamePacket {
+        public BlockInteract {
+            if (selectedSlot < 0) {
+                throw new IllegalArgumentException("selectedSlot must be >= 0");
+            }
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.BLOCK_INTERACT;
         }
     }
 

@@ -43,7 +43,7 @@ The client currently owns local-feel movement while the server remains the autho
 
 ## Client UI
 
-The client has main, pause, settings, crafting/inventory and chat states plus the separate launcher app. Chat opens on `T`; slash-prefixed commands are handled client-side for debug, gamemode and runtime settings, while normal messages can be sent through the existing network chat packet. The HUD includes crosshair, tabbed crafting/inventory surfaces, improved hotbar selection, stack counts, durability bars, selected-item tooltips, health, hunger, stamina, armor, breath, mode and optional debug information. UI rendering now has a separate sprite pass for item icons, so hotbar/crafting/inventory can render sheet-based icons while the bitmap text and panels stay in the lightweight immediate UI layer.
+The client has main, pause, settings, crafting/inventory and chat states plus the separate launcher app. Chat opens on `T`; slash-prefixed commands are handled client-side for debug, gamemode and runtime settings, while normal messages can be sent through the existing network chat packet. The HUD includes crosshair, tabbed crafting/inventory surfaces, improved hotbar selection, stack counts, durability bars, selected-item tooltips, health, hunger, stamina, armor, breath, mode and optional debug information. UI rendering now has a separate sprite pass for item icons, so hotbar/crafting/inventory can render sheet-based icons while the bitmap text and panels stay in the lightweight immediate UI layer. Right-click interactions now use a separate block-interact packet for harvestable blocks, giving the server a path toward BlockEntities and Workstations without overloading place/break actions.
 
 ## Feedback Hooks
 

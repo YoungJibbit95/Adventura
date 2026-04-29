@@ -1,9 +1,12 @@
 package dev.voxelgame.server.net;
 
-import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.block.BlockType;
+import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.Inventory;
+import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.item.StarterInventory;
@@ -39,6 +42,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final Set<ChunkPos> sentChunks = new HashSet<>();
     private boolean loggedIn;
     private UUID playerId;
+    private double playerX = 8.5;
+    private double playerY = 120.0;
+    private double playerZ = 8.5;
+    private double nextBlockActionTime;
 
     public ServerConnectionHandler(ServerWorld world, AuthProvider authProvider, ServerEntityTracker entityTracker) {
         this.world = world;
@@ -67,6 +74,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             case GamePacket.Handshake handshake -> handleHandshake(ctx, handshake);
             case GamePacket.LoginRequest login -> handleLogin(ctx, login);
             case GamePacket.BlockAction action -> handleBlockAction(ctx, action);
+            case GamePacket.BlockInteract interact -> handleBlockInteract(ctx, interact);
             case GamePacket.CraftRequest craft -> handleCraftRequest(ctx, craft);
             case GamePacket.PlayerMove move -> {
                 if (!loggedIn) {
@@ -113,43 +121,113 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        if (!InteractionRules.isHotbarSlot(action.selectedSlot(), inventory.size())) {
+            sendInventory(ctx);
+            return;
+        }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (now < nextBlockActionTime || !canReach(action)) {
+            sendInventory(ctx);
+            return;
+        }
         switch (action.action()) {
-            case BREAK -> handleBreakAction(ctx, action);
-            case PLACE -> handlePlaceAction(ctx, action);
+            case BREAK -> handleBreakAction(ctx, action, now);
+            case PLACE -> handlePlaceAction(ctx, action, now);
         }
     }
 
-    private void handleBreakAction(ChannelHandlerContext ctx, GamePacket.BlockAction action) {
-        Optional<String> dropKey = world.dropFor(action.targetX(), action.targetY(), action.targetZ());
+    private void handleBreakAction(ChannelHandlerContext ctx, GamePacket.BlockAction action, double now) {
+        Optional<BlockType> targetBlock = world.blockAt(action.targetX(), action.targetY(), action.targetZ());
+        if (targetBlock.isEmpty() || targetBlock.get().id() == Blocks.AIR || targetBlock.get().id() == Blocks.WATER) {
+            sendInventory(ctx);
+            return;
+        }
+        BlockType target = targetBlock.get();
+        ItemStack selected = inventory.slot(action.selectedSlot());
+        float multiplier = InteractionRules.breakMultiplier(selected, items, target);
+        int dropCount = InteractionRules.dropCount(target, multiplier);
+        Optional<String> dropKey = Optional.ofNullable(target.dropItemKey());
         Optional<Short> dropItemId = dropKey.flatMap(this::itemIdForKey);
         if (dropKey.isPresent() && dropItemId.isEmpty()) {
             sendInventory(ctx);
             return;
         }
-        if (dropItemId.isPresent() && !inventory.canAdd(dropItemId.get(), 1, items)) {
+        if (dropItemId.isPresent() && !inventory.canAdd(dropItemId.get(), dropCount, items)) {
             sendInventory(ctx);
             return;
         }
 
-        world.applyBlockAction(action).ifPresent(update -> {
-            dropItemId.ifPresent(itemId -> inventory.add(itemId, 1, items));
+        world.applyBlockAction(action).ifPresentOrElse(update -> {
+            dropItemId.ifPresent(itemId -> inventory.add(itemId, dropCount, items));
+            inventory.damageSlot(action.selectedSlot(), InteractionRules.toolDamage(selected, items, target), items);
+            nextBlockActionTime = now + InteractionRules.breakDelaySeconds(target, multiplier);
             CHANNELS.writeAndFlush(update);
             sendInventory(ctx);
-        });
+        }, () -> sendInventory(ctx));
     }
 
-    private void handlePlaceAction(ChannelHandlerContext ctx, GamePacket.BlockAction action) {
-        Optional<ItemType> placeItem = itemForPlacedBlock(action.blockId());
-        if (placeItem.isEmpty() || !inventory.has(placeItem.get().id(), 1)) {
+    private void handlePlaceAction(ChannelHandlerContext ctx, GamePacket.BlockAction action, double now) {
+        ItemStack selected = inventory.slot(action.selectedSlot());
+        if (selected.isEmpty()) {
+            sendInventory(ctx);
+            return;
+        }
+        ItemType placeItem = items.requireById(selected.itemId());
+        Optional<String> placedBlockKey = world.blockKey(action.blockId());
+        if (placeItem.placesBlockKey() == null || placedBlockKey.isEmpty() || !placedBlockKey.get().equals(placeItem.placesBlockKey())) {
             sendInventory(ctx);
             return;
         }
 
-        world.applyBlockAction(action).ifPresent(update -> {
-            inventory.remove(placeItem.get().id(), 1);
+        world.applyBlockAction(action).ifPresentOrElse(update -> {
+            inventory.removeFromSlot(action.selectedSlot(), 1);
+            nextBlockActionTime = now + 0.12;
             CHANNELS.writeAndFlush(update);
             sendInventory(ctx);
-        });
+        }, () -> sendInventory(ctx));
+    }
+
+    private boolean canReach(GamePacket.BlockAction action) {
+        if (!InteractionRules.canReachBlock(playerX, playerY, playerZ, action.targetX(), action.targetY(), action.targetZ())) {
+            return false;
+        }
+        return action.action() == GamePacket.BlockAction.Action.BREAK
+                || InteractionRules.canReachBlock(playerX, playerY, playerZ, action.placeX(), action.placeY(), action.placeZ());
+    }
+
+    private void handleBlockInteract(ChannelHandlerContext ctx, GamePacket.BlockInteract interact) {
+        if (!loggedIn) {
+            ctx.close();
+            return;
+        }
+        if (!InteractionRules.isHotbarSlot(interact.selectedSlot(), inventory.size())) {
+            sendInventory(ctx);
+            return;
+        }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (now < nextBlockActionTime || !InteractionRules.canReachBlock(playerX, playerY, playerZ, interact.targetX(), interact.targetY(), interact.targetZ())) {
+            sendInventory(ctx);
+            return;
+        }
+        Optional<BlockType> targetBlock = world.blockAt(interact.targetX(), interact.targetY(), interact.targetZ());
+        if (targetBlock.isEmpty()) {
+            sendInventory(ctx);
+            return;
+        }
+        Optional<InteractionRules.BlockInteraction> interaction = InteractionRules.blockInteraction(targetBlock.get());
+        if (interaction.isEmpty()) {
+            sendInventory(ctx);
+            return;
+        }
+        InteractionRules.BlockInteraction result = interaction.get();
+        Optional<Short> itemId = itemIdForKey(result.itemKey());
+        if (itemId.isEmpty() || !inventory.canAdd(itemId.get(), result.count(), items)) {
+            sendInventory(ctx);
+            return;
+        }
+        inventory.add(itemId.get(), result.count(), items);
+        nextBlockActionTime = now + result.cooldownSeconds();
+        sendInventory(ctx);
     }
 
     private void handleCraftRequest(ChannelHandlerContext ctx, GamePacket.CraftRequest craft) {
@@ -168,19 +246,6 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         return items.findByKey(itemKey).map(ItemType::id);
     }
 
-    private Optional<ItemType> itemForPlacedBlock(short blockId) {
-        Optional<String> blockKey = world.blockKey(blockId);
-        if (blockKey.isEmpty()) {
-            return Optional.empty();
-        }
-        for (ItemType item : items.values()) {
-            if (blockKey.get().equals(item.placesBlockKey())) {
-                return Optional.of(item);
-            }
-        }
-        return Optional.empty();
-    }
-
     private void sendInventory(ChannelHandlerContext ctx) {
         ctx.writeAndFlush(new GamePacket.InventorySnapshot(inventory.slots()));
     }
@@ -190,6 +255,9 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        playerX = move.x();
+        playerY = move.y();
+        playerZ = move.z();
         entityTracker.updatePlayer(playerId, move.x(), move.y(), move.z(), move.yaw(), move.pitch());
         streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(move.x()), (int) Math.floor(move.z())));
         CHANNELS.writeAndFlush(new GamePacket.EntitySnapshots(entityTracker.snapshots()));

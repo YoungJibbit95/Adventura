@@ -1,4 +1,4 @@
-Voxel survival separated spritesheets
+Adventura separated spritesheets
 Art style: cozy flat 2D pixel / voxel-inspired assets.
 License: CC0 / Public Domain. Free for commercial and personal use. No attribution required.
 

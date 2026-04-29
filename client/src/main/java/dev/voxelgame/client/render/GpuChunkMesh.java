@@ -46,6 +46,8 @@ public final class GpuChunkMesh implements AutoCloseable {
         glEnableVertexAttribArray(3);
         glVertexAttribPointer(4, 1, GL_FLOAT, false, stride, 8L * Float.BYTES);
         glEnableVertexAttribArray(4);
+        glVertexAttribPointer(5, 2, GL_FLOAT, false, stride, 9L * Float.BYTES);
+        glEnableVertexAttribArray(5);
 
         glBindVertexArray(0);
     }

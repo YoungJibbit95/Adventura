@@ -7,6 +7,7 @@ in float vDistance;
 in float vAo;
 in vec3 vWorldPosition;
 in vec3 vNormal;
+in vec2 vFaceUv;
 uniform int uFogEnabled;
 uniform int uAtlasEnabled;
 uniform float uFogStart;
@@ -42,6 +43,19 @@ vec3 blockColor(int id) {
     if (id == 21) return vec3(0.12, 0.31, 0.25);
     if (id == 22) return vec3(0.62, 0.20, 0.16);
     if (id == 23) return vec3(0.58, 0.39, 0.20);
+    if (id == 24) return vec3(0.63, 0.36, 0.22);
+    if (id == 25) return vec3(0.95, 0.68, 0.28);
+    if (id == 26) return vec3(0.54, 0.24, 0.24);
+    if (id == 27) return vec3(0.50, 0.31, 0.18);
+    if (id == 28) return vec3(0.48, 0.29, 0.17);
+    if (id == 29) return vec3(0.46, 0.29, 0.16);
+    if (id == 30) return vec3(0.30, 0.44, 0.28);
+    if (id == 31) return vec3(0.43, 0.31, 0.17);
+    if (id == 32) return vec3(0.28, 0.45, 0.24);
+    if (id == 33) return vec3(0.36, 0.52, 0.30);
+    if (id == 34) return vec3(0.95, 0.45, 0.20);
+    if (id == 35) return vec3(0.42, 0.42, 0.40);
+    if (id == 36) return vec3(0.38, 0.24, 0.13);
     return vec3(0.70, 0.30, 0.70);
 }
 
@@ -52,16 +66,7 @@ float blockAlpha(int id) {
 }
 
 vec2 faceUv() {
-    vec3 n = abs(normalize(vNormal));
-    vec2 uv;
-    if (n.y > 0.5) {
-        uv = vWorldPosition.xz;
-    } else if (n.x > 0.5) {
-        uv = vWorldPosition.zy;
-    } else {
-        uv = vWorldPosition.xy;
-    }
-    return fract(uv);
+    return clamp(vFaceUv, vec2(0.0), vec2(1.0));
 }
 
 vec4 atlasRect(int id) {

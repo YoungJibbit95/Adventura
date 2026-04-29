@@ -8,6 +8,7 @@ public final class PlayerStats {
     private float stamina = 20.0f;
     private float hungerDrain;
     private float regenTimer;
+    private float starvationTimer;
 
     public int health() {
         return health;
@@ -52,19 +53,29 @@ public final class PlayerStats {
             breath = Math.min(20.0f, breath + deltaSeconds * 4.0f);
         }
         if (mode == GameMode.SURVIVAL) {
+            hungerDrain += deltaSeconds * 0.08f;
             if (sprinting && moving && stamina > 0.0f) {
                 stamina = Math.max(0.0f, stamina - deltaSeconds * 4.5f);
-                hungerDrain += deltaSeconds * 0.30f;
+                hungerDrain += deltaSeconds * 0.70f;
             } else {
                 float regenRate = hunger > 4 ? 3.0f : 1.25f;
                 stamina = Math.min(20.0f, stamina + deltaSeconds * regenRate);
                 if (moving) {
-                    hungerDrain += deltaSeconds * 0.045f;
+                    hungerDrain += deltaSeconds * 0.16f;
                 }
             }
             while (hungerDrain >= 1.0f) {
                 hungerDrain -= 1.0f;
                 hunger = Math.max(0, hunger - 1);
+            }
+            if (hunger <= 0) {
+                starvationTimer += deltaSeconds;
+                if (starvationTimer >= 3.0f) {
+                    starvationTimer = 0.0f;
+                    health = Math.max(0, health - 1);
+                }
+            } else {
+                starvationTimer = 0.0f;
             }
             if (hunger >= 16 && health < 20) {
                 regenTimer += deltaSeconds;
@@ -95,6 +106,7 @@ public final class PlayerStats {
         hunger = Math.min(20, hunger + foodValue);
         health = Math.min(20, health + healValue);
         stamina = Math.min(20.0f, stamina + foodValue * 0.65f);
+        starvationTimer = 0.0f;
     }
 
     public void hurt(int amount) {
