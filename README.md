@@ -67,9 +67,9 @@ The current survival loop has inventory stacks, starter items, richer cozy resou
 
 Current world content includes expanded terrain shaping, rivers, caves, ores, cozy meadows, flower fields, pine forests, mushroom groves, lakesides, old ruins, dunes, highlands, frost peaks, mires, trees, pines, mushrooms, berry bushes, herb patches, small stones, tree stumps, cacti, boulders, campsites, watchtowers, houses, desert wells, compact villages with a market stall and ambient entities such as cozy sheep, bunnies, snails, fireflies and little boars. Rendering has culling, transparent water, fog, vertex AO, soft directional shading, animated water and simple animated entity rendering.
 
-Block textures can be dropped as individual PNG files into `client/src/main/resources/assets/game/textures/block/`. The renderer builds an atlas automatically and keeps the old shader colors as fallbacks for missing files. The bundled sprite sheets in `client/src/main/resources/assets/game/` are also wired as fallback sources, so `bloecke_blocks.png`, `natursachen_nature.png`, `deko_decor.png` and `misc_wasser_ui_paletten.png` already feed the chunk shader. Individual files still override sheet slices when both exist.
+Block textures can be dropped as individual PNG files into `client/src/main/resources/assets/game/textures/block/`. The renderer builds an atlas automatically and keeps the old shader colors as fallbacks for missing files. The bundled sprite sheets in `client/src/main/resources/assets/game/` are also wired as fallback sources, so `blocks_tiles_sheet.png`, `nature_food_sheet.png`, `ores_materials_sheet.png` and `ui_hud_sheet.png` feed the chunk shader. Individual files still override sheet slices when both exist.
 
-Inventory and HUD item sprites are rendered from the new `generated_*` sheets first, then from `items_inventory.png` plus fallback slices from the block/nature sheets. Additional icons can be mapped in `GameSprites` without changing inventory or hotbar UI code.
+Inventory and HUD item sprites are rendered from the new `ui_hud_sheet.png`, `tools_weapons_sheet.png`, `nature_food_sheet.png`, `ores_materials_sheet.png` and block tile sheets. Additional icons can be mapped in `GameSprites` without changing inventory or hotbar UI code.
 
 ## Modules
 

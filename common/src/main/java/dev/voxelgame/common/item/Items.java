@@ -41,6 +41,9 @@ public final class Items {
         block(registry, (short) 60, "voxel:campfire");
         block(registry, (short) 61, "voxel:small_stone");
         block(registry, (short) 62, "voxel:tree_stump");
+        block(registry, (short) 70, "voxel:mushroom_cluster");
+        block(registry, (short) 71, "voxel:clay_deposit");
+        block(registry, (short) 72, "voxel:glow_crystal_node");
         registry.register((short) 20, "voxel:coal", new ItemType((short) 20, "voxel:coal", 64, ToolType.NONE, 0, null));
         registry.register((short) 21, "voxel:raw_iron", new ItemType((short) 21, "voxel:raw_iron", 64, ToolType.NONE, 0, null));
         registry.register((short) 22, "voxel:raw_copper", new ItemType((short) 22, "voxel:raw_copper", 64, ToolType.NONE, 0, null));
@@ -55,11 +58,26 @@ public final class Items {
         registry.register((short) 31, "voxel:wild_herbs", new ItemType((short) 31, "voxel:wild_herbs", 32, ToolType.NONE, 0, null, 1, 0));
         registry.register((short) 32, "voxel:simple_rope", new ItemType((short) 32, "voxel:simple_rope", 32, ToolType.NONE, 0, null));
         registry.register((short) 33, "voxel:healing_snack", new ItemType((short) 33, "voxel:healing_snack", 16, ToolType.NONE, 0, null, 5, 4));
+        registry.register((short) 34, "voxel:mushroom", new ItemType((short) 34, "voxel:mushroom", 16, ToolType.NONE, 0, null, 2, 0));
+        registry.register((short) 35, "voxel:dry_grass", new ItemType((short) 35, "voxel:dry_grass", 64, ToolType.NONE, 0, null));
+        registry.register((short) 36, "voxel:bark_strip", new ItemType((short) 36, "voxel:bark_strip", 64, ToolType.NONE, 0, null));
+        registry.register((short) 37, "voxel:clay_lump", new ItemType((short) 37, "voxel:clay_lump", 64, ToolType.NONE, 0, null));
+        registry.register((short) 38, "voxel:cooked_berries", new ItemType((short) 38, "voxel:cooked_berries", 16, ToolType.NONE, 0, null, 5, 1));
+        registry.register((short) 39, "voxel:roasted_mushroom", new ItemType((short) 39, "voxel:roasted_mushroom", 16, ToolType.NONE, 0, null, 4, 1));
         registry.register((short) 40, "voxel:stone_pickaxe", new ItemType((short) 40, "voxel:stone_pickaxe", 1, ToolType.PICKAXE, 132, null));
         registry.register((short) 41, "voxel:stone_shovel", new ItemType((short) 41, "voxel:stone_shovel", 1, ToolType.SHOVEL, 132, null));
         registry.register((short) 42, "voxel:stone_axe", new ItemType((short) 42, "voxel:stone_axe", 1, ToolType.AXE, 156, null));
         registry.register((short) 43, "voxel:stone_sword", new ItemType((short) 43, "voxel:stone_sword", 1, ToolType.NONE, 96, null));
         registry.register((short) 44, "voxel:stone_knife", new ItemType((short) 44, "voxel:stone_knife", 1, ToolType.KNIFE, 72, null));
+        registry.register((short) 45, "voxel:charcoal", new ItemType((short) 45, "voxel:charcoal", 64, ToolType.NONE, 0, null));
+        registry.register((short) 46, "voxel:clay_bowl", new ItemType((short) 46, "voxel:clay_bowl", 16, ToolType.NONE, 0, null));
+        registry.register((short) 47, "voxel:clay_pot", new ItemType((short) 47, "voxel:clay_pot", 16, ToolType.NONE, 0, null));
+        registry.register((short) 48, "voxel:mushroom_stew", new ItemType((short) 48, "voxel:mushroom_stew", 8, ToolType.NONE, 0, null, 7, 2));
+        registry.register((short) 49, "voxel:herb_soup", new ItemType((short) 49, "voxel:herb_soup", 8, ToolType.NONE, 0, null, 6, 3));
+        registry.register((short) 63, "voxel:copper_ingot", new ItemType((short) 63, "voxel:copper_ingot", 64, ToolType.NONE, 0, null));
+        registry.register((short) 64, "voxel:glow_crystal", new ItemType((short) 64, "voxel:glow_crystal", 32, ToolType.NONE, 0, null));
+        registry.register((short) 65, "voxel:copper_axe", new ItemType((short) 65, "voxel:copper_axe", 1, ToolType.AXE, 260, null));
+        registry.register((short) 66, "voxel:copper_pickaxe", new ItemType((short) 66, "voxel:copper_pickaxe", 1, ToolType.PICKAXE, 240, null));
         return registry;
     }
 

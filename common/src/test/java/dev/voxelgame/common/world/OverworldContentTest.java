@@ -2,8 +2,13 @@ package dev.voxelgame.common.world;
 
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.world.gen.OverworldGenerator;
+import dev.voxelgame.common.world.structure.BlockPlacement;
+import dev.voxelgame.common.world.structure.StructureMarker;
+import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +46,22 @@ class OverworldContentTest {
     void villageTemplateContainsRoadsAndBuildings() {
         assertEquals("voxel:compact_village", Structures.compactVillage().key());
         assertTrue(Structures.compactVillage().blocks().size() > 80);
+        assertTrue(Structures.compactVillage().markers("entity").size() >= 2);
+        assertTrue(Structures.compactVillage().lootMarkers().size() >= 3);
+    }
+
+    @Test
+    void structureTemplateKeepsTypedMarkers() {
+        StructureMarker loot = StructureMarker.loot("voxel:test_crate", 1, 2, 3);
+        StructureMarker entity = StructureMarker.entity("voxel:test_spawn", 4, 5, 6);
+        StructureTemplate template = new StructureTemplate(
+                "voxel:test_structure",
+                List.of(new BlockPlacement(0, 0, 0, Blocks.STONE)),
+                List.of(loot, entity)
+        );
+
+        assertEquals(List.of(loot), template.lootMarkers());
+        assertEquals(List.of(entity), template.markers("entity"));
     }
 
     @Test

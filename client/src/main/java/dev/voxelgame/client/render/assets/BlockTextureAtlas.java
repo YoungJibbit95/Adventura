@@ -266,7 +266,11 @@ public final class BlockTextureAtlas implements AutoCloseable {
             Graphics2D graphics = slice.createGraphics();
             graphics.drawImage(sheet, 0, 0, width, height, x, y, x + width, y + height, null);
             graphics.dispose();
-            if (sheetPath.contains("generated_")) {
+            if (sheetPath.contains("generated_")
+                    || sheetPath.contains("ui_hud_sheet")
+                    || sheetPath.contains("blocks_tiles_sheet")
+                    || sheetPath.contains("ores_materials_sheet")
+                    || sheetPath.contains("tools_weapons_sheet")) {
                 removeEdgeCheckerBackground(slice);
             }
             return slice;
@@ -281,54 +285,57 @@ public final class BlockTextureAtlas implements AutoCloseable {
             Map<Short, String> topPathByBlock,
             Map<Short, String> bottomPathByBlock
     ) {
-        String blocks = "assets/game/bloecke_blocks.png";
-        String nature = "assets/game/natursachen_nature.png";
-        String decor = "assets/game/deko_decor.png";
-        String misc = "assets/game/misc_wasser_ui_paletten.png";
-        String generatedDecor = "assets/game/generated_decor_props_sheet.png";
-        String generatedPlants = "assets/game/generated_plants_sheet.png";
+        String blocks = "assets/game/blocks_tiles_sheet.png";
+        String ores = "assets/game/ores_materials_sheet.png";
+        String ui = "assets/game/ui_hud_sheet.png";
+        String food = "assets/game/nature_food_sheet.png";
 
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FLOWER_POT, generatedDecor, "flower_pot", 585, 127, 118, 166);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.LANTERN, generatedDecor, "lantern", 765, 140, 102, 153);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE, generatedDecor, "campfire", 921, 136, 159, 165);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STORAGE_CRATE, generatedDecor, "crate", 45, 130, 153, 167);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SMALL_TABLE, generatedDecor, "small_table", 1086, 351, 139, 164);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOODEN_CHAIR, generatedDecor, "wooden_chair", 556, 360, 161, 145);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOVEN_RUG, generatedDecor, "woven_rug", 742, 365, 150, 143);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GARDEN_FENCE, generatedDecor, "garden_fence", 55, 352, 125, 163);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.BERRY_BUSH, generatedPlants, "berry_bush", 710, 126, 122, 119);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.HERB_PLANTER, generatedPlants, "herbs", 1150, 131, 95, 114);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TREE_STUMP, generatedPlants, "tree_stump", 551, 132, 120, 113);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FLOWER_POT, food, "flower_pot", 1137, 132, 126, 98);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.LANTERN, food, "lantern", 1170, 854, 82, 86);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE, ui, "campfire", 1007, 35, 76, 78);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE_ACTIVE, ui, "campfire_active", 1007, 35, 76, 78);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE_BURNED_OUT, ui, "campfire_burned_out", 611, 36, 70, 74);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STORAGE_CRATE, ui, "crate", 714, 142, 70, 66);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SMALL_TABLE, ui, "small_table", 714, 142, 70, 66);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOODEN_CHAIR, ui, "wooden_chair", 615, 141, 72, 68);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOVEN_RUG, ui, "woven_rug", 33, 870, 182, 80);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GARDEN_FENCE, ui, "garden_fence", 33, 870, 182, 80);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.BERRY_BUSH, food, "berry_bush", 976, 855, 110, 68);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.HERB_PLANTER, food, "herbs", 1170, 677, 86, 84);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TREE_STUMP, blocks, "tree_stump", 29, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MUSHROOM_CLUSTER, food, "mushroom_cluster", 958, 132, 110, 94);
 
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 19, 29, 58, 56);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, blocks, "dirt", 362, 29, 57, 55);
-        putFace(imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 430, 29, 56, 55);
-        putFace(imagesByPath, sidePathByBlock, Blocks.GRASS, blocks, "grass_side", 497, 29, 56, 55);
-        putFace(imagesByPath, bottomPathByBlock, Blocks.GRASS, blocks, "dirt", 362, 29, 57, 55);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WATER, misc, "water_still", 48, 334, 50, 24);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAND, blocks, "sand", 19, 104, 59, 53);
-        putFace(imagesByPath, sidePathByBlock, Blocks.SKYROOT_LOG, blocks, "oak_log_side", 19, 174, 58, 54);
-        putFace(imagesByPath, topPathByBlock, Blocks.SKYROOT_LOG, blocks, "oak_log_top", 88, 174, 59, 54);
-        putFace(imagesByPath, bottomPathByBlock, Blocks.SKYROOT_LOG, blocks, "oak_log_top", 88, 174, 59, 54);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_LEAVES, blocks, "leaves_oak", 430, 174, 56, 54);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COAL_ORE, blocks, "coal_ore", 20, 246, 57, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TORCH, decor, "torch_wall", 535, 11, 21, 36);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WILD_GRASS, nature, "tall_grass", 4, 32, 39, 36);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SUN_BLOOM, nature, "sun_bloom", 291, 29, 33, 27);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.IRON_ORE, blocks, "iron_ore", 88, 246, 58, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COPPER_ORE, blocks, "copper_ore", 157, 245, 59, 54);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CLAY, blocks, "clay", 362, 104, 57, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CACTUS, blocks, "cactus", 564, 174, 55, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_STONE, blocks, "mossy_bricks", 226, 29, 57, 55);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GRAVEL, blocks, "gravel", 294, 104, 58, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SNOW, blocks, "snow", 430, 104, 57, 53);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.ICE, blocks, "ice", 630, 104, 57, 53);
-        putFace(imagesByPath, sidePathByBlock, Blocks.PINE_LOG, blocks, "pine_log_side", 157, 174, 59, 53);
-        putFace(imagesByPath, topPathByBlock, Blocks.PINE_LOG, blocks, "pine_log_top", 226, 174, 57, 54);
-        putFace(imagesByPath, bottomPathByBlock, Blocks.PINE_LOG, blocks, "pine_log_top", 226, 174, 57, 54);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.PINE_LEAVES, blocks, "leaves_pine", 497, 174, 56, 54);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.RED_MUSHROOM, nature, "red_mushroom", 569, 36, 49, 43);
-        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, blocks, "planks_oak", 497, 317, 57, 51);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 576, 50, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, blocks, "dirt", 211, 50, 150, 158);
+        putFace(imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 29, 49, 150, 158);
+        putFace(imagesByPath, sidePathByBlock, Blocks.GRASS, blocks, "grass_side", 29, 49, 150, 158);
+        putFace(imagesByPath, bottomPathByBlock, Blocks.GRASS, blocks, "dirt", 211, 50, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WATER, blocks, "water", 211, 469, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAND, blocks, "sand", 1123, 50, 150, 158);
+        putFace(imagesByPath, sidePathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_side", 211, 259, 150, 158);
+        putFace(imagesByPath, topPathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_top", 29, 259, 150, 158);
+        putFace(imagesByPath, bottomPathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_top", 29, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_LEAVES, blocks, "skyroot_leaves", 758, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COAL_ORE, ores, "coal_ore", 742, 146, 130, 132);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TORCH, food, "torch", 1170, 854, 82, 86);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WILD_GRASS, food, "wild_grass", 779, 493, 112, 82);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SUN_BLOOM, blocks, "sun_bloom", 1122, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.IRON_ORE, ores, "iron_ore", 377, 146, 130, 132);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COPPER_ORE, ores, "copper_ore", 46, 146, 130, 132);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CLAY, blocks, "clay", 394, 50, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CLAY_DEPOSIT, ores, "clay_deposit", 1306, 147, 130, 132);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CACTUS, blocks, "cactus", 1306, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_STONE, blocks, "mossy_stone", 758, 50, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GRAVEL, blocks, "gravel", 1306, 50, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SNOW, blocks, "snow", 29, 469, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.ICE, blocks, "ice", 575, 681, 150, 158);
+        putFace(imagesByPath, sidePathByBlock, Blocks.PINE_LOG, blocks, "pine_log_side", 576, 259, 150, 158);
+        putFace(imagesByPath, topPathByBlock, Blocks.PINE_LOG, blocks, "pine_log_top", 394, 259, 150, 158);
+        putFace(imagesByPath, bottomPathByBlock, Blocks.PINE_LOG, blocks, "pine_log_top", 394, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.PINE_LEAVES, blocks, "pine_leaves", 941, 259, 150, 158);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.RED_MUSHROOM, food, "red_mushroom", 812, 132, 110, 94);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_CRYSTAL_NODE, ores, "glow_crystal_node", 1028, 147, 133, 130);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, blocks, "skyroot_planks", 576, 469, 150, 158);
     }
 
     private static void putAllFaces(

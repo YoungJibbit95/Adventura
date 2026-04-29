@@ -9,9 +9,11 @@ public final class GameSettings {
     private boolean fogEnabled = true;
     private boolean ambientOcclusionEnabled = true;
     private boolean softShadowsEnabled = true;
+    private boolean bloomEnabled = true;
     private boolean vsyncEnabled = true;
     private boolean hudEnabled = true;
     private boolean debugOverlayEnabled = false;
+    private boolean debugChunkBordersEnabled = false;
     private boolean chatEnabled = true;
     private boolean transparentWaterEnabled = true;
 
@@ -60,6 +62,10 @@ public final class GameSettings {
         return softShadowsEnabled;
     }
 
+    public boolean bloomEnabled() {
+        return bloomEnabled;
+    }
+
     public boolean vsyncEnabled() {
         return vsyncEnabled;
     }
@@ -70,6 +76,10 @@ public final class GameSettings {
 
     public boolean debugOverlayEnabled() {
         return debugOverlayEnabled;
+    }
+
+    public boolean debugChunkBordersEnabled() {
+        return debugChunkBordersEnabled;
     }
 
     public boolean chatEnabled() {
@@ -94,6 +104,17 @@ public final class GameSettings {
 
     public void setMeshBuildBudgetChunks(int value) {
         meshBuildBudgetChunks = clamp(value, 1, 12);
+    }
+
+    public void applyPreset(RenderPreset preset) {
+        renderDistanceChunks = clamp(preset.renderDistanceChunks(), 2, 18);
+        previewRadiusChunks = clamp(preset.previewRadiusChunks(), 1, 8);
+        meshBuildBudgetChunks = clamp(preset.meshBuildBudgetChunks(), 1, 12);
+        fogEnabled = preset.fogEnabled();
+        ambientOcclusionEnabled = preset.ambientOcclusionEnabled();
+        softShadowsEnabled = preset.softShadowsEnabled();
+        bloomEnabled = preset.bloomEnabled();
+        transparentWaterEnabled = preset.transparentWaterEnabled();
     }
 
     public void adjustRenderDistance(int delta) {
@@ -128,6 +149,10 @@ public final class GameSettings {
         softShadowsEnabled = !softShadowsEnabled;
     }
 
+    public void toggleBloom() {
+        bloomEnabled = !bloomEnabled;
+    }
+
     public void toggleVsync() {
         vsyncEnabled = !vsyncEnabled;
     }
@@ -138,6 +163,10 @@ public final class GameSettings {
 
     public void toggleDebugOverlay() {
         debugOverlayEnabled = !debugOverlayEnabled;
+    }
+
+    public void toggleDebugChunkBorders() {
+        debugChunkBordersEnabled = !debugChunkBordersEnabled;
     }
 
     public void toggleChat() {

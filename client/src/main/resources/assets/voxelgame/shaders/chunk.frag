@@ -10,8 +10,10 @@ in vec3 vNormal;
 in vec2 vFaceUv;
 uniform int uFogEnabled;
 uniform int uAtlasEnabled;
+uniform int uBloomEnabled;
 uniform float uFogStart;
 uniform float uFogEnd;
+uniform float uBloomStrength;
 uniform vec3 uFogColor;
 uniform sampler2D uBlockAtlas;
 uniform vec4 uSideUv[256];
@@ -56,6 +58,11 @@ vec3 blockColor(int id) {
     if (id == 34) return vec3(0.95, 0.45, 0.20);
     if (id == 35) return vec3(0.42, 0.42, 0.40);
     if (id == 36) return vec3(0.38, 0.24, 0.13);
+    if (id == 37) return vec3(0.58, 0.32, 0.26);
+    if (id == 38) return vec3(0.50, 0.58, 0.62);
+    if (id == 39) return vec3(0.34, 0.78, 0.92);
+    if (id == 40) return vec3(1.00, 0.55, 0.20);
+    if (id == 41) return vec3(0.24, 0.22, 0.20);
     return vec3(0.70, 0.30, 0.70);
 }
 
@@ -93,10 +100,23 @@ vec4 blockSurface(int id) {
     return vec4(mix(color.rgb, sampled.rgb, sampled.a), sampled.a);
 }
 
+float emissiveStrength(int id) {
+    if (id == 9) return 0.85;
+    if (id == 25) return 0.78;
+    if (id == 34) return 0.55;
+    if (id == 39) return 0.92;
+    if (id == 40) return 1.0;
+    return 0.0;
+}
+
 void main() {
     int id = int(vBlockId + 0.5);
     vec4 surface = blockSurface(id);
     vec3 lit = surface.rgb * vLight * vShade * vAo;
+    if (uBloomEnabled == 1) {
+        float glow = emissiveStrength(id);
+        lit += surface.rgb * glow * uBloomStrength * (1.0 + vLight * 0.35);
+    }
     lit = pow(lit, vec3(0.92));
     lit = mix(vec3(dot(lit, vec3(0.299, 0.587, 0.114))), lit, 1.12);
     if (uFogEnabled == 1) {

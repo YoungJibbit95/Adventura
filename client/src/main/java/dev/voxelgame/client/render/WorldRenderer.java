@@ -59,6 +59,16 @@ public final class WorldRenderer implements AutoCloseable {
         return updated;
     }
 
+    public int rebuildDirty(ClientWorld world, boolean ambientOcclusion, boolean transparentWater, int maxBuilds, Vector3f priorityPosition) {
+        int updated = 0;
+        for (ClientWorld.LayeredMeshBuild build : world.buildDirtyLayeredMeshes(mesher, ambientOcclusion, transparentWater, maxBuilds, priorityPosition)) {
+            replaceMesh(opaqueMeshes, build.pos(), build.opaqueMesh());
+            replaceMesh(transparentMeshes, build.pos(), build.transparentMesh());
+            updated++;
+        }
+        return updated;
+    }
+
     public RenderStats render(Matrix4f projection, Matrix4f view, ClientWorld world, Vector3f cameraPosition, int renderDistanceChunks) {
         return render(projection, view, world, cameraPosition, RenderSettings.defaults(renderDistanceChunks));
     }
@@ -78,22 +88,30 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setInt("uFogEnabled", settings.fogEnabled() ? 1 : 0);
         shader.setInt("uAmbientOcclusionEnabled", settings.ambientOcclusionEnabled() ? 1 : 0);
         shader.setInt("uSoftShadowsEnabled", settings.softShadowsEnabled() ? 1 : 0);
+        shader.setInt("uBloomEnabled", settings.bloomEnabled() ? 1 : 0);
         shader.setFloat("uFogStart", settings.fogStart());
         shader.setFloat("uFogEnd", settings.fogEnd());
         shader.setFloat("uTime", (float) timeSeconds);
         shader.setFloat("uShadowStrength", settings.softShadowsEnabled() ? 0.38f : 0.20f);
+        shader.setFloat("uBloomStrength", settings.bloomStrength());
         shader.setVector3("uFogColor", new Vector3f(settings.skyR(), settings.skyG(), settings.skyB()));
         blockTextureAtlas.bindAndApply(shader, 0);
         int rendered = 0;
+        int renderedTransparent = 0;
         int culled = 0;
+        int drawCalls = 0;
+        int triangles = 0;
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : opaqueMeshes.entrySet()) {
             ChunkPos pos = entry.getKey();
             if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
                 culled++;
                 continue;
             }
-            entry.getValue().draw();
+            GpuChunkMesh mesh = entry.getValue();
+            mesh.draw();
             rendered++;
+            drawCalls++;
+            triangles += mesh.triangleCount();
         }
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -101,14 +119,28 @@ public final class WorldRenderer implements AutoCloseable {
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : transparentMeshes.entrySet()) {
             ChunkPos pos = entry.getKey();
             if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
+                culled++;
                 continue;
             }
-            entry.getValue().draw();
+            GpuChunkMesh mesh = entry.getValue();
+            mesh.draw();
+            renderedTransparent++;
+            drawCalls++;
+            triangles += mesh.triangleCount();
         }
         glDepthMask(true);
         glDisable(GL_BLEND);
         glUseProgram(0);
-        return new RenderStats(rendered, culled);
+        return new RenderStats(
+                rendered + renderedTransparent,
+                culled,
+                rendered,
+                renderedTransparent,
+                drawCalls,
+                triangles,
+                opaqueMeshes.size() + transparentMeshes.size(),
+                meshBytes()
+        );
     }
 
     public void clearMeshes() {
@@ -131,6 +163,18 @@ public final class WorldRenderer implements AutoCloseable {
             mesh.close();
         }
         target.clear();
+    }
+
+    private long meshBytes() {
+        return meshBytes(opaqueMeshes) + meshBytes(transparentMeshes);
+    }
+
+    private static long meshBytes(Map<ChunkPos, GpuChunkMesh> meshes) {
+        long bytes = 0L;
+        for (GpuChunkMesh mesh : meshes.values()) {
+            bytes += mesh.estimatedBytes();
+        }
+        return bytes;
     }
 
     public static boolean withinRenderDistance(ChunkPos pos, Vector3f cameraPosition, int renderDistanceChunks) {
@@ -159,6 +203,18 @@ public final class WorldRenderer implements AutoCloseable {
         shader.close();
     }
 
-    public record RenderStats(int renderedChunks, int culledChunks) {
+    public record RenderStats(
+            int renderedChunks,
+            int culledChunks,
+            int renderedOpaqueChunks,
+            int renderedTransparentChunks,
+            int drawCalls,
+            int triangles,
+            int loadedGpuMeshes,
+            long meshBytes
+    ) {
+        public RenderStats(int renderedChunks, int culledChunks) {
+            this(renderedChunks, culledChunks, renderedChunks, 0, renderedChunks, 0, 0, 0L);
+        }
     }
 }

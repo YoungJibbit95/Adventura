@@ -23,7 +23,30 @@ class WorldRendererTest {
         RenderSettings settings = RenderSettings.defaults(8);
 
         assertTrue(settings.fogEnabled());
+        assertTrue(settings.bloomEnabled());
         assertEquals(8, settings.renderDistanceChunks());
         assertTrue(settings.fogEnd() > settings.fogStart());
+    }
+
+    @Test
+    void chunkMeshReportsCountsAndEstimatedBytes() {
+        ChunkMesh mesh = new ChunkMesh(
+                new float[ChunkMesher.FLOATS_PER_VERTEX * 4],
+                new int[]{0, 1, 2, 0, 2, 3}
+        );
+
+        assertEquals(4, mesh.vertexCount());
+        assertEquals(6, mesh.indexCount());
+        assertEquals(2, mesh.triangleCount());
+        assertEquals((long) mesh.vertices().length * Float.BYTES + (long) mesh.indices().length * Integer.BYTES, mesh.estimatedBytes());
+    }
+
+    @Test
+    void renderStatsKeepsSmallConstructorForEmptyStats() {
+        WorldRenderer.RenderStats stats = new WorldRenderer.RenderStats(0, 0);
+
+        assertEquals(0, stats.renderedChunks());
+        assertEquals(0, stats.drawCalls());
+        assertEquals(0L, stats.meshBytes());
     }
 }

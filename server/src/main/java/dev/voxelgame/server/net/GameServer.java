@@ -54,6 +54,10 @@ public final class GameServer implements AutoCloseable {
         System.out.println("Adventura server listening on port " + port + " with protocol " + GamePacket.PROTOCOL_VERSION);
     }
 
+    public void broadcast(GamePacket packet) {
+        ServerConnectionHandler.broadcast(packet);
+    }
+
     @Override
     public void close() {
         if (channel != null) {

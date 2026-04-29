@@ -22,6 +22,8 @@ public final class GameServerMain {
         server.start();
 
         TickLoop tickLoop = new TickLoop(tick -> {
+            double now = System.nanoTime() / 1_000_000_000.0;
+            world.tickCampfires(now).forEach(server::broadcast);
             if (tick % TickLoop.TPS == 0) {
                 System.out.println("Server tick " + tick);
             }

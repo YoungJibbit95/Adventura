@@ -12,22 +12,33 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
     private final ClientWorld world;
     private final Hotbar hotbar;
     private final ChatLog chatLog;
+    private final ClientNetworkStats stats;
 
     public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog) {
+        this(username, world, hotbar, chatLog, new ClientNetworkStats());
+    }
+
+    public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog, ClientNetworkStats stats) {
         this.username = username;
         this.world = world;
         this.hotbar = hotbar;
         this.chatLog = chatLog;
+        this.stats = stats;
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        ctx.writeAndFlush(new GamePacket.Handshake(GamePacket.PROTOCOL_VERSION, "voxel-client"));
-        ctx.writeAndFlush(new GamePacket.LoginRequest(username, "dev-token"));
+        GamePacket.Handshake handshake = new GamePacket.Handshake(GamePacket.PROTOCOL_VERSION, "voxel-client");
+        GamePacket.LoginRequest login = new GamePacket.LoginRequest(username, "dev-token");
+        stats.recordSent(handshake);
+        stats.recordSent(login);
+        ctx.writeAndFlush(handshake);
+        ctx.writeAndFlush(login);
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, GamePacket packet) {
+        stats.recordReceived(packet);
         switch (packet) {
             case GamePacket.Handshake handshake -> System.out.println("Server handshake: " + handshake.clientName());
             case GamePacket.LoginAccepted accepted -> {
@@ -52,6 +63,7 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
             }
             case GamePacket.EntitySnapshots snapshots -> world.applyEntitySnapshots(snapshots.snapshots());
             case GamePacket.InventorySnapshot inventory -> hotbar.applySnapshot(inventory.slots());
+            case GamePacket.StorageOpen storage -> hotbar.applyStorageSnapshot(storage.x(), storage.y(), storage.z(), storage.slots());
             default -> {
             }
         }

@@ -35,4 +35,16 @@ class InventoryTest {
         assertEquals(ItemStack.EMPTY, inventory.slot(0));
         assertEquals(ItemStack.EMPTY, inventory.slot(1));
     }
+
+    @Test
+    void addStackKeepsToolDamage() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short axe = items.requireByKey("voxel:stone_axe").id();
+        Inventory inventory = new Inventory(2);
+        ItemStack damagedTool = new ItemStack(axe, 1, 9);
+
+        assertEquals(0, inventory.addStack(damagedTool, items));
+
+        assertEquals(damagedTool, inventory.slot(0));
+    }
 }

@@ -33,13 +33,14 @@ public final class InteractionRules {
         }
         ItemType item = items.requireById(selectedStack.itemId());
         if (item.toolType() == target.preferredTool() && item.isTool()) {
-            return switch (item.toolType()) {
+            float base = switch (item.toolType()) {
                 case PICKAXE -> 3.0f;
                 case SHOVEL -> 2.6f;
                 case AXE -> 2.8f;
                 case KNIFE -> 3.4f;
                 case NONE -> 1.0f;
             };
+            return base * toolTierMultiplier(item);
         }
         if (target.preferredTool() == ToolType.NONE) {
             return item.toolType() == ToolType.KNIFE ? 1.4f : 1.0f;
@@ -76,6 +77,19 @@ public final class InteractionRules {
             case Blocks.HERB_PLANTER -> Optional.of(new BlockInteraction("voxel:wild_herbs", 1, 0.35, "Picked wild herbs"));
             default -> Optional.empty();
         };
+    }
+
+    private static float toolTierMultiplier(ItemType item) {
+        if (item.key().contains("crystal_")) {
+            return 1.75f;
+        }
+        if (item.key().contains("iron_")) {
+            return 1.45f;
+        }
+        if (item.key().contains("copper_")) {
+            return 1.25f;
+        }
+        return 1.0f;
     }
 
     public record BlockInteraction(String itemKey, int count, double cooldownSeconds, String message) {

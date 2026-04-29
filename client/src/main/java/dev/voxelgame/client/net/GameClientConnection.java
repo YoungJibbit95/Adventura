@@ -22,6 +22,7 @@ public final class GameClientConnection implements AutoCloseable {
     private final ClientWorld world;
     private final Hotbar hotbar;
     private final ChatLog chatLog;
+    private final ClientNetworkStats stats = new ClientNetworkStats();
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private Channel channel;
 
@@ -48,7 +49,7 @@ public final class GameClientConnection implements AutoCloseable {
                                     .addLast(new LengthFieldPrepender(4))
                                     .addLast(new ClientPacketDecoder())
                                     .addLast(new ClientPacketEncoder())
-                                    .addLast(new ClientConnectionHandler(username, world, hotbar, chatLog));
+                                    .addLast(new ClientConnectionHandler(username, world, hotbar, chatLog, stats));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();
@@ -60,8 +61,13 @@ public final class GameClientConnection implements AutoCloseable {
 
     public void send(GamePacket packet) {
         if (channel != null && channel.isActive()) {
+            stats.recordSent(packet);
             channel.writeAndFlush(packet);
         }
+    }
+
+    public ClientNetworkStats.Snapshot stats() {
+        return stats.snapshot();
     }
 
     @Override

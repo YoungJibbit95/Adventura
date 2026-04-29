@@ -26,7 +26,11 @@ public final class Structures {
         }
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.STORAGE_CRATE));
         blocks.add(new BlockPlacement(1, 1, 0, Blocks.LANTERN));
-        return new StructureTemplate("voxel:small_ruin", blocks);
+        return new StructureTemplate(
+                "voxel:small_ruin",
+                blocks,
+                List.of(StructureMarker.loot("voxel:ruin_crate", 0, 1, 0))
+        );
     }
 
     public static StructureTemplate simpleHouse() {
@@ -133,7 +137,14 @@ public final class Structures {
         blocks.add(new BlockPlacement(2, 1, 1, Blocks.PINE_LOG));
         blocks.add(new BlockPlacement(2, 1, 0, Blocks.PINE_LOG));
         blocks.add(new BlockPlacement(0, 1, 2, Blocks.STORAGE_CRATE));
-        return new StructureTemplate("voxel:campsite", blocks);
+        return new StructureTemplate(
+                "voxel:campsite",
+                blocks,
+                List.of(
+                        StructureMarker.metadata("voxel:campfire_anchor", 0, 1, 0),
+                        StructureMarker.loot("voxel:campsite_crate", 0, 1, 2)
+                )
+        );
     }
 
     public static StructureTemplate compactVillage() {
@@ -164,7 +175,19 @@ public final class Structures {
         }
         blocks.add(new BlockPlacement(-2, 1, 2, Blocks.BERRY_BUSH));
         blocks.add(new BlockPlacement(2, 1, -2, Blocks.HERB_PLANTER));
-        return new StructureTemplate("voxel:compact_village", blocks);
+        return new StructureTemplate(
+                "voxel:compact_village",
+                blocks,
+                List.of(
+                        StructureMarker.metadata("voxel:village_center", 0, 1, 0),
+                        StructureMarker.metadata("voxel:market_anchor", 5, 1, 5),
+                        StructureMarker.entity("voxel:villager_spawn", -5, 1, -5),
+                        StructureMarker.entity("voxel:villager_spawn", 5, 1, -5),
+                        StructureMarker.loot("voxel:village_house_crate", -4, 1, -6),
+                        StructureMarker.loot("voxel:village_house_crate", 6, 1, -6),
+                        StructureMarker.loot("voxel:village_house_crate", -4, 1, 4)
+                )
+        );
     }
 
     private static void addTinyHouse(List<BlockPlacement> blocks, int originX, int originY, int originZ) {

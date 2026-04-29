@@ -158,7 +158,9 @@ public final class OverworldGenerator implements WorldGenerator {
         if (plantChance < biome.plantChance()) {
             short plant = plantChance < biome.plantChance() * 0.15 ? Blocks.SUN_BLOOM : Blocks.WILD_GRASS;
             if (("voxel:mire".equals(biome.key()) || "voxel:mushroom_grove".equals(biome.key())) && plantChance < biome.plantChance() * 0.55) {
-                plant = Blocks.RED_MUSHROOM;
+                plant = "voxel:mushroom_grove".equals(biome.key()) && plantChance < biome.plantChance() * 0.25
+                        ? Blocks.MUSHROOM_CLUSTER
+                        : Blocks.RED_MUSHROOM;
             } else if ("voxel:flower_fields".equals(biome.key()) && plantChance < biome.plantChance() * 0.60) {
                 plant = Blocks.SUN_BLOOM;
             } else if ("voxel:lakeside".equals(biome.key()) && plantChance < biome.plantChance() * 0.35) {
@@ -174,6 +176,10 @@ public final class OverworldGenerator implements WorldGenerator {
             chunk.setBlockId(x, height + 1, z, Blocks.BERRY_BUSH);
         } else if (detailChance >= 0.014 && detailChance < 0.018 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
             chunk.setBlockId(x, height + 1, z, Blocks.HERB_PLANTER);
+        } else if ("voxel:lakeside".equals(biome.key()) && detailChance >= 0.018 && detailChance < 0.032 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, Blocks.CLAY_DEPOSIT);
+        } else if ("voxel:mushroom_grove".equals(biome.key()) && detailChance >= 0.018 && detailChance < 0.036 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, Blocks.MUSHROOM_CLUSTER);
         }
 
         if ("voxel:sun_dunes".equals(biome.key())) {
@@ -309,6 +315,9 @@ public final class OverworldGenerator implements WorldGenerator {
         double vein = normalize(ValueNoise.fbm(seed ^ 0x0EE5L, x + y * 2.0, z - y * 1.5, 3, 0.055, 0.55));
         if (y < 28 && vein > 0.82 && ore < 0.055) {
             return Blocks.IRON_ORE;
+        }
+        if (y < 38 && vein > 0.86 && ore >= 0.22 && ore < 0.245) {
+            return Blocks.GLOW_CRYSTAL_NODE;
         }
         if (y < 68 && vein > 0.76 && ore >= 0.055 && ore < 0.12) {
             return Blocks.COPPER_ORE;

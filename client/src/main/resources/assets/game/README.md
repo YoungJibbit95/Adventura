@@ -12,7 +12,7 @@ Recommended block texture paths:
 - `textures/block/skyroot_log_top.png`
 - `textures/block/skyroot_planks.png`
 
-The renderer also checks `textures/blocks/` as a compatibility alias. For each block, `<block_name>.png` is enough; add `<block_name>_top.png`, `<block_name>_side.png` or `<block_name>_bottom.png` when a block needs different faces. If no individual file exists, known terrain sprites are sliced from `bloecke_blocks.png`, `natursachen_nature.png`, `deko_decor.png` and `misc_wasser_ui_paletten.png`. Generated sheets are used for item/UI icons and selected cutout decor, but not as default terrain cube faces.
+The renderer also checks `textures/blocks/` as a compatibility alias. For each block, `<block_name>.png` is enough; add `<block_name>_top.png`, `<block_name>_side.png` or `<block_name>_bottom.png` when a block needs different faces. If no individual file exists, known terrain sprites are sliced from the current sheets below.
 
 Good next folders:
 
@@ -23,7 +23,8 @@ Good next folders:
 
 Current sprite-sheet wiring:
 
-- `items_inventory.png` feeds hotbar, crafting and inventory icons.
-- `generated_item_icons_sheet.png`, `generated_tools_sheet.png`, `generated_plants_sheet.png` and `generated_decor_props_sheet.png` are mapped first for sharper HUD, hotbar, inventory and crafting sprites.
-- `bloecke_blocks.png`, `natursachen_nature.png` and `deko_decor.png` remain fallback item icons for block-like items and plants.
-- `bloecke_blocks.png`, `natursachen_nature.png`, `deko_decor.png` and `misc_wasser_ui_paletten.png` provide fallback block textures for the world renderer.
+- `ui_hud_sheet.png` feeds HUD hearts, hunger icons, menu surfaces and selected decor icons.
+- `blocks_tiles_sheet.png` feeds terrain/block texture atlas fallbacks and block-like item icons.
+- `tools_weapons_sheet.png` feeds tool and held-item icons.
+- `nature_food_sheet.png` feeds food, plant, fuel and cozy resource icons.
+- `ores_materials_sheet.png` feeds ore blocks, raw materials, ingots and crystal icons.

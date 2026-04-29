@@ -7,6 +7,7 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.BlockRenderLayer;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.registry.Registry;
@@ -23,6 +24,7 @@ import org.joml.Vector3f;
 import java.util.Optional;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -37,6 +39,7 @@ public final class ClientWorld {
     private final long seed;
     private final Set<ChunkPos> dirtyChunks = new LinkedHashSet<>();
     private final Map<Long, EntitySnapshot> entities = new HashMap<>();
+    private final Map<BlockPos, Double> activeCampfires = new HashMap<>();
     private UUID ownPlayerId;
     private boolean spawnEntitiesSeeded;
 
@@ -64,6 +67,14 @@ public final class ClientWorld {
         ensurePreviewAround(ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z)), radius);
     }
 
+    public synchronized void ensurePreviewAround(Vector3f position, int radius, int maxNewChunks) {
+        ensurePreviewAround(
+                ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z)),
+                radius,
+                maxNewChunks
+        );
+    }
+
     public synchronized void applyChunk(GamePacket.ChunkData data) {
         ChunkDataCodec.applyToWorld(world, data);
         markDirtyWithNeighbors(data.pos());
@@ -71,6 +82,9 @@ public final class ClientWorld {
 
     public synchronized void applyBlock(GamePacket.BlockUpdate update) {
         world.setBlockId(update.x(), update.y(), update.z(), update.blockId());
+        if (!CampfireRules.isActiveCampfire(update.blockId())) {
+            activeCampfires.remove(new BlockPos(update.x(), update.y(), update.z()));
+        }
         lightEngine.rebuildChunkLighting(world, ChunkPos.fromBlock(update.x(), update.z()));
         markDirtyWithNeighbors(ChunkPos.fromBlock(update.x(), update.z()));
     }
@@ -174,6 +188,91 @@ public final class ClientWorld {
         return world.blockId((int) Math.floor(eyePosition.x), (int) Math.floor(eyePosition.y), (int) Math.floor(eyePosition.z)) == Blocks.WATER;
     }
 
+    public synchronized boolean hasBlockWithin(Vector3f center, short blockId, int radius) {
+        int cx = (int) Math.floor(center.x);
+        int cy = (int) Math.floor(center.y);
+        int cz = (int) Math.floor(center.z);
+        int r = Math.max(0, radius);
+        for (int y = cy - r; y <= cy + r; y++) {
+            if (!world.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = cz - r; z <= cz + r; z++) {
+                for (int x = cx - r; x <= cx + r; x++) {
+                    if (world.blockId(x, y, z) == blockId) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public synchronized int skyLightAt(int x, int y, int z) {
+        return world.skyLight(x, y, z);
+    }
+
+    public synchronized int blockLightAt(int x, int y, int z) {
+        return world.blockLight(x, y, z);
+    }
+
+    public synchronized int combinedLightAt(int x, int y, int z) {
+        return Math.max(skyLightAt(x, y, z), blockLightAt(x, y, z));
+    }
+
+    public synchronized boolean hasActiveCampfireWithin(Vector3f center, int radius, double nowSeconds) {
+        tickCampfires(nowSeconds);
+        int cx = (int) Math.floor(center.x);
+        int cy = (int) Math.floor(center.y);
+        int cz = (int) Math.floor(center.z);
+        int r = Math.max(0, radius);
+        for (int y = cy - r; y <= cy + r; y++) {
+            if (!world.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = cz - r; z <= cz + r; z++) {
+                for (int x = cx - r; x <= cx + r; x++) {
+                    if (CampfireRules.isActiveCampfire(world.blockId(x, y, z))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public synchronized boolean fuelCampfire(Raycast.Hit hit, double nowSeconds, double addedFuelSeconds) {
+        if (!world.dimension().containsY(hit.y()) || addedFuelSeconds <= 0.0) {
+            return false;
+        }
+        short blockId = world.blockId(hit.x(), hit.y(), hit.z());
+        if (!CampfireRules.isCampfire(blockId)) {
+            return false;
+        }
+        BlockPos pos = new BlockPos(hit.x(), hit.y(), hit.z());
+        double activeUntil = Math.max(nowSeconds, activeCampfires.getOrDefault(pos, nowSeconds)) + addedFuelSeconds;
+        activeCampfires.put(pos, activeUntil);
+        if (blockId != Blocks.CAMPFIRE_ACTIVE) {
+            applyBlock(new GamePacket.BlockUpdate(hit.x(), hit.y(), hit.z(), Blocks.CAMPFIRE_ACTIVE));
+        }
+        return true;
+    }
+
+    public synchronized void tickCampfires(double nowSeconds) {
+        var iterator = activeCampfires.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<BlockPos, Double> entry = iterator.next();
+            if (entry.getValue() > nowSeconds) {
+                continue;
+            }
+            BlockPos pos = entry.getKey();
+            if (world.dimension().containsY(pos.y()) && world.blockId(pos.x(), pos.y(), pos.z()) == Blocks.CAMPFIRE_ACTIVE) {
+                applyBlock(new GamePacket.BlockUpdate(pos.x(), pos.y(), pos.z(), Blocks.CAMPFIRE_BURNED_OUT));
+            }
+            iterator.remove();
+        }
+    }
+
     public synchronized Vector3f spawnPosition() {
         int x = 8;
         int z = 8;
@@ -208,7 +307,15 @@ public final class ClientWorld {
 
     public synchronized List<LayeredMeshBuild> buildDirtyLayeredMeshes(ChunkMesher mesher, boolean ambientOcclusion, boolean transparentWater, int maxBuilds) {
         List<ChunkPos> positions = takeDirtyPositions(maxBuilds);
+        return buildLayeredMeshes(mesher, ambientOcclusion, transparentWater, positions);
+    }
 
+    public synchronized List<LayeredMeshBuild> buildDirtyLayeredMeshes(ChunkMesher mesher, boolean ambientOcclusion, boolean transparentWater, int maxBuilds, Vector3f priorityPosition) {
+        List<ChunkPos> positions = takeDirtyPositions(maxBuilds, priorityPosition);
+        return buildLayeredMeshes(mesher, ambientOcclusion, transparentWater, positions);
+    }
+
+    private List<LayeredMeshBuild> buildLayeredMeshes(ChunkMesher mesher, boolean ambientOcclusion, boolean transparentWater, List<ChunkPos> positions) {
         List<LayeredMeshBuild> builds = new ArrayList<>();
         for (ChunkPos pos : positions) {
             world.findChunk(pos).ifPresent(chunk -> {
@@ -245,18 +352,32 @@ public final class ClientWorld {
     }
 
     private void ensurePreviewAround(ChunkPos center, int radius) {
+        ensurePreviewAround(center, radius, Integer.MAX_VALUE);
+    }
+
+    private void ensurePreviewAround(ChunkPos center, int radius, int maxNewChunks) {
         List<ChunkPos> generated = new ArrayList<>();
+        List<ChunkPos> missing = new ArrayList<>();
         for (int z = center.z() - radius; z <= center.z() + radius; z++) {
             for (int x = center.x() - radius; x <= center.x() + radius; x++) {
                 ChunkPos pos = new ChunkPos(x, z);
                 if (world.findChunk(pos).isPresent()) {
                     continue;
                 }
-                Chunk chunk = world.getOrCreateChunk(pos);
-                generator.generate(chunk);
-                generated.add(pos);
-                spawnAmbientEntities(pos);
+                missing.add(pos);
             }
+        }
+        missing.sort(Comparator
+                .comparingInt((ChunkPos pos) -> square(pos.x() - center.x()) + square(pos.z() - center.z()))
+                .thenComparingInt(ChunkPos::x)
+                .thenComparingInt(ChunkPos::z));
+        int limit = Math.min(missing.size(), Math.max(0, maxNewChunks));
+        for (int i = 0; i < limit; i++) {
+            ChunkPos pos = missing.get(i);
+            Chunk chunk = world.getOrCreateChunk(pos);
+            generator.generate(chunk);
+            generated.add(pos);
+            spawnAmbientEntities(pos);
         }
         for (ChunkPos pos : generated) {
             lightEngine.rebuildChunkLighting(world, pos);
@@ -292,6 +413,34 @@ public final class ClientWorld {
         return positions;
     }
 
+    private List<ChunkPos> takeDirtyPositions(int maxBuilds, Vector3f priorityPosition) {
+        int limit = Math.max(1, maxBuilds);
+        if (priorityPosition == null || dirtyChunks.size() <= limit) {
+            return takeDirtyPositions(maxBuilds);
+        }
+
+        List<ChunkPos> positions = new ArrayList<>(dirtyChunks);
+        positions.sort(Comparator
+                .comparingDouble((ChunkPos pos) -> distanceSquaredToChunkCenter(pos, priorityPosition))
+                .thenComparingInt(ChunkPos::x)
+                .thenComparingInt(ChunkPos::z));
+        List<ChunkPos> selected = new ArrayList<>(positions.subList(0, Math.min(limit, positions.size())));
+        dirtyChunks.removeAll(selected);
+        return selected;
+    }
+
+    private static double distanceSquaredToChunkCenter(ChunkPos pos, Vector3f priorityPosition) {
+        double centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
+        double centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
+        double dx = centerX - priorityPosition.x;
+        double dz = centerZ - priorityPosition.z;
+        return dx * dx + dz * dz;
+    }
+
+    private static int square(int value) {
+        return value * value;
+    }
+
     private static int floor(double value) {
         return (int) Math.floor(value);
     }
@@ -304,5 +453,8 @@ public final class ClientWorld {
     }
 
     public record LayeredMeshBuild(ChunkPos pos, ChunkMesh opaqueMesh, ChunkMesh transparentMesh) {
+    }
+
+    private record BlockPos(int x, int y, int z) {
     }
 }

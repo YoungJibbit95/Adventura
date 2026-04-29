@@ -22,9 +22,14 @@ public final class GpuChunkMesh implements AutoCloseable {
     private final int vbo;
     private final int ebo;
     private final int indexCount;
+    private final int vertexCount;
+    private final long estimatedBytes;
+    private boolean closed;
 
     public GpuChunkMesh(ChunkMesh mesh) {
-        this.indexCount = mesh.indices().length;
+        this.indexCount = mesh.indexCount();
+        this.vertexCount = mesh.vertexCount();
+        this.estimatedBytes = mesh.estimatedBytes();
         this.vao = glGenVertexArrays();
         this.vbo = glGenBuffers();
         this.ebo = glGenBuffers();
@@ -50,6 +55,23 @@ public final class GpuChunkMesh implements AutoCloseable {
         glEnableVertexAttribArray(5);
 
         glBindVertexArray(0);
+        RenderResourceTracker.registerChunkMesh(estimatedBytes);
+    }
+
+    public int vertexCount() {
+        return vertexCount;
+    }
+
+    public int indexCount() {
+        return indexCount;
+    }
+
+    public int triangleCount() {
+        return indexCount / 3;
+    }
+
+    public long estimatedBytes() {
+        return estimatedBytes;
     }
 
     public void draw() {
@@ -62,8 +84,13 @@ public final class GpuChunkMesh implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         glDeleteBuffers(ebo);
         glDeleteBuffers(vbo);
         glDeleteVertexArrays(vao);
+        RenderResourceTracker.releaseChunkMesh(estimatedBytes);
     }
 }

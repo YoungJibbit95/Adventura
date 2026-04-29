@@ -25,9 +25,21 @@ public final class CraftingRecipes {
         short rope = items.requireByKey("voxel:simple_rope").id();
         short knife = items.requireByKey("voxel:stone_knife").id();
         short berries = items.requireByKey("voxel:berries").id();
+        short cookedBerries = items.requireByKey("voxel:cooked_berries").id();
+        short mushroom = items.requireByKey("voxel:mushroom").id();
+        short roastedMushroom = items.requireByKey("voxel:roasted_mushroom").id();
         short herbs = items.requireByKey("voxel:wild_herbs").id();
         short snack = items.requireByKey("voxel:healing_snack").id();
-        short clay = items.requireByKey("voxel:clay").id();
+        short clayLump = items.requireByKey("voxel:clay_lump").id();
+        short clayBowl = items.requireByKey("voxel:clay_bowl").id();
+        short clayPot = items.requireByKey("voxel:clay_pot").id();
+        short mushroomStew = items.requireByKey("voxel:mushroom_stew").id();
+        short herbSoup = items.requireByKey("voxel:herb_soup").id();
+        short charcoal = items.requireByKey("voxel:charcoal").id();
+        short rawCopper = items.requireByKey("voxel:raw_copper").id();
+        short copperIngot = items.requireByKey("voxel:copper_ingot").id();
+        short copperAxe = items.requireByKey("voxel:copper_axe").id();
+        short copperPickaxe = items.requireByKey("voxel:copper_pickaxe").id();
         short campfire = items.requireByKey("voxel:campfire").id();
         short storageCrate = items.requireByKey("voxel:storage_crate").id();
         short flowerPot = items.requireByKey("voxel:flower_pot").id();
@@ -42,138 +54,268 @@ public final class CraftingRecipes {
         short mossyStone = items.requireByKey("voxel:mossy_stone").id();
 
         return List.of(
-                new CraftingRecipe(
+                recipe(
                         "voxel:skyroot_planks",
                         "Craft Planks",
                         List.of(new CraftingRecipe.Ingredient(log, 1)),
-                        new ItemStack(planks, 4)
+                        new ItemStack(planks, 4),
+                        CraftingCategory.BASIC
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stick",
                         "Craft Sticks",
                         List.of(new CraftingRecipe.Ingredient(planks, 2)),
-                        new ItemStack(stick, 4)
+                        new ItemStack(stick, 4),
+                        CraftingCategory.BASIC
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:simple_rope",
                         "Twist Simple Rope",
-                        List.of(new CraftingRecipe.Ingredient(twig, 2), new CraftingRecipe.Ingredient(fiber, 3)),
-                        new ItemStack(rope, 2)
+                        List.of(new CraftingRecipe.Ingredient(twig, 1), new CraftingRecipe.Ingredient(fiber, 1)),
+                        new ItemStack(rope, 1),
+                        CraftingCategory.BASIC
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stone_knife",
                         "Craft Stone Knife",
-                        List.of(new CraftingRecipe.Ingredient(pebble, 2), new CraftingRecipe.Ingredient(twig, 1), new CraftingRecipe.Ingredient(fiber, 1)),
-                        new ItemStack(knife, 1)
+                        List.of(new CraftingRecipe.Ingredient(pebble, 1), new CraftingRecipe.Ingredient(twig, 1), new CraftingRecipe.Ingredient(fiber, 1)),
+                        new ItemStack(knife, 1),
+                        CraftingCategory.TOOLS
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stone_pickaxe",
                         "Craft Pickaxe",
-                        List.of(new CraftingRecipe.Ingredient(stone, 3), new CraftingRecipe.Ingredient(stick, 2)),
-                        new ItemStack(pickaxe, 1)
+                        List.of(new CraftingRecipe.Ingredient(pebble, 2), new CraftingRecipe.Ingredient(twig, 1), new CraftingRecipe.Ingredient(fiber, 1)),
+                        new ItemStack(pickaxe, 1),
+                        CraftingCategory.TOOLS
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stone_axe",
                         "Craft Axe",
-                        List.of(new CraftingRecipe.Ingredient(stone, 2), new CraftingRecipe.Ingredient(stick, 2)),
-                        new ItemStack(axe, 1)
+                        List.of(new CraftingRecipe.Ingredient(pebble, 1), new CraftingRecipe.Ingredient(twig, 1), new CraftingRecipe.Ingredient(rope, 1)),
+                        new ItemStack(axe, 1),
+                        CraftingCategory.TOOLS
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stone_shovel",
                         "Craft Shovel",
                         List.of(new CraftingRecipe.Ingredient(stone, 1), new CraftingRecipe.Ingredient(stick, 2)),
-                        new ItemStack(shovel, 1)
+                        new ItemStack(shovel, 1),
+                        CraftingCategory.TOOLS
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:stone_sword",
                         "Craft Sword",
                         List.of(new CraftingRecipe.Ingredient(stone, 2), new CraftingRecipe.Ingredient(stick, 1)),
-                        new ItemStack(sword, 1)
+                        new ItemStack(sword, 1),
+                        CraftingCategory.TOOLS
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:torch",
                         "Craft Torches",
                         List.of(new CraftingRecipe.Ingredient(coal, 1), new CraftingRecipe.Ingredient(stick, 1)),
-                        new ItemStack(torch, 4)
+                        new ItemStack(torch, 4),
+                        CraftingCategory.BASIC
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:campfire",
                         "Build Campfire",
-                        List.of(new CraftingRecipe.Ingredient(stone, 3), new CraftingRecipe.Ingredient(twig, 4)),
-                        new ItemStack(campfire, 1)
+                        List.of(new CraftingRecipe.Ingredient(stone, 2), new CraftingRecipe.Ingredient(twig, 3)),
+                        new ItemStack(campfire, 1),
+                        CraftingCategory.BUILDING
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:healing_snack",
                         "Mix Healing Snack",
                         List.of(new CraftingRecipe.Ingredient(herbs, 2), new CraftingRecipe.Ingredient(berries, 2)),
-                        new ItemStack(snack, 1)
+                        new ItemStack(snack, 1),
+                        CraftingCategory.FOOD
                 ),
-                new CraftingRecipe(
+                stationRecipe(
+                        "voxel:cooked_berries",
+                        "Warm Berries",
+                        List.of(new CraftingRecipe.Ingredient(berries, 2)),
+                        new ItemStack(cookedBerries, 1),
+                        CraftingStationType.CAMPFIRE,
+                        60,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
+                        "voxel:roasted_mushroom",
+                        "Roast Mushroom",
+                        List.of(new CraftingRecipe.Ingredient(mushroom, 1)),
+                        new ItemStack(roastedMushroom, 1),
+                        CraftingStationType.CAMPFIRE,
+                        60,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
+                        "voxel:mushroom_stew",
+                        "Cook Mushroom Stew",
+                        List.of(new CraftingRecipe.Ingredient(mushroom, 2), new CraftingRecipe.Ingredient(clayBowl, 1)),
+                        new ItemStack(mushroomStew, 1),
+                        CraftingStationType.CAMPFIRE,
+                        120,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
+                        "voxel:herb_soup",
+                        "Cook Herb Soup",
+                        List.of(new CraftingRecipe.Ingredient(herbs, 2), new CraftingRecipe.Ingredient(clayBowl, 1)),
+                        new ItemStack(herbSoup, 1),
+                        CraftingStationType.CAMPFIRE,
+                        120,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
+                        "voxel:charcoal",
+                        "Char Logs",
+                        List.of(new CraftingRecipe.Ingredient(log, 1)),
+                        new ItemStack(charcoal, 2),
+                        CraftingStationType.CAMPFIRE,
+                        100,
+                        CraftingCategory.BASIC
+                ),
+                stationRecipe(
+                        "voxel:clay_bowl",
+                        "Fire Clay Bowl",
+                        List.of(new CraftingRecipe.Ingredient(clayLump, 2)),
+                        new ItemStack(clayBowl, 1),
+                        CraftingStationType.CAMPFIRE,
+                        100,
+                        CraftingCategory.BASIC
+                ),
+                stationRecipe(
+                        "voxel:clay_pot",
+                        "Fire Clay Pot",
+                        List.of(new CraftingRecipe.Ingredient(clayLump, 4)),
+                        new ItemStack(clayPot, 1),
+                        CraftingStationType.CAMPFIRE,
+                        140,
+                        CraftingCategory.DECOR
+                ),
+                stationRecipe(
+                        "voxel:copper_ingot",
+                        "Smelt Copper",
+                        List.of(new CraftingRecipe.Ingredient(rawCopper, 2), new CraftingRecipe.Ingredient(charcoal, 1)),
+                        new ItemStack(copperIngot, 1),
+                        CraftingStationType.CAMPFIRE,
+                        160,
+                        CraftingCategory.TOOLS
+                ),
+                recipe(
+                        "voxel:copper_axe",
+                        "Craft Copper Axe",
+                        List.of(new CraftingRecipe.Ingredient(copperIngot, 2), new CraftingRecipe.Ingredient(stick, 1), new CraftingRecipe.Ingredient(rope, 1)),
+                        new ItemStack(copperAxe, 1),
+                        CraftingCategory.TOOLS
+                ),
+                recipe(
+                        "voxel:copper_pickaxe",
+                        "Craft Copper Pickaxe",
+                        List.of(new CraftingRecipe.Ingredient(copperIngot, 3), new CraftingRecipe.Ingredient(stick, 2)),
+                        new ItemStack(copperPickaxe, 1),
+                        CraftingCategory.TOOLS
+                ),
+                recipe(
                         "voxel:storage_crate",
                         "Build Simple Chest",
                         List.of(new CraftingRecipe.Ingredient(planks, 6), new CraftingRecipe.Ingredient(fiber, 2)),
-                        new ItemStack(storageCrate, 1)
+                        new ItemStack(storageCrate, 1),
+                        CraftingCategory.BUILDING
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:flower_pot",
-                        "Fire Clay Pot",
-                        List.of(new CraftingRecipe.Ingredient(clay, 3), new CraftingRecipe.Ingredient(coal, 1)),
-                        new ItemStack(flowerPot, 1)
+                        "Fill Flower Pot",
+                        List.of(new CraftingRecipe.Ingredient(clayPot, 1), new CraftingRecipe.Ingredient(herbs, 1)),
+                        new ItemStack(flowerPot, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:lantern",
                         "Assemble Lantern",
-                        List.of(new CraftingRecipe.Ingredient(torch, 1), new CraftingRecipe.Ingredient(rawCopperOrPebble(items), 2)),
-                        new ItemStack(lantern, 1)
+                        List.of(new CraftingRecipe.Ingredient(torch, 1), new CraftingRecipe.Ingredient(rawCopperOrPebble(items), 2), new CraftingRecipe.Ingredient(resinOrFiber(items), 1)),
+                        new ItemStack(lantern, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:woven_rug",
                         "Weave Rug",
                         List.of(new CraftingRecipe.Ingredient(fiber, 6), new CraftingRecipe.Ingredient(berries, 1)),
-                        new ItemStack(rug, 1)
+                        new ItemStack(rug, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:small_table",
                         "Build Small Table",
-                        List.of(new CraftingRecipe.Ingredient(planks, 4), new CraftingRecipe.Ingredient(stick, 2)),
-                        new ItemStack(table, 1)
+                        List.of(new CraftingRecipe.Ingredient(planks, 4), new CraftingRecipe.Ingredient(resinOrFiber(items), 1)),
+                        new ItemStack(table, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:wooden_chair",
                         "Build Wooden Chair",
                         List.of(new CraftingRecipe.Ingredient(planks, 3), new CraftingRecipe.Ingredient(stick, 2)),
-                        new ItemStack(chair, 1)
+                        new ItemStack(chair, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:garden_fence",
                         "Build Garden Fence",
                         List.of(new CraftingRecipe.Ingredient(stick, 6), new CraftingRecipe.Ingredient(rope, 1)),
-                        new ItemStack(fence, 4)
+                        new ItemStack(fence, 4),
+                        CraftingCategory.BUILDING
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:herb_planter",
                         "Plant Herb Box",
                         List.of(new CraftingRecipe.Ingredient(flowerPot, 1), new CraftingRecipe.Ingredient(herbs, 1)),
-                        new ItemStack(herbPlanter, 1)
+                        new ItemStack(herbPlanter, 1),
+                        CraftingCategory.DECOR
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:berry_bush",
                         "Plant Berry Bush",
                         List.of(new CraftingRecipe.Ingredient(berries, 2), new CraftingRecipe.Ingredient(fiber, 1)),
-                        new ItemStack(berryBush, 1)
+                        new ItemStack(berryBush, 1),
+                        CraftingCategory.BUILDING
                 ),
-                new CraftingRecipe(
+                recipe(
                         "voxel:mossy_path",
                         "Lay Mossy Path",
                         List.of(new CraftingRecipe.Ingredient(mossyStone, 1), new CraftingRecipe.Ingredient(fiber, 1)),
-                        new ItemStack(mossyPath, 2)
+                        new ItemStack(mossyPath, 2),
+                        CraftingCategory.BUILDING
                 )
         );
+    }
+
+    private static CraftingRecipe recipe(String key, String label, List<CraftingRecipe.Ingredient> ingredients, ItemStack result, CraftingCategory category) {
+        return new CraftingRecipe(key, label, ingredients, result, CraftingStationType.INVENTORY, RecipeUnlock.ALWAYS, 0, 0, category);
+    }
+
+    private static CraftingRecipe stationRecipe(
+            String key,
+            String label,
+            List<CraftingRecipe.Ingredient> ingredients,
+            ItemStack result,
+            CraftingStationType station,
+            int timeTicks,
+            CraftingCategory category
+    ) {
+        return new CraftingRecipe(key, label, ingredients, result, station, RecipeUnlock.NEAR_STATION, timeTicks, 0, category);
     }
 
     private static short rawCopperOrPebble(Registry<ItemType> items) {
         return items.findByKey("voxel:raw_copper")
                 .or(() -> items.findByKey("voxel:pebble"))
+                .orElseThrow()
+                .id();
+    }
+
+    private static short resinOrFiber(Registry<ItemType> items) {
+        return items.findByKey("voxel:resin")
+                .or(() -> items.findByKey("voxel:fiber"))
                 .orElseThrow()
                 .id();
     }

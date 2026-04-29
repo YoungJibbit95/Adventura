@@ -32,12 +32,16 @@ public final class Inventory {
         return List.of(slots.clone());
     }
 
+    public void setSlot(int index, ItemStack stack) {
+        slots[index] = stack == null || stack.isEmpty() ? ItemStack.EMPTY : stack;
+    }
+
     public void replaceSlots(List<ItemStack> newSlots) {
         if (newSlots.size() != slots.length) {
             throw new IllegalArgumentException("Expected " + slots.length + " inventory slots but got " + newSlots.size());
         }
         for (int i = 0; i < slots.length; i++) {
-            slots[i] = newSlots.get(i);
+            setSlot(i, newSlots.get(i));
         }
     }
 
@@ -67,20 +71,34 @@ public final class Inventory {
         if (itemId == 0 || count <= 0) {
             return count;
         }
+        return addStack(new ItemStack(itemId, count), items);
+    }
+
+    public int addStack(ItemStack stack, Registry<ItemType> items) {
+        if (stack == null || stack.isEmpty()) {
+            return 0;
+        }
+        short itemId = stack.itemId();
+        int count = stack.count();
+        if (itemId == 0 || count <= 0) {
+            return count;
+        }
         int remaining = count;
         ItemType type = items.requireById(itemId);
-        for (int i = 0; i < slots.length && remaining > 0; i++) {
-            ItemStack slot = slots[i];
-            if (slot.itemId() == itemId && slot.damage() == 0 && slot.count() < type.maxStackSize()) {
-                int moved = Math.min(remaining, type.maxStackSize() - slot.count());
-                slots[i] = new ItemStack(itemId, slot.count() + moved);
-                remaining -= moved;
+        if (stack.damage() == 0) {
+            for (int i = 0; i < slots.length && remaining > 0; i++) {
+                ItemStack slot = slots[i];
+                if (slot.itemId() == itemId && slot.damage() == 0 && slot.count() < type.maxStackSize()) {
+                    int moved = Math.min(remaining, type.maxStackSize() - slot.count());
+                    slots[i] = new ItemStack(itemId, slot.count() + moved);
+                    remaining -= moved;
+                }
             }
         }
         for (int i = 0; i < slots.length && remaining > 0; i++) {
             if (slots[i].isEmpty()) {
                 int moved = Math.min(remaining, type.maxStackSize());
-                slots[i] = new ItemStack(itemId, moved);
+                slots[i] = new ItemStack(itemId, moved, stack.damage());
                 remaining -= moved;
             }
         }

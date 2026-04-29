@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketCodecTest {
     @Test
@@ -101,6 +102,32 @@ class PacketCodecTest {
         assertEquals(2, decoded.slots().size());
         assertEquals(new ItemStack((short) 2, 16), decoded.slots().getFirst());
         assertEquals(ItemStack.EMPTY, decoded.slots().get(1));
+    }
+
+    @Test
+    void roundTripsStorageOpen() {
+        GamePacket.StorageOpen decoded = (GamePacket.StorageOpen) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.StorageOpen(3, 81, -4, List.of(new ItemStack((short) 55, 1), ItemStack.EMPTY))
+        ));
+
+        assertEquals(3, decoded.x());
+        assertEquals(81, decoded.y());
+        assertEquals(-4, decoded.z());
+        assertEquals(new ItemStack((short) 55, 1), decoded.slots().getFirst());
+        assertEquals(ItemStack.EMPTY, decoded.slots().get(1));
+    }
+
+    @Test
+    void roundTripsStorageTransfer() {
+        GamePacket.StorageTransfer decoded = (GamePacket.StorageTransfer) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.StorageTransfer(-2, 72, 8, true, 6)
+        ));
+
+        assertEquals(-2, decoded.x());
+        assertEquals(72, decoded.y());
+        assertEquals(8, decoded.z());
+        assertTrue(decoded.fromStorage());
+        assertEquals(6, decoded.slot());
     }
 
     @Test

@@ -1,6 +1,7 @@
 package dev.voxelgame.client.render.entity;
 
 import dev.voxelgame.client.render.ShaderProgram;
+import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -27,8 +28,8 @@ import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 
 public final class EntityRenderer implements AutoCloseable {
     private static final float[] VERTICES = {
-            -0.3f, 0.0f, -0.3f, 0.3f, 0.0f, -0.3f, 0.3f, 1.8f, -0.3f, -0.3f, 1.8f, -0.3f,
-            -0.3f, 0.0f, 0.3f, 0.3f, 0.0f, 0.3f, 0.3f, 1.8f, 0.3f, -0.3f, 1.8f, 0.3f
+            -0.5f, 0.0f, -0.5f, 0.5f, 0.0f, -0.5f, 0.5f, 1.0f, -0.5f, -0.5f, 1.0f, -0.5f,
+            -0.5f, 0.0f, 0.5f, 0.5f, 0.0f, 0.5f, 0.5f, 1.0f, 0.5f, -0.5f, 1.0f, 0.5f
     };
     private static final int[] INDICES = {
             0, 1, 2, 0, 2, 3,
@@ -77,18 +78,14 @@ public final class EntityRenderer implements AutoCloseable {
             float bob = "voxel:player".equals(snapshot.typeKey())
                     ? 0.0f
                     : (float) Math.sin(timeSeconds * 2.5 + snapshot.entityId() * 0.001) * 0.08f;
-            float scale = entityScale(snapshot.typeKey());
-            float baseY = "voxel:player".equals(snapshot.typeKey())
-                    ? (float) snapshot.y() - 1.62f
-                    : (float) snapshot.y();
-            Matrix4f model = new Matrix4f()
-                    .translate((float) snapshot.x(), baseY + bob, (float) snapshot.z())
-                    .rotateY((float) Math.toRadians(-snapshot.yaw()))
-                    .scale(scale);
-            shader.setMatrix4("uModel", model);
-            shader.setVector3("uBaseColor", baseColor(snapshot.typeKey()));
-            shader.setVector3("uHeadColor", headColor(snapshot.typeKey()));
-            glDrawElements(GL_TRIANGLES, INDICES.length, GL_UNSIGNED_INT, 0L);
+            Matrix4f base = new Matrix4f()
+                    .translate((float) snapshot.x(), EntityBounds.baseY(snapshot) + bob, (float) snapshot.z())
+                    .rotateY((float) Math.toRadians(-snapshot.yaw()));
+            if ("voxel:player".equals(snapshot.typeKey())) {
+                renderHumanoid(base, snapshot);
+            } else {
+                renderCreature(base, snapshot);
+            }
             rendered++;
         }
         glBindVertexArray(0);
@@ -104,19 +101,46 @@ public final class EntityRenderer implements AutoCloseable {
         shader.close();
     }
 
-    private static float entityScale(String typeKey) {
-        return switch (typeKey) {
-            case "voxel:cozy_sheep" -> 0.72f;
-            case "voxel:forest_bunny" -> 0.38f;
-            case "voxel:moss_snail" -> 0.34f;
-            case "voxel:firefly_swarm" -> 0.18f;
-            case "voxel:little_boar" -> 0.62f;
-            case "voxel:snow_hare" -> 0.45f;
-            case "voxel:mire_wisp" -> 0.62f;
-            case "voxel:dune_crawler" -> 0.70f;
-            case "voxel:forest_grazer", "voxel:meadow_grazer" -> 0.82f;
-            default -> 1.0f;
-        };
+    private void renderHumanoid(Matrix4f base, EntitySnapshot snapshot) {
+        Vector3f tunic = baseColor(snapshot.typeKey());
+        Vector3f head = headColor(snapshot.typeKey());
+        Vector3f pants = new Vector3f(0.12f, 0.18f, 0.24f);
+        drawBox(base, -0.14f, 0.0f, 0.0f, 0.20f, 0.64f, 0.22f, pants);
+        drawBox(base, 0.14f, 0.0f, 0.0f, 0.20f, 0.64f, 0.22f, pants);
+        drawBox(base, 0.0f, 0.62f, 0.0f, 0.50f, 0.78f, 0.30f, tunic);
+        drawBox(base, -0.40f, 0.68f, 0.0f, 0.16f, 0.70f, 0.18f, head);
+        drawBox(base, 0.40f, 0.68f, 0.0f, 0.16f, 0.70f, 0.18f, head);
+        drawBox(base, 0.0f, 1.42f, 0.0f, 0.44f, 0.44f, 0.44f, head);
+    }
+
+    private void renderCreature(Matrix4f base, EntitySnapshot snapshot) {
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        Vector3f body = baseColor(snapshot.typeKey());
+        Vector3f head = headColor(snapshot.typeKey());
+        float bodyWidth = bounds.width() * 0.82f;
+        float bodyHeight = bounds.height() * 0.62f;
+        float bodyDepth = bounds.depth() * 0.78f;
+        float legHeight = Math.max(0.10f, bounds.height() * 0.34f);
+        drawBox(base, 0.0f, legHeight, 0.0f, bodyWidth, bodyHeight, bodyDepth, body);
+        drawBox(base, 0.0f, legHeight + bodyHeight * 0.34f, -bounds.depth() * 0.42f, bounds.width() * 0.44f, bounds.height() * 0.42f, bounds.depth() * 0.36f, head);
+        if (!"voxel:firefly_swarm".equals(snapshot.typeKey()) && !"voxel:mire_wisp".equals(snapshot.typeKey())) {
+            float legWidth = Math.max(0.07f, bounds.width() * 0.18f);
+            float legDepth = Math.max(0.07f, bounds.depth() * 0.16f);
+            drawBox(base, -bounds.width() * 0.24f, 0.0f, -bounds.depth() * 0.22f, legWidth, legHeight, legDepth, body);
+            drawBox(base, bounds.width() * 0.24f, 0.0f, -bounds.depth() * 0.22f, legWidth, legHeight, legDepth, body);
+            drawBox(base, -bounds.width() * 0.24f, 0.0f, bounds.depth() * 0.22f, legWidth, legHeight, legDepth, body);
+            drawBox(base, bounds.width() * 0.24f, 0.0f, bounds.depth() * 0.22f, legWidth, legHeight, legDepth, body);
+        }
+    }
+
+    private void drawBox(Matrix4f base, float x, float y, float z, float sx, float sy, float sz, Vector3f color) {
+        Matrix4f model = new Matrix4f(base)
+                .translate(x, y, z)
+                .scale(sx, sy, sz);
+        shader.setMatrix4("uModel", model);
+        shader.setVector3("uBaseColor", color);
+        shader.setVector3("uHeadColor", color);
+        glDrawElements(GL_TRIANGLES, INDICES.length, GL_UNSIGNED_INT, 0L);
     }
 
     private static Vector3f baseColor(String typeKey) {

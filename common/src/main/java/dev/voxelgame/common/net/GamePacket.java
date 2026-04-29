@@ -20,10 +20,12 @@ public sealed interface GamePacket permits
         GamePacket.PlayerMove,
         GamePacket.EntitySnapshots,
         GamePacket.InventorySnapshot,
+        GamePacket.StorageOpen,
+        GamePacket.StorageTransfer,
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 6;
+    int PROTOCOL_VERSION = 7;
 
     PacketType type();
 
@@ -173,6 +175,30 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.INVENTORY_SNAPSHOT;
+        }
+    }
+
+    record StorageOpen(int x, int y, int z, List<ItemStack> slots) implements GamePacket {
+        public StorageOpen {
+            slots = List.copyOf(slots);
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.STORAGE_OPEN;
+        }
+    }
+
+    record StorageTransfer(int x, int y, int z, boolean fromStorage, int slot) implements GamePacket {
+        public StorageTransfer {
+            if (slot < 0) {
+                throw new IllegalArgumentException("slot must be >= 0");
+            }
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.STORAGE_TRANSFER;
         }
     }
 

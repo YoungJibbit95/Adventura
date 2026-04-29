@@ -2,9 +2,11 @@ package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
+import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.item.Inventory;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
@@ -26,6 +28,7 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.UUID;
 
@@ -75,6 +78,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             case GamePacket.LoginRequest login -> handleLogin(ctx, login);
             case GamePacket.BlockAction action -> handleBlockAction(ctx, action);
             case GamePacket.BlockInteract interact -> handleBlockInteract(ctx, interact);
+            case GamePacket.StorageTransfer transfer -> handleStorageTransfer(ctx, transfer);
             case GamePacket.CraftRequest craft -> handleCraftRequest(ctx, craft);
             case GamePacket.PlayerMove move -> {
                 if (!loggedIn) {
@@ -214,6 +218,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
+        if (targetBlock.get().id() == Blocks.STORAGE_CRATE) {
+            world.openStorageCrate(interact.targetX(), interact.targetY(), interact.targetZ()).ifPresent(slots -> {
+                ctx.writeAndFlush(new GamePacket.StorageOpen(interact.targetX(), interact.targetY(), interact.targetZ(), slots));
+                nextBlockActionTime = now + 0.12;
+            });
+            return;
+        }
+        if (tryFuelCampfire(ctx, interact, targetBlock.get(), now)) {
+            return;
+        }
         Optional<InteractionRules.BlockInteraction> interaction = InteractionRules.blockInteraction(targetBlock.get());
         if (interaction.isEmpty()) {
             sendInventory(ctx);
@@ -230,6 +244,55 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         sendInventory(ctx);
     }
 
+    private void handleStorageTransfer(ChannelHandlerContext ctx, GamePacket.StorageTransfer transfer) {
+        if (!loggedIn) {
+            ctx.close();
+            return;
+        }
+        if (!InteractionRules.canReachBlock(playerX, playerY, playerZ, transfer.x(), transfer.y(), transfer.z())) {
+            sendInventory(ctx);
+            return;
+        }
+        world.transferStorageStack(
+                transfer.x(),
+                transfer.y(),
+                transfer.z(),
+                inventory,
+                items,
+                transfer.fromStorage(),
+                transfer.slot()
+        ).ifPresentOrElse(slots -> {
+            ctx.writeAndFlush(new GamePacket.StorageOpen(transfer.x(), transfer.y(), transfer.z(), slots));
+            sendInventory(ctx);
+        }, () -> sendInventory(ctx));
+    }
+
+    private boolean tryFuelCampfire(ChannelHandlerContext ctx, GamePacket.BlockInteract interact, BlockType targetBlock, double now) {
+        if (!CampfireRules.isCampfire(targetBlock.id())) {
+            return false;
+        }
+        ItemStack selected = inventory.slot(interact.selectedSlot());
+        if (selected.isEmpty()) {
+            sendInventory(ctx);
+            return true;
+        }
+        ItemType selectedItem = items.requireById(selected.itemId());
+        OptionalDouble fuelSeconds = CampfireRules.fuelSeconds(selectedItem.key());
+        if (fuelSeconds.isEmpty()) {
+            sendInventory(ctx);
+            return true;
+        }
+        if (!inventory.removeFromSlot(interact.selectedSlot(), 1)) {
+            sendInventory(ctx);
+            return true;
+        }
+        world.fuelCampfire(interact.targetX(), interact.targetY(), interact.targetZ(), now, fuelSeconds.getAsDouble())
+                .ifPresent(CHANNELS::writeAndFlush);
+        nextBlockActionTime = now + 0.25;
+        sendInventory(ctx);
+        return true;
+    }
+
     private void handleCraftRequest(ChannelHandlerContext ctx, GamePacket.CraftRequest craft) {
         if (!loggedIn) {
             ctx.close();
@@ -238,8 +301,19 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         recipes.stream()
                 .filter(recipe -> recipe.key().equals(craft.recipeKey()))
                 .findFirst()
-                .ifPresent(recipe -> recipe.craft(inventory, items));
+                .ifPresent(recipe -> recipe.craft(inventory, items, currentCraftingStation()));
         sendInventory(ctx);
+    }
+
+    private CraftingStationType currentCraftingStation() {
+        double now = System.nanoTime() / 1_000_000_000.0;
+        return world.hasActiveCampfireWithin(playerX, playerY, playerZ, CampfireRules.STATION_RADIUS_BLOCKS, now)
+                ? CraftingStationType.CAMPFIRE
+                : CraftingStationType.INVENTORY;
+    }
+
+    public static void broadcast(GamePacket packet) {
+        CHANNELS.writeAndFlush(packet);
     }
 
     private Optional<Short> itemIdForKey(String itemKey) {

@@ -5,6 +5,7 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
+import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.item.Inventory;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
@@ -12,8 +13,10 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.item.StarterInventory;
 import dev.voxelgame.common.registry.Registry;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_1;
@@ -47,10 +50,16 @@ public final class Hotbar {
     private final Registry<BlockType> blocks = Blocks.createDefaultRegistry();
     private final Inventory inventory = new Inventory(36);
     private final List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+    private final Map<StoragePos, Inventory> storageInventories = new HashMap<>();
+    private StoragePos openStoragePos;
+    private Inventory openStorageInventory;
     private int selectedIndex;
 
     public synchronized void resetForNewGame() {
         StarterInventory.apply(inventory, items);
+        storageInventories.clear();
+        openStoragePos = null;
+        openStorageInventory = null;
         selectedIndex = 0;
     }
 
@@ -78,6 +87,75 @@ public final class Hotbar {
 
     public synchronized void applySnapshot(List<ItemStack> slots) {
         inventory.replaceSlots(slots);
+    }
+
+    public synchronized void openStorage(int x, int y, int z) {
+        StoragePos pos = new StoragePos(x, y, z);
+        openStoragePos = pos;
+        openStorageInventory = storageInventories.computeIfAbsent(pos, ignored -> new Inventory(18));
+    }
+
+    public synchronized void applyStorageSnapshot(int x, int y, int z, List<ItemStack> slots) {
+        StoragePos pos = new StoragePos(x, y, z);
+        Inventory storage = new Inventory(slots.size());
+        storage.replaceSlots(slots);
+        storageInventories.put(pos, storage);
+        openStoragePos = pos;
+        openStorageInventory = storage;
+    }
+
+    public synchronized void closeStorage() {
+        openStoragePos = null;
+        openStorageInventory = null;
+    }
+
+    public synchronized boolean storageOpen() {
+        return openStorageInventory != null && openStoragePos != null;
+    }
+
+    public synchronized int storageX() {
+        return openStoragePos == null ? 0 : openStoragePos.x();
+    }
+
+    public synchronized int storageY() {
+        return openStoragePos == null ? 0 : openStoragePos.y();
+    }
+
+    public synchronized int storageZ() {
+        return openStoragePos == null ? 0 : openStoragePos.z();
+    }
+
+    public synchronized int storageSlotCount() {
+        return openStorageInventory == null ? 0 : openStorageInventory.size();
+    }
+
+    public synchronized SlotView storageSlotView(int index) {
+        if (openStorageInventory == null || index < 0 || index >= openStorageInventory.size()) {
+            return SlotView.empty();
+        }
+        return viewFor(openStorageInventory.slot(index));
+    }
+
+    public synchronized boolean transferStorage(boolean fromStorage, int slot) {
+        if (openStorageInventory == null) {
+            return false;
+        }
+        Inventory source = fromStorage ? openStorageInventory : inventory;
+        Inventory target = fromStorage ? inventory : openStorageInventory;
+        if (slot < 0 || slot >= source.size()) {
+            return false;
+        }
+        ItemStack stack = source.slot(slot);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        int remaining = target.addStack(stack, items);
+        int moved = stack.count() - remaining;
+        if (moved <= 0) {
+            return false;
+        }
+        source.setSlot(slot, remaining == 0 ? ItemStack.EMPTY : new ItemStack(stack.itemId(), remaining, stack.damage()));
+        return true;
     }
 
     public synchronized Optional<Short> selectedPlaceBlockId() {
@@ -129,8 +207,16 @@ public final class Hotbar {
         return recipe.craft(inventory, items);
     }
 
+    public synchronized boolean craft(CraftingRecipe recipe, CraftingStationType stationType) {
+        return recipe.craft(inventory, items, stationType);
+    }
+
     public synchronized boolean canCraft(CraftingRecipe recipe) {
         return recipe.canCraft(inventory, items);
+    }
+
+    public synchronized boolean canCraft(CraftingRecipe recipe, CraftingStationType stationType) {
+        return recipe.canCraft(inventory, items, stationType);
     }
 
     public List<CraftingRecipe> recipes() {
@@ -162,7 +248,10 @@ public final class Hotbar {
     }
 
     public synchronized SlotView slotView(int index) {
-        ItemStack stack = inventory.slot(index);
+        return viewFor(inventory.slot(index));
+    }
+
+    private SlotView viewFor(ItemStack stack) {
         if (stack.isEmpty()) {
             return SlotView.empty();
         }
@@ -192,7 +281,7 @@ public final class Hotbar {
     }
 
     public String recipeSummary(CraftingRecipe recipe) {
-        StringBuilder builder = new StringBuilder(recipe.label()).append("  ");
+        StringBuilder builder = new StringBuilder(stationLabel(recipe.stationType())).append("  ");
         for (int i = 0; i < recipe.ingredients().size(); i++) {
             CraftingRecipe.Ingredient ingredient = recipe.ingredients().get(i);
             if (i > 0) {
@@ -201,6 +290,13 @@ public final class Hotbar {
             builder.append(label(items.requireById(ingredient.itemId()).key())).append(" x").append(ingredient.count());
         }
         return builder.toString();
+    }
+
+    public String recipeStatus(CraftingRecipe recipe, CraftingStationType stationType) {
+        if (!recipe.isAvailableAt(stationType)) {
+            return "Need " + stationLabel(recipe.stationType());
+        }
+        return canCraft(recipe, stationType) ? "Ready" : "Missing ingredients";
     }
 
     public synchronized String selectedTooltip() {
@@ -229,6 +325,19 @@ public final class Hotbar {
     private static String label(String key) {
         String value = key.substring(key.indexOf(':') + 1).replace('_', ' ');
         return value.substring(0, 1).toUpperCase(Locale.ROOT) + value.substring(1);
+    }
+
+    public static String stationLabel(CraftingStationType stationType) {
+        return switch (stationType) {
+            case INVENTORY -> "Inventory";
+            case CRAFTING_TABLE -> "Crafting Table";
+            case CAMPFIRE -> "Campfire";
+            case COOKING_POT -> "Cooking Pot";
+            case WORKBENCH -> "Workbench";
+        };
+    }
+
+    private record StoragePos(int x, int y, int z) {
     }
 
     public record SlotView(String itemKey, String label, int count, int durabilityLeft, int maxDurability, int foodValue, int healValue) {

@@ -2,8 +2,11 @@ package dev.voxelgame.client;
 
 import dev.voxelgame.client.audio.AudioCue;
 import dev.voxelgame.client.audio.GameAudio;
+import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
+import dev.voxelgame.client.render.ChunkBorderRenderer;
 import dev.voxelgame.client.render.RenderSettings;
+import dev.voxelgame.client.render.RenderResourceTracker;
 import dev.voxelgame.client.render.WorldRenderer;
 import dev.voxelgame.client.render.entity.EntityRenderer;
 import dev.voxelgame.client.ui.GameSprites;
@@ -14,18 +17,24 @@ import dev.voxelgame.client.ui.UiSpriteRenderer;
 import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingRecipe;
+import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.world.ChunkPos;
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.DoubleBuffer;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.OptionalDouble;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
@@ -87,12 +96,14 @@ public final class GameClient {
     private final Hotbar hotbar = new Hotbar();
     private final ChatLog chatLog = new ChatLog();
     private final PlayerStats playerStats = new PlayerStats();
+    private final BlockBreakAnimation blockBreakAnimation = new BlockBreakAnimation();
     private final GameAudio audio = new GameAudio();
     private final StringBuilder chatDraft = new StringBuilder();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
     private ClientWorld world;
     private WorldRenderer worldRenderer;
+    private ChunkBorderRenderer chunkBorderRenderer;
     private EntityRenderer entityRenderer;
     private UiRenderer uiRenderer;
     private UiSpriteRenderer spriteRenderer;
@@ -125,6 +136,14 @@ public final class GameClient {
     private double nextBlockActionTime;
     private double pendingScrollY;
     private double frameTimeSeconds;
+    private String pickupAnimationItemKey = "";
+    private double pickupAnimationUntil;
+    private double lastFrameMilliseconds;
+    private double lastWorldRenderMilliseconds;
+    private int lastMeshBuilds;
+    private int lastRenderedEntities;
+    private int lastRenderedEntityHitboxes;
+    private int lastChunkBorderDebugChunks;
 
     public GameClient(ConnectionOptions connectionOptions) {
         this.connectionOptions = connectionOptions;
@@ -172,6 +191,7 @@ public final class GameClient {
             }
         });
         worldRenderer = new WorldRenderer();
+        chunkBorderRenderer = new ChunkBorderRenderer();
         entityRenderer = new EntityRenderer();
         uiRenderer = new UiRenderer();
         spriteRenderer = new UiSpriteRenderer();
@@ -190,8 +210,10 @@ public final class GameClient {
         while (!glfwWindowShouldClose(window)) {
             double now = System.nanoTime() / 1_000_000_000.0;
             frameTimeSeconds = now;
-            float deltaSeconds = (float) Math.min(0.05, now - lastTime);
+            double rawDeltaSeconds = now - lastTime;
+            float deltaSeconds = (float) Math.min(0.05, rawDeltaSeconds);
             lastTime = now;
+            lastFrameMilliseconds = rawDeltaSeconds * 1000.0;
             updateFps(now);
 
             boolean leftMouse = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
@@ -213,7 +235,8 @@ public final class GameClient {
                 }
                 playerStats.tick(deltaSeconds, gameMode, world != null && world.isUnderwater(camera.position()), sprinting, moving);
                 if (!onlineMode) {
-                    world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks());
+                    world.tickCampfires(now);
+                    world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks(), settings.meshBuildBudgetChunks());
                 } else {
                     sendMovementIfDue(now);
                 }
@@ -221,7 +244,7 @@ public final class GameClient {
                     audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
-                handleBlockInteraction(leftClicked, rightClicked, now);
+                handleBlockInteraction(leftMouse, rightClicked, now);
             } else if (gameState == GameState.CHAT) {
                 handleChatInput();
             }
@@ -229,15 +252,32 @@ public final class GameClient {
             glClearColor(0.52f, 0.72f, 0.95f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             if (world != null) {
-                worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), settings.meshBuildBudgetChunks());
+                long renderStartNanos = System.nanoTime();
+                lastMeshBuilds = worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), settings.meshBuildBudgetChunks(), camera.position());
                 Matrix4f projection = new Matrix4f().perspective(
                         (float) Math.toRadians(settings.fieldOfViewDegrees()),
                         (float) framebufferWidth / framebufferHeight,
                         0.05f,
                         1200.0f
                 );
-                lastRenderStats = worldRenderer.render(projection, camera.viewMatrix(), world, camera.position(), currentRenderSettings(), now);
-                entityRenderer.render(projection, camera.viewMatrix(), world.visibleEntities(), now);
+                Matrix4f view = camera.viewMatrix();
+                List<EntitySnapshot> visibleEntities = world.visibleEntities();
+                lastRenderStats = worldRenderer.render(projection, view, world, camera.position(), currentRenderSettings(), now);
+                lastRenderedEntities = entityRenderer.render(projection, view, visibleEntities, now);
+                lastChunkBorderDebugChunks = settings.debugChunkBordersEnabled()
+                        ? chunkBorderRenderer.render(projection, view, camera.position(), world.dimension(), settings.renderDistanceChunks())
+                        : 0;
+                lastRenderedEntityHitboxes = settings.debugOverlayEnabled()
+                        ? chunkBorderRenderer.renderEntityHitboxes(projection, view, visibleEntities)
+                        : 0;
+                lastWorldRenderMilliseconds = (System.nanoTime() - renderStartNanos) / 1_000_000.0;
+            } else {
+                lastMeshBuilds = 0;
+                lastRenderedEntities = 0;
+                lastRenderedEntityHitboxes = 0;
+                lastChunkBorderDebugChunks = 0;
+                lastWorldRenderMilliseconds = 0.0;
+                lastRenderStats = new WorldRenderer.RenderStats(0, 0);
             }
 
             uiRenderer.begin();
@@ -250,6 +290,8 @@ public final class GameClient {
                 renderSettingsMenu(mouse, leftClicked);
             } else if (gameState == GameState.CRAFTING) {
                 renderCraftingScreen(mouse, leftClicked);
+            } else if (gameState == GameState.STORAGE) {
+                renderStorageScreen(mouse, leftClicked);
             }
             renderHud();
             renderChatOverlay();
@@ -277,6 +319,9 @@ public final class GameClient {
         if (worldRenderer != null) {
             worldRenderer.close();
         }
+        if (chunkBorderRenderer != null) {
+            chunkBorderRenderer.close();
+        }
         if (entityRenderer != null) {
             entityRenderer.close();
         }
@@ -287,40 +332,22 @@ public final class GameClient {
         glfwTerminate();
     }
 
-    private void handleBlockInteraction(boolean leftClicked, boolean rightClicked, double now) {
-        if (now < nextBlockActionTime) {
+    private void handleBlockInteraction(boolean leftMouse, boolean rightClicked, double now) {
+        if (leftMouse && now >= nextBlockActionTime) {
+            handleBlockBreakHold(now);
+        } else if (!leftMouse) {
+            blockBreakAnimation.clear();
+        }
+        if (rightClicked && now < nextBlockActionTime) {
             return;
         }
-        if (leftClicked) {
-            world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
-                if (onlineMode) {
-                    connection.send(new GamePacket.BlockAction(
-                            GamePacket.BlockAction.Action.BREAK,
-                            hotbar.selectedIndex(),
-                            hit.x(),
-                            hit.y(),
-                            hit.z(),
-                            hit.placeX(),
-                            hit.placeY(),
-                            hit.placeZ(),
-                            Blocks.AIR
-                    ));
-                    nextBlockActionTime = now + 0.18;
-                } else {
-                    world.targetBlock(hit).ifPresent(target -> {
-                        float multiplier = hotbar.selectedBreakMultiplier(target);
-                        if (world.breakBlock(hit)) {
-                            collectDrops(target, hit, multiplier);
-                            hotbar.damageSelectedTool(target);
-                            nextBlockActionTime = now + breakDelay(target, multiplier);
-                            statusMessage = "Gathered " + cozyName(target.dropItemKey());
-                            audio.play(AudioCue.BLOCK_BREAK);
-                        }
-                    });
-                }
-            });
-        }
         if (rightClicked) {
+            blockBreakAnimation.clear();
+            Optional<dev.voxelgame.common.math.Raycast.Hit> pickedHit = world.pick(camera.position(), camera.forward(), 7.0);
+            if (pickedHit.isPresent() && targetIsStorageCrate(pickedHit.get())) {
+                openStorageCrate(pickedHit.get(), now);
+                return;
+            }
             String foodLabel = hotbar.selectedLabel();
             if (hotbar.useSelectedFood(playerStats)) {
                 statusMessage = "Ate " + foodLabel;
@@ -329,7 +356,18 @@ public final class GameClient {
                 return;
             }
             Optional<Short> placeBlockId = hotbar.selectedPlaceBlockId();
-            world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
+            pickedHit.ifPresent(hit -> {
+                if (targetIsCampfire(hit) && selectedItemIsCampfireFuel()) {
+                    if (onlineMode) {
+                        connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
+                        statusMessage = "Campfire fuel requested";
+                        nextBlockActionTime = now + 0.15;
+                        updateWindowTitle();
+                    } else {
+                        handleLocalBlockInteract(hit, now);
+                    }
+                    return;
+                }
                 if (placeBlockId.isEmpty()) {
                     if (onlineMode) {
                         connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
@@ -366,20 +404,117 @@ public final class GameClient {
         }
     }
 
+    private void handleBlockBreakHold(double now) {
+        Optional<dev.voxelgame.common.math.Raycast.Hit> picked = world.pick(camera.position(), camera.forward(), 7.0);
+        if (picked.isEmpty()) {
+            blockBreakAnimation.clear();
+            return;
+        }
+        dev.voxelgame.common.math.Raycast.Hit hit = picked.get();
+        Optional<BlockType> target = world.targetBlock(hit);
+        if (target.isEmpty()) {
+            blockBreakAnimation.clear();
+            return;
+        }
+        BlockType block = target.get();
+        float multiplier = hotbar.selectedBreakMultiplier(block);
+        double duration = gameMode == GameMode.CREATIVE ? 0.08 : Math.max(0.16, breakDelay(block, multiplier));
+        blockBreakAnimation.startOrContinue(hit, block, duration, now);
+        if (!blockBreakAnimation.complete(now)) {
+            return;
+        }
+        performBlockBreak(hit, block, multiplier, now);
+        blockBreakAnimation.clear();
+    }
+
+    private void performBlockBreak(dev.voxelgame.common.math.Raycast.Hit hit, BlockType target, float multiplier, double now) {
+        if (onlineMode) {
+            connection.send(new GamePacket.BlockAction(
+                    GamePacket.BlockAction.Action.BREAK,
+                    hotbar.selectedIndex(),
+                    hit.x(),
+                    hit.y(),
+                    hit.z(),
+                    hit.placeX(),
+                    hit.placeY(),
+                    hit.placeZ(),
+                    Blocks.AIR
+            ));
+            nextBlockActionTime = now + 0.12;
+            blockBreakAnimation.hit(now);
+            return;
+        }
+        if (world.breakBlock(hit)) {
+            collectDrops(target, hit, multiplier, now);
+            hotbar.damageSelectedTool(target);
+            nextBlockActionTime = now + 0.10;
+            statusMessage = "Gathered " + cozyName(target.dropItemKey());
+            audio.play(AudioCue.BLOCK_BREAK);
+            blockBreakAnimation.hit(now);
+        }
+    }
+
     private void handleLocalBlockInteract(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
-        world.targetBlock(hit)
-                .flatMap(InteractionRules::blockInteraction)
-                .ifPresent(interaction -> {
-                    if (hotbar.addItem(interaction.itemKey(), interaction.count())) {
-                        statusMessage = interaction.message();
-                        nextBlockActionTime = now + interaction.cooldownSeconds();
-                        audio.play(AudioCue.INVENTORY_CLICK);
-                        updateWindowTitle();
-                    } else {
-                        statusMessage = "Inventory full";
-                        updateWindowTitle();
-                    }
-                });
+        Optional<BlockType> target = world.targetBlock(hit);
+        if (target.isEmpty()) {
+            return;
+        }
+        if (CampfireRules.isCampfire(target.get().id())) {
+            Optional<String> selectedItemKey = hotbar.selectedItemKey();
+            OptionalDouble fuelSeconds = selectedItemKey.isPresent()
+                    ? CampfireRules.fuelSeconds(selectedItemKey.get())
+                    : OptionalDouble.empty();
+            if (fuelSeconds.isPresent() && world.fuelCampfire(hit, now, fuelSeconds.getAsDouble())) {
+                hotbar.consumeSelectedOne();
+                statusMessage = "Campfire fueled";
+                nextBlockActionTime = now + 0.25;
+                audio.play(AudioCue.CRAFT);
+                updateWindowTitle();
+            } else {
+                statusMessage = "Campfire needs fuel";
+                nextBlockActionTime = now + 0.15;
+                updateWindowTitle();
+            }
+            return;
+        }
+        InteractionRules.blockInteraction(target.get()).ifPresent(interaction -> {
+            if (hotbar.addItem(interaction.itemKey(), interaction.count())) {
+                statusMessage = interaction.message();
+                nextBlockActionTime = now + interaction.cooldownSeconds();
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            } else {
+                statusMessage = "Inventory full";
+                updateWindowTitle();
+            }
+        });
+    }
+
+    private void openStorageCrate(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
+        hotbar.openStorage(hit.x(), hit.y(), hit.z());
+        if (onlineMode) {
+            connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
+            statusMessage = "Opening storage crate";
+        } else {
+            statusMessage = "Storage crate opened";
+        }
+        gameState = GameState.STORAGE;
+        nextBlockActionTime = now + 0.12;
+        audio.play(AudioCue.INVENTORY_CLICK);
+        setCursorForState();
+        updateWindowTitle();
+    }
+
+    private boolean targetIsCampfire(dev.voxelgame.common.math.Raycast.Hit hit) {
+        return world.targetBlock(hit).map(block -> CampfireRules.isCampfire(block.id())).orElse(false);
+    }
+
+    private boolean targetIsStorageCrate(dev.voxelgame.common.math.Raycast.Hit hit) {
+        return world.targetBlock(hit).map(block -> block.id() == Blocks.STORAGE_CRATE).orElse(false);
+    }
+
+    private boolean selectedItemIsCampfireFuel() {
+        return hotbar.selectedItemKey().map(key -> CampfireRules.fuelSeconds(key).isPresent()).orElse(false);
     }
 
     private boolean consumeHotbarScroll() {
@@ -391,16 +526,24 @@ public final class GameClient {
         return hotbar.scroll(scroll > 0.0 ? -1 : 1);
     }
 
-    private void collectDrops(BlockType target, dev.voxelgame.common.math.Raycast.Hit hit, float multiplier) {
+    private void collectDrops(BlockType target, dev.voxelgame.common.math.Raycast.Hit hit, float multiplier, double now) {
         world.dropFor(hit).ifPresent(drop -> {
-            int count = 1;
-            count = InteractionRules.dropCount(target, multiplier);
+            int count = InteractionRules.dropCount(target, multiplier);
             hotbar.addItem(drop, count);
+            pickupAnimationItemKey = drop;
+            pickupAnimationUntil = now + 0.48;
         });
     }
 
     private static double breakDelay(BlockType target, float multiplier) {
         return InteractionRules.breakDelaySeconds(target, multiplier);
+    }
+
+    private CraftingStationType currentCraftingStation() {
+        if (world != null && world.hasActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds)) {
+            return CraftingStationType.CAMPFIRE;
+        }
+        return CraftingStationType.INVENTORY;
     }
 
     private void handleGlobalKeys() {
@@ -420,7 +563,9 @@ public final class GameClient {
                 openChat("/");
             }
         }
-        if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && crafting && !previousCrafting) {
+        if (gameState == GameState.STORAGE && crafting && !previousCrafting) {
+            closeStorageScreen();
+        } else if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && crafting && !previousCrafting) {
             toggleCrafting();
         }
         if (f3 && !previousF3) {
@@ -510,7 +655,7 @@ public final class GameClient {
         String command = parts[0].toLowerCase(Locale.ROOT);
         try {
             switch (command) {
-                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /renderdistance n /preview n /meshbudget n /fov n /fog /ao /shadows /hud /debug /water /settings /clear /say text");
+                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /fov n /fog /ao /shadows /bloom /hud /debug /debugchunks /debuglight /debugbiome /water /settings /clear /say text");
                 case "keys", "keybinds" -> showKeybinds();
                 case "seed" -> chatLog.add("Seed: " + connectionOptions.seed());
                 case "pos" -> chatLog.add(positionLine());
@@ -520,6 +665,7 @@ public final class GameClient {
                     chatLog.add("Teleported to spawn");
                 }
                 case "gamemode", "gm" -> setGameMode(parts);
+                case "preset" -> applyRenderPreset(parts);
                 case "renderdistance", "rd" -> {
                     settings.setRenderDistanceChunks(parseInt(parts, 1));
                     chatLog.add("Render distance: " + settings.renderDistanceChunks());
@@ -546,8 +692,12 @@ public final class GameClient {
                     chatLog.add("Ambient AO: " + onOff(settings.ambientOcclusionEnabled()));
                 }
                 case "shadows" -> toggleCommand("Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
+                case "bloom" -> toggleCommand("Bloom", settings.bloomEnabled(), settings::toggleBloom);
                 case "hud" -> toggleCommand("HUD", settings.hudEnabled(), settings::toggleHud);
                 case "debug" -> toggleCommand("Debug overlay", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+                case "debugchunks" -> toggleCommand("Chunk borders", settings.debugChunkBordersEnabled(), settings::toggleDebugChunkBorders);
+                case "debuglight" -> chatLog.add(lightDebugLine());
+                case "debugbiome" -> chatLog.add(biomeDebugLine());
                 case "water" -> {
                     settings.toggleTransparentWater();
                     if (world != null) {
@@ -565,6 +715,23 @@ public final class GameClient {
         }
     }
 
+    private void applyRenderPreset(String[] parts) {
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Usage: /preset low|medium|high");
+        }
+        RenderPreset preset = RenderPreset.parse(parts[1]);
+        applyRenderPreset(preset);
+        chatLog.add("Render preset: " + preset.label());
+    }
+
+    private void applyRenderPreset(RenderPreset preset) {
+        settings.applyPreset(preset);
+        if (world != null) {
+            world.markAllLoadedDirty();
+            refreshPreview();
+        }
+    }
+
     private void sendSay(String commandLine) {
         String message = commandLine.length() > 4 ? commandLine.substring(4).trim() : "";
         if (message.isBlank()) {
@@ -575,6 +742,27 @@ public final class GameClient {
         } else {
             chatLog.add("<local> " + message);
         }
+    }
+
+    private String lightDebugLine() {
+        if (world == null) {
+            return "Light: no world";
+        }
+        int x = (int) Math.floor(camera.position().x);
+        int y = (int) Math.floor(camera.position().y);
+        int z = (int) Math.floor(camera.position().z);
+        int sky = world.skyLightAt(x, y, z);
+        int block = world.blockLightAt(x, y, z);
+        return "Light @ " + x + " " + y + " " + z + ": combined " + Math.max(sky, block) + " sky " + sky + " block " + block;
+    }
+
+    private String biomeDebugLine() {
+        if (world == null) {
+            return "Biome: no world";
+        }
+        int x = (int) Math.floor(camera.position().x);
+        int z = (int) Math.floor(camera.position().z);
+        return "Biome @ " + x + " " + z + ": " + biomeLabel(world.biomeKeyAt(x, z));
     }
 
     private void showKeybinds() {
@@ -630,6 +818,24 @@ public final class GameClient {
         return value ? "ON" : "OFF";
     }
 
+    private static String formatMilliseconds(double milliseconds) {
+        return String.format(Locale.ROOT, "%.1fMS", milliseconds);
+    }
+
+    private static String formatMegabytes(long bytes) {
+        return String.format(Locale.ROOT, "%.1fMB", bytes / (1024.0 * 1024.0));
+    }
+
+    private static String formatCount(long value) {
+        if (value >= 1_000_000) {
+            return String.format(Locale.ROOT, "%.1fM", value / 1_000_000.0);
+        }
+        if (value >= 1_000) {
+            return String.format(Locale.ROOT, "%.1fK", value / 1_000.0);
+        }
+        return Long.toString(value);
+    }
+
     private String positionLine() {
         org.joml.Vector3f position = camera.position();
         return "Position: " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z);
@@ -682,6 +888,7 @@ public final class GameClient {
                 case SETTINGS -> "Settings";
                 case CHAT -> "Chat";
                 case CRAFTING -> "Crafting";
+                case STORAGE -> "Storage Crate";
                 case PLAYING -> hotbar.selectedLabel();
             };
             glfwSetWindowTitle(window, "Adventura - " + suffix);
@@ -705,6 +912,8 @@ public final class GameClient {
                 closeChat();
             } else if (gameState == GameState.CRAFTING) {
                 resumeGame();
+            } else if (gameState == GameState.STORAGE) {
+                closeStorageScreen();
             }
         }
         previousEscape = escape;
@@ -755,9 +964,95 @@ public final class GameClient {
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
         float y = Math.max(142.0f, framebufferHeight * 0.20f);
         renderInventoryTabs(x, y - 52.0f, contentWidth);
-        renderWorkbenchPreview(previewCraftingRecipe(), x, y);
-        renderCraftingMenu(mouse, clicked, x + 360.0f, y);
+        CraftingStationType stationType = currentCraftingStation();
+        renderWorkbenchPreview(previewCraftingRecipe(stationType), x, y, stationType);
+        renderCraftingMenu(mouse, clicked, x + 360.0f, y, stationType);
         renderInventoryGridCompact(x, y + 266.0f);
+    }
+
+    private void renderStorageScreen(MousePosition mouse, boolean clicked) {
+        if (!hotbar.storageOpen()) {
+            resumeGame();
+            return;
+        }
+        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.74f));
+        uiRenderer.centeredText("STORAGE CRATE", framebufferWidth * 0.5f, 62.0f, 4.8f, UiColor.WHITE);
+        uiRenderer.centeredText("CLICK STACKS TO MOVE  E OR ESC CLOSE", framebufferWidth * 0.5f, 106.0f, 1.55f, UiColor.MUTED);
+
+        float slot = framebufferWidth < 820 ? 36.0f : 42.0f;
+        float gap = 6.0f;
+        int columns = 9;
+        float gridWidth = columns * slot + (columns - 1) * gap;
+        float panelWidth = Math.min(gridWidth + 56.0f, framebufferWidth - 42.0f);
+        float x = framebufferWidth * 0.5f - panelWidth * 0.5f + 28.0f;
+        float y = Math.max(132.0f, framebufferHeight * 0.20f);
+
+        uiRenderer.rect(x - 24.0f, y - 40.0f, panelWidth, 130.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
+        uiRenderer.text("CRATE", x, y - 26.0f, 2.2f, UiColor.WHITE);
+        uiRenderer.text("POS " + hotbar.storageX() + " " + hotbar.storageY() + " " + hotbar.storageZ(), x + panelWidth - 194.0f, y - 21.0f, 1.15f, UiColor.MUTED);
+        for (int i = 0; i < Math.min(hotbar.storageSlotCount(), 18); i++) {
+            int slotIndex = i;
+            int column = i % columns;
+            int row = i / columns;
+            float sx = x + column * (slot + gap);
+            float sy = y + row * (slot + gap);
+            renderTransferSlot(mouse, clicked, sx, sy, slot, hotbar.storageSlotView(i), false, false, () -> transferStorageSlot(true, slotIndex));
+        }
+
+        float inventoryY = y + 178.0f;
+        uiRenderer.rect(x - 24.0f, inventoryY - 40.0f, panelWidth, 238.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
+        uiRenderer.text("BACKPACK", x, inventoryY - 26.0f, 2.2f, UiColor.WHITE);
+        for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), 36); i++) {
+            int slotIndex = i;
+            int column = i % columns;
+            int row = i / columns;
+            float sx = x + column * (slot + gap);
+            float sy = inventoryY + row * (slot + gap);
+            boolean selected = i == hotbar.selectedIndex();
+            renderTransferSlot(mouse, clicked, sx, sy, slot, hotbar.slotView(i), selected, i < Hotbar.HOTBAR_SLOTS, () -> transferStorageSlot(false, slotIndex));
+        }
+
+        float buttonWidth = Math.min(220.0f, panelWidth);
+        drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, Math.min(framebufferHeight - 62.0f, inventoryY + 224.0f), buttonWidth, 40.0f, "CLOSE", true), mouse, clicked, this::closeStorageScreen);
+    }
+
+    private void renderTransferSlot(MousePosition mouse, boolean clicked, float x, float y, float size, Hotbar.SlotView slotView, boolean selected, boolean hotbarSlot, Runnable transfer) {
+        boolean hovered = contains(mouse, x, y, size, size);
+        if (hovered) {
+            uiRenderer.rect(x - 3.0f, y - 3.0f, size + 6.0f, size + 6.0f, UiColor.BUTTON_HOVER);
+        }
+        drawAssetSlot(x, y, size, selected, hotbarSlot);
+        if (!slotView.isEmpty()) {
+            drawItemIcon(slotView.itemKey(), x + 5.0f, y + 4.0f, size - 12.0f);
+            if (slotView.count() > 1) {
+                uiRenderer.text(String.valueOf(slotView.count()), x + size - 15.0f, y + size - 14.0f, 1.0f, UiColor.WHITE);
+            }
+            if (slotView.hasDurability()) {
+                drawDurabilityBar(x + 6.0f, y + size - 6.0f, size - 12.0f, slotView.durabilityLeft(), slotView.maxDurability());
+            }
+        }
+        if (hovered && clicked) {
+            transfer.run();
+        }
+    }
+
+    private void transferStorageSlot(boolean fromStorage, int slot) {
+        if (!hotbar.storageOpen()) {
+            return;
+        }
+        if (onlineMode && connection != null) {
+            connection.send(new GamePacket.StorageTransfer(hotbar.storageX(), hotbar.storageY(), hotbar.storageZ(), fromStorage, slot));
+            statusMessage = "Storage transfer requested";
+        } else if (hotbar.transferStorage(fromStorage, slot)) {
+            statusMessage = fromStorage ? "Moved from crate" : "Stored in crate";
+            audio.play(AudioCue.INVENTORY_CLICK);
+        }
+        updateWindowTitle();
+    }
+
+    private void closeStorageScreen() {
+        hotbar.closeStorage();
+        resumeGame();
     }
 
     private void renderInventoryTabs(float x, float y, float width) {
@@ -824,7 +1119,7 @@ public final class GameClient {
         });
         settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 108.0f, columnWidth * 0.5f - 24.0f, "Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
         settingToggleCompact(mouse, clicked, rightX + 18.0f, y + 168.0f, columnWidth * 0.5f - 26.0f, "HUD", settings.hudEnabled(), settings::toggleHud);
-        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 168.0f, columnWidth * 0.5f - 24.0f, "Chat", settings.chatEnabled(), settings::toggleChat);
+        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 168.0f, columnWidth * 0.5f - 24.0f, "Bloom", settings.bloomEnabled(), settings::toggleBloom);
         settingToggleCompact(mouse, clicked, rightX + 18.0f, y + 228.0f, columnWidth * 0.5f - 26.0f, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
         settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f, y + 228.0f, columnWidth * 0.5f - 24.0f, "VSync", settings.vsyncEnabled(), () -> {
             settings.toggleVsync();
@@ -832,7 +1127,12 @@ public final class GameClient {
         });
 
         uiRenderer.rect(x, y + 352.0f, panelWidth, 54.0f, new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
-        uiRenderer.text("Tip: lower World Preview and Mesh Budget first if chunk loading stutters.", x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
+        uiRenderer.text("PRESET", x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
+        float presetButtonWidth = 106.0f;
+        float presetX = x + 112.0f;
+        drawButton(new UiButton(presetX, y + 362.0f, presetButtonWidth, 34.0f, "LOW", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.LOW));
+        drawButton(new UiButton(presetX + presetButtonWidth + 10.0f, y + 362.0f, presetButtonWidth, 34.0f, "MEDIUM", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.MEDIUM));
+        drawButton(new UiButton(presetX + (presetButtonWidth + 10.0f) * 2.0f, y + 362.0f, presetButtonWidth, 34.0f, "HIGH", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.HIGH));
 
         float buttonWidth = Math.min(280.0f, framebufferWidth - 80.0f);
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, framebufferHeight - 86.0f, buttonWidth, 46.0f, "BACK", true), mouse, clicked, () -> {
@@ -862,46 +1162,49 @@ public final class GameClient {
         drawButton(new UiButton(x + width - 80.0f, y + 7.0f, 68.0f, 30.0f, enabled ? "ON" : "OFF", true), mouse, clicked, toggle);
     }
 
-    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y) {
+    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, CraftingStationType stationType) {
         float panelWidth = Math.min(560.0f, framebufferWidth - x - 32.0f);
         if (panelWidth < 260.0f) {
             return;
         }
-        int visibleRecipes = Math.min(9, hotbar.recipes().size());
-        float panelHeight = 70.0f + visibleRecipes * 42.0f + (hotbar.recipes().size() > visibleRecipes ? 24.0f : 0.0f);
+        List<CraftingRecipe> recipes = prioritizedRecipes(stationType);
+        int visibleRecipes = Math.min(9, recipes.size());
+        float panelHeight = 70.0f + visibleRecipes * 42.0f + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
         uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
         uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
-        uiRenderer.text("CLICK TO CRAFT", x + panelWidth - 150.0f, y - 25.0f, 1.2f, UiColor.MUTED);
+        uiRenderer.text("STATION " + Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x + panelWidth - 210.0f, y - 25.0f, 1.2f, UiColor.MUTED);
         float buttonHeight = 34.0f;
         for (int index = 0; index < visibleRecipes; index++) {
-            CraftingRecipe recipe = hotbar.recipes().get(index);
-            boolean canCraft = hotbar.canCraft(recipe);
+            CraftingRecipe recipe = recipes.get(index);
+            boolean canCraft = hotbar.canCraft(recipe, stationType);
             float rowY = y + index * 42.0f;
-            UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, recipe.label().toUpperCase(Locale.ROOT), canCraft);
+            String buttonLabel = recipe.label().toUpperCase(Locale.ROOT) + " [" + recipe.category().name() + "]";
+            UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, buttonLabel, canCraft);
             drawButton(button, mouse, clicked, () -> {
                 if (onlineMode) {
                     connection.send(new GamePacket.CraftRequest(recipe.key()));
                     statusMessage = "Crafting requested";
                     updateWindowTitle();
-                } else if (hotbar.craft(recipe)) {
+                } else if (hotbar.craft(recipe, stationType)) {
                     statusMessage = "Crafted " + recipe.label();
                     audio.play(AudioCue.CRAFT);
                     updateWindowTitle();
                 }
             });
-            uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 48), x + 42.0f, rowY + 24.0f, 1.15f, canCraft ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 42), x + 42.0f, rowY + 24.0f, 1.15f, canCraft ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(hotbar.recipeStatus(recipe, stationType).toUpperCase(Locale.ROOT), x + panelWidth - 142.0f, rowY + 24.0f, 1.0f, canCraft ? UiColor.ACCENT : UiColor.BUTTON_DISABLED);
             drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, rowY + 4.0f, 26.0f);
         }
-        if (hotbar.recipes().size() > visibleRecipes) {
-            uiRenderer.text("More recipes unlock in the list as the system grows.", x, y + visibleRecipes * 42.0f + 10.0f, 1.15f, UiColor.MUTED);
+        if (recipes.size() > visibleRecipes) {
+            uiRenderer.text("Craftable and station recipes are sorted to the top.", x, y + visibleRecipes * 42.0f + 10.0f, 1.15f, UiColor.MUTED);
         }
     }
 
-    private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y) {
+    private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y, CraftingStationType stationType) {
         float panelWidth = 316.0f;
         float panelHeight = 232.0f;
         uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.76f));
-        uiRenderer.text("WORKBENCH", x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text(Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x, y - 30.0f, 2.6f, UiColor.WHITE);
         uiRenderer.text("3 x 3", x + panelWidth - 62.0f, y - 25.0f, 1.25f, UiColor.MUTED);
 
         float slot = 42.0f;
@@ -930,24 +1233,34 @@ public final class GameClient {
             uiRenderer.rect(arrowX + 28.0f, arrowY + 4.0f, 10.0f, 15.0f, UiColor.MUTED);
             float outX = x + 222.0f;
             float outY = y + 48.0f;
-            boolean canCraft = hotbar.canCraft(recipe);
+            boolean canCraft = hotbar.canCraft(recipe, stationType);
             uiRenderer.rect(outX - 4.0f, outY - 4.0f, 58.0f, 58.0f, canCraft ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
             drawItemIcon(hotbar.itemKey(recipe.result().itemId()), outX + 4.0f, outY + 4.0f, 42.0f);
             if (recipe.result().count() > 1) {
                 uiRenderer.text(String.valueOf(recipe.result().count()), outX + 38.0f, outY + 39.0f, 1.15f, UiColor.WHITE);
             }
             uiRenderer.text(clampText(recipe.label(), 28), x, y + 158.0f, 1.55f, UiColor.WHITE);
-            uiRenderer.text(canCraft ? "READY TO CRAFT" : "MISSING INGREDIENTS", x, y + 180.0f, 1.25f, canCraft ? UiColor.ACCENT : UiColor.MUTED);
+            uiRenderer.text(hotbar.recipeStatus(recipe, stationType).toUpperCase(Locale.ROOT), x, y + 180.0f, 1.25f, canCraft ? UiColor.ACCENT : UiColor.MUTED);
         }
     }
 
-    private CraftingRecipe previewCraftingRecipe() {
-        for (CraftingRecipe recipe : hotbar.recipes()) {
-            if (hotbar.canCraft(recipe)) {
+    private CraftingRecipe previewCraftingRecipe(CraftingStationType stationType) {
+        for (CraftingRecipe recipe : prioritizedRecipes(stationType)) {
+            if (hotbar.canCraft(recipe, stationType)) {
                 return recipe;
             }
         }
         return hotbar.recipes().isEmpty() ? null : hotbar.recipes().get(0);
+    }
+
+    private List<CraftingRecipe> prioritizedRecipes(CraftingStationType stationType) {
+        return hotbar.recipes().stream()
+                .sorted(Comparator
+                        .comparingInt((CraftingRecipe recipe) -> hotbar.canCraft(recipe, stationType) ? 0 : 1)
+                        .thenComparingInt(recipe -> recipe.isAvailableAt(stationType) ? 0 : 1)
+                        .thenComparing(CraftingRecipe::category)
+                        .thenComparing(CraftingRecipe::label))
+                .toList();
     }
 
     private void renderInventoryGrid(float x, float y) {
@@ -997,8 +1310,7 @@ public final class GameClient {
             float sy = y + row * (slot + gap);
             boolean selected = i == hotbar.selectedIndex();
             Hotbar.SlotView slotView = hotbar.slotView(i);
-            uiRenderer.rect(sx - 2.0f, sy - 2.0f, slot + 4.0f, slot + 4.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.45f));
-            uiRenderer.rect(sx, sy, slot, slot, i < Hotbar.HOTBAR_SLOTS ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            drawAssetSlot(sx, sy, slot, selected, i < Hotbar.HOTBAR_SLOTS);
             if (!slotView.isEmpty()) {
                 drawItemIcon(slotView.itemKey(), sx + 6.0f, sy + 5.0f, 30.0f);
                 if (slotView.count() > 1) {
@@ -1017,44 +1329,48 @@ public final class GameClient {
         }
         uiRenderer.rect(framebufferWidth * 0.5f - 5.0f, framebufferHeight * 0.5f - 1.0f, 10.0f, 2.0f, UiColor.WHITE);
         uiRenderer.rect(framebufferWidth * 0.5f - 1.0f, framebufferHeight * 0.5f - 5.0f, 2.0f, 10.0f, UiColor.WHITE);
+        renderBreakOverlay();
 
-        float hotbarWidth = Hotbar.HOTBAR_SLOTS * 72.0f + (Hotbar.HOTBAR_SLOTS - 1) * 6.0f;
+        float hotbarSlotSize = 58.0f;
+        float hotbarGap = 6.0f;
+        float hotbarWidth = Hotbar.HOTBAR_SLOTS * hotbarSlotSize + (Hotbar.HOTBAR_SLOTS - 1) * hotbarGap;
         float hotbarX = Math.max(20.0f, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
-        float hotbarY = framebufferHeight - 78.0f;
-        float statsY = hotbarY - 54.0f;
-        uiRenderer.rect(hotbarX - 12.0f, statsY - 12.0f, hotbarWidth + 24.0f, 116.0f, new UiColor(0.025f, 0.032f, 0.03f, 0.54f));
-        uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 32.0f, 1.55f, UiColor.WHITE);
-        drawIconMeter("heart_full", "heart_empty", playerStats.health(), 20, hotbarX + 10.0f, statsY, 18.0f);
-        drawIconMeter("hunger_full", "hunger_empty", playerStats.hunger(), 20, hotbarX + hotbarWidth - 226.0f, statsY, 18.0f);
-        drawMeterBar("ENERGY", playerStats.stamina(), 20, hotbarX + hotbarWidth * 0.5f - 132.0f, statsY + 27.0f, UiColor.ENERGY);
-        uiRenderer.text("MODE " + gameMode.name(), hotbarX + hotbarWidth - 116.0f, statsY + 29.0f, 1.15f, UiColor.MUTED);
+        float hotbarY = framebufferHeight - 86.0f;
+        float statsY = hotbarY - 58.0f;
+        drawHudSprite("frame_moss", hotbarX - 18.0f, statsY - 20.0f, hotbarWidth + 36.0f, 138.0f);
+        uiRenderer.rect(hotbarX - 12.0f, statsY - 14.0f, hotbarWidth + 24.0f, 128.0f, new UiColor(0.025f, 0.032f, 0.03f, 0.36f));
+        uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 38.0f, 1.55f, UiColor.WHITE);
+        drawIconMeter("heart_full", "heart_half", "heart_empty", playerStats.health(), 20, hotbarX + 8.0f, statsY, 18.0f);
+        drawIconMeter("hunger_full", "hunger_half", "hunger_empty", playerStats.hunger(), 20, hotbarX + hotbarWidth - 226.0f, statsY - 4.0f, 18.0f);
+        drawIconMeter("leaf_full", "leaf_half", "leaf_empty", playerStats.stamina(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 28.0f, 16.0f);
+        uiRenderer.text("MODE " + gameMode.name(), hotbarX + hotbarWidth - 116.0f, statsY + 33.0f, 1.15f, UiColor.MUTED);
         if (playerStats.breath() < 20) {
-            drawIconMeter("air_full", "", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY - 26.0f, 16.0f);
+            drawIconMeter("air_full", "air_half", "air_empty", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY - 28.0f, 16.0f);
         }
         if (playerStats.armor() > 0) {
-            drawIconMeter("armor_full", "armor_full", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 51.0f, 16.0f);
+            drawIconMeter("armor_full", "armor_half", "armor_empty", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 52.0f, 16.0f);
         }
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {
-            float x = hotbarX + i * 78.0f;
+            float x = hotbarX + i * (hotbarSlotSize + hotbarGap);
             float y = hotbarY;
             Hotbar.SlotView slot = hotbar.slotView(i);
             boolean selected = i == hotbar.selectedIndex();
-            uiRenderer.rect(x - 2.0f, y - 2.0f, 74.0f, 44.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.55f));
-            uiRenderer.rect(x, y, 70.0f, 40.0f, selected ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
-            uiRenderer.text(String.valueOf(i + 1), x + 5.0f, y + 6.0f, 1.05f, UiColor.MUTED);
+            drawAssetSlot(x, y, hotbarSlotSize, selected, true);
+            uiRenderer.text(String.valueOf(i + 1), x + 7.0f, y + 8.0f, 1.05f, UiColor.MUTED);
             if (!slot.isEmpty()) {
-                drawItemIcon(slot.itemKey(), x + 22.0f, y + 5.0f, 28.0f);
+                drawItemIcon(slot.itemKey(), x + 14.0f, y + 10.0f, 34.0f);
                 if (slot.count() > 1) {
-                    uiRenderer.text(String.valueOf(slot.count()), x + 53.0f, y + 23.0f, 1.15f, UiColor.WHITE);
+                    uiRenderer.text(String.valueOf(slot.count()), x + 40.0f, y + 39.0f, 1.15f, UiColor.WHITE);
                 }
                 if (slot.hasDurability()) {
-                    drawDurabilityBar(x + 10.0f, y + 35.0f, 50.0f, slot.durabilityLeft(), slot.maxDurability());
+                    drawDurabilityBar(x + 10.0f, y + 51.0f, 38.0f, slot.durabilityLeft(), slot.maxDurability());
                 }
             }
         }
         if (gameState == GameState.PLAYING || gameState == GameState.CHAT) {
             renderHeldItem();
         }
+        renderPickupAnimation();
         if (settings.debugOverlayEnabled()) {
             renderDebugOverlay();
         }
@@ -1064,30 +1380,40 @@ public final class GameClient {
         hotbar.selectedItemKey().ifPresent(itemKey -> {
             float size = Math.max(82.0f, Math.min(128.0f, framebufferHeight * 0.16f));
             float bob = (float) Math.sin(frameTimeSeconds * 5.0) * 3.0f;
-            float x = framebufferWidth - size - 54.0f;
-            float y = framebufferHeight - size - 26.0f + bob;
-            uiRenderer.rect(x + 10.0f, y + 12.0f, size - 14.0f, size - 10.0f, new UiColor(0.02f, 0.02f, 0.018f, 0.30f));
-            drawItemIcon(itemKey, x, y, size);
+            float swing = blockBreakAnimation.handSwing(frameTimeSeconds);
+            float punch = (float) Math.sin((1.0f - swing) * Math.PI) * swing;
+            float x = framebufferWidth - size - 54.0f - punch * 28.0f;
+            float y = framebufferHeight - size - 26.0f + bob + punch * 22.0f;
+            uiRenderer.rect(x + size * 0.38f, y + size * 0.40f, size * 0.34f, size * 0.72f, new UiColor(0.70f, 0.50f, 0.34f, 0.92f));
+            uiRenderer.rect(x + size * 0.34f, y + size * 0.36f, size * 0.42f, size * 0.20f, new UiColor(0.82f, 0.62f, 0.42f, 0.96f));
+            uiRenderer.rect(x + 10.0f, y + 12.0f, size - 14.0f, size - 10.0f, new UiColor(0.02f, 0.02f, 0.018f, 0.20f));
+            drawItemIcon(itemKey, x - punch * 10.0f, y - punch * 8.0f, size);
         });
     }
 
     private void drawMeterBar(String label, int value, int max, float x, float y, UiColor fill) {
         float width = 128.0f;
         float ratio = Math.max(0.0f, Math.min(1.0f, value / (float) max));
-        uiRenderer.text(label, x, y + 2.0f, 1.2f, UiColor.MUTED);
-        uiRenderer.rect(x + 78.0f, y, width, 14.0f, UiColor.SLOT);
-        uiRenderer.rect(x + 80.0f, y + 2.0f, (width - 4.0f) * ratio, 10.0f, fill);
-        uiRenderer.text(value + "/" + max, x + 214.0f, y + 2.0f, 1.05f, UiColor.WHITE);
+        float barX = label.isBlank() ? x : x + 78.0f;
+        if (!label.isBlank()) {
+            uiRenderer.text(label, x, y + 2.0f, 1.2f, UiColor.MUTED);
+        }
+        uiRenderer.rect(barX, y, width, 14.0f, UiColor.SLOT);
+        uiRenderer.rect(barX + 2.0f, y + 2.0f, (width - 4.0f) * ratio, 10.0f, fill);
+        if (!label.isBlank()) {
+            uiRenderer.text(value + "/" + max, barX + width + 8.0f, y + 2.0f, 1.05f, UiColor.WHITE);
+        }
     }
 
-    private void drawIconMeter(String fullKey, String emptyKey, int value, int max, float x, float y, float size) {
+    private void drawIconMeter(String fullKey, String halfKey, String emptyKey, int value, int max, float x, float y, float size) {
         if (sprites == null || spriteRenderer == null) {
             return;
         }
         int slots = 10;
         for (int i = 0; i < slots; i++) {
-            boolean filled = value > Math.round(i * (max / (float) slots));
-            String key = filled ? fullKey : emptyKey;
+            float lower = i * (max / (float) slots);
+            float upper = (i + 1) * (max / (float) slots);
+            String key = value >= upper ? fullKey : value > lower ? halfKey : emptyKey;
             if (key.isBlank()) {
                 continue;
             }
@@ -1128,13 +1454,94 @@ public final class GameClient {
     private void renderDebugOverlay() {
         org.joml.Vector3f position = camera.position();
         String biome = world == null ? "none" : world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z()));
-        uiRenderer.rect(12.0f, 12.0f, 360.0f, 124.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
-        uiRenderer.text("FPS " + lastFps, 22.0f, 24.0f, 1.65f, UiColor.WHITE);
+        int chunkX = Math.floorDiv((int) Math.floor(position.x), ChunkPos.SIZE);
+        int chunkZ = Math.floorDiv((int) Math.floor(position.z), ChunkPos.SIZE);
+        int blockX = (int) Math.floor(position.x);
+        int blockY = (int) Math.floor(position.y);
+        int blockZ = (int) Math.floor(position.z);
+        int skyLight = world == null ? 0 : world.skyLightAt(blockX, blockY, blockZ);
+        int blockLight = world == null ? 0 : world.blockLightAt(blockX, blockY, blockZ);
+        int combinedLight = Math.max(skyLight, blockLight);
+        RenderResourceTracker.Snapshot resources = RenderResourceTracker.snapshot();
+        ClientNetworkStats.Snapshot network = connection == null ? ClientNetworkStats.Snapshot.offline() : connection.stats();
+        String selectedItem = hotbar.selectedLabel();
+        String lookingAt = "none";
+        if (world != null) {
+            Optional<dev.voxelgame.common.math.Raycast.Hit> hit = world.pick(position, camera.forward(), 7.0);
+            if (hit.isPresent()) {
+                dev.voxelgame.common.math.Raycast.Hit picked = hit.get();
+                lookingAt = world.targetBlock(picked)
+                        .map(block -> cozyName(block.key()) + " @ " + picked.x() + " " + picked.y() + " " + picked.z())
+                        .orElse("none");
+            }
+        }
+        uiRenderer.rect(12.0f, 12.0f, 570.0f, 256.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
+        uiRenderer.text("FPS " + lastFps + " FRAME " + formatMilliseconds(lastFrameMilliseconds) + " RENDER " + formatMilliseconds(lastWorldRenderMilliseconds), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
-        uiRenderer.text("BIOME " + biomeLabel(biome), 22.0f, 64.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("RD " + settings.renderDistanceChunks() + " MB " + settings.meshBuildBudgetChunks() + " DIRTY " + (world == null ? 0 : world.dirtyChunkCount()), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + lastRenderStats.renderedChunks() + " CULL " + lastRenderStats.culledChunks() + " LOADED " + (world == null ? 0 : world.loadedChunkCount()), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome), 22.0f, 64.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("RD " + settings.renderDistanceChunks() + " MB " + settings.meshBuildBudgetChunks() + " DIRTY " + (world == null ? 0 : world.dirtyChunkCount()) + " BUILT " + lastMeshBuilds, 22.0f, 84.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOADED " + (world == null ? 0 : world.loadedChunkCount()) + " GPU MESH " + lastRenderStats.loadedGpuMeshes(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + lastRenderStats.drawCalls() + " OPAQUE " + lastRenderStats.renderedOpaqueChunks() + " WATER " + lastRenderStats.renderedTransparentChunks() + " CULL " + lastRenderStats.culledChunks(), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("TRIS " + formatCount(lastRenderStats.triangles()) + " VRAM " + formatMegabytes(lastRenderStats.meshBytes()) + " ENT " + lastRenderedEntities + " HITBOX " + lastRenderedEntityHitboxes, 22.0f, 144.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()) + " BORDERS " + lastChunkBorderDebugChunks, 22.0f, 164.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 184.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("NET " + onOff(onlineMode) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SEL " + clampText(selectedItem, 52), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOOK " + clampText(lookingAt, 52), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
+    }
+
+    private void renderBreakOverlay() {
+        if (!blockBreakAnimation.active()) {
+            return;
+        }
+        float progress = blockBreakAnimation.progress(frameTimeSeconds);
+        float size = 42.0f + progress * 16.0f;
+        float x = framebufferWidth * 0.5f - size * 0.5f;
+        float y = framebufferHeight * 0.5f - size * 0.5f;
+        uiRenderer.rect(x, y, size, size, new UiColor(0.05f, 0.04f, 0.035f, 0.20f + progress * 0.24f));
+        UiColor crack = new UiColor(0.95f, 0.88f, 0.72f, 0.42f + progress * 0.45f);
+        float thickness = 2.0f + progress * 2.0f;
+        uiRenderer.rect(x + size * 0.18f, y + size * 0.32f, size * 0.54f, thickness, crack);
+        uiRenderer.rect(x + size * 0.48f, y + size * 0.24f, thickness, size * 0.55f, crack);
+        uiRenderer.rect(x + size * 0.31f, y + size * 0.56f, size * 0.42f, thickness, crack);
+        if (progress > 0.38f) {
+            uiRenderer.rect(x + size * 0.22f, y + size * 0.72f, size * 0.32f, thickness, crack);
+            uiRenderer.rect(x + size * 0.69f, y + size * 0.42f, thickness, size * 0.34f, crack);
+        }
+        if (progress > 0.70f) {
+            drawHudSprite("sparkle", x + size * 0.68f, y - size * 0.12f, 26.0f, 24.0f);
+        }
+        drawMeterBar("", Math.round(progress * 100.0f), 100, framebufferWidth * 0.5f - 104.0f, y + size + 12.0f, UiColor.ACCENT);
+    }
+
+    private void renderPickupAnimation() {
+        if (pickupAnimationItemKey.isBlank() || frameTimeSeconds >= pickupAnimationUntil) {
+            return;
+        }
+        float remaining = (float) Math.max(0.0, pickupAnimationUntil - frameTimeSeconds);
+        float t = Math.max(0.0f, Math.min(1.0f, remaining / 0.48f));
+        float size = 34.0f + (1.0f - t) * 16.0f;
+        float x = framebufferWidth * 0.5f - size * 0.5f;
+        float y = framebufferHeight * 0.5f + 36.0f - (1.0f - t) * 46.0f;
+        drawItemIcon(pickupAnimationItemKey, x, y, size);
+        uiRenderer.centeredText("+", x - 8.0f, y + 8.0f, 1.5f, UiColor.ACCENT);
+    }
+
+    private void drawAssetSlot(float x, float y, float size, boolean selected, boolean hotbarSlot) {
+        String key = selected ? "slot_selected" : hotbarSlot ? "slot_hotbar" : "slot";
+        if (!drawHudSprite(key, x, y, size, size)) {
+            uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.55f));
+            uiRenderer.rect(x, y, size, size, selected ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+        }
+    }
+
+    private boolean drawHudSprite(String key, float x, float y, float width, float height) {
+        if (sprites == null || spriteRenderer == null) {
+            return false;
+        }
+        Optional<dev.voxelgame.client.ui.UiSprite> sprite = sprites.hud(key);
+        sprite.ifPresent(value -> spriteRenderer.sprite(value, x, y, width, height));
+        return sprite.isPresent();
     }
 
     private void drawItemIcon(String itemKey, float x, float y, float size) {
@@ -1185,6 +1592,10 @@ public final class GameClient {
         }
     }
 
+    private static boolean contains(MousePosition mouse, float x, float y, float width, float height) {
+        return mouse.x() >= x && mouse.x() <= x + width && mouse.y() >= y && mouse.y() <= y + height;
+    }
+
     private void updateFps(double now) {
         framesThisSecond++;
         if (now >= nextFpsSampleTime) {
@@ -1225,6 +1636,8 @@ public final class GameClient {
                 settings.fogEnabled(),
                 settings.ambientOcclusionEnabled(),
                 settings.softShadowsEnabled(),
+                settings.bloomEnabled(),
+                settings.bloomEnabled() ? 0.22f : 0.0f,
                 fogEnd * 0.58f,
                 fogEnd,
                 0.52f,
@@ -1306,6 +1719,7 @@ public final class GameClient {
         if (worldRenderer != null) {
             worldRenderer.clearMeshes();
         }
+        hotbar.closeStorage();
         world = null;
         onlineMode = false;
         nextMoveSendTime = 0.0;
@@ -1330,7 +1744,8 @@ public final class GameClient {
         PAUSED,
         SETTINGS,
         CHAT,
-        CRAFTING
+        CRAFTING,
+        STORAGE
     }
 
     private record MousePosition(double x, double y) {

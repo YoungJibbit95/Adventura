@@ -5,41 +5,75 @@ import dev.voxelgame.common.registry.Registry;
 import java.util.List;
 import java.util.Objects;
 
-public record CraftingRecipe(String key, String label, List<Ingredient> ingredients, ItemStack result) {
+public record CraftingRecipe(
+        String key,
+        String label,
+        List<Ingredient> ingredients,
+        ItemStack result,
+        CraftingStationType stationType,
+        RecipeUnlock unlockCondition,
+        int craftingTimeTicks,
+        int outputExperience,
+        CraftingCategory category
+) {
+    public CraftingRecipe(String key, String label, List<Ingredient> ingredients, ItemStack result) {
+        this(key, label, ingredients, result, CraftingStationType.INVENTORY, RecipeUnlock.ALWAYS, 0, 0, CraftingCategory.BASIC);
+    }
+
     public CraftingRecipe {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(label, "label");
         ingredients = List.copyOf(ingredients);
         Objects.requireNonNull(result, "result");
+        Objects.requireNonNull(stationType, "stationType");
+        Objects.requireNonNull(unlockCondition, "unlockCondition");
+        Objects.requireNonNull(category, "category");
         if (ingredients.isEmpty()) {
             throw new IllegalArgumentException("Recipe needs at least one ingredient");
         }
         if (result.isEmpty()) {
             throw new IllegalArgumentException("Recipe result cannot be empty");
         }
+        if (craftingTimeTicks < 0 || outputExperience < 0) {
+            throw new IllegalArgumentException("Recipe timing and experience must be >= 0");
+        }
     }
 
     public boolean canCraft(Inventory inventory, Registry<ItemType> items) {
-        for (Ingredient ingredient : ingredients) {
-            if (!inventory.has(ingredient.itemId(), ingredient.count())) {
-                return false;
-            }
+        return canCraft(inventory, items, CraftingStationType.INVENTORY);
+    }
+
+    public boolean canCraft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation) {
+        if (!isAvailableAt(availableStation)) {
+            return false;
         }
         Inventory simulated = inventory.copy();
         for (Ingredient ingredient : ingredients) {
-            simulated.remove(ingredient.itemId(), ingredient.count());
+            if (!simulated.remove(ingredient.itemId(), ingredient.count())) {
+                return false;
+            }
         }
         return simulated.canAdd(result.itemId(), result.count(), items);
     }
 
     public boolean craft(Inventory inventory, Registry<ItemType> items) {
-        if (!canCraft(inventory, items)) {
+        return craft(inventory, items, CraftingStationType.INVENTORY);
+    }
+
+    public boolean craft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation) {
+        if (!canCraft(inventory, items, availableStation)) {
             return false;
         }
         for (Ingredient ingredient : ingredients) {
-            inventory.remove(ingredient.itemId(), ingredient.count());
+            if (!inventory.remove(ingredient.itemId(), ingredient.count())) {
+                return false;
+            }
         }
         return inventory.add(result.itemId(), result.count(), items) == 0;
+    }
+
+    public boolean isAvailableAt(CraftingStationType availableStation) {
+        return stationType == CraftingStationType.INVENTORY || stationType == availableStation;
     }
 
     public record Ingredient(short itemId, int count) {

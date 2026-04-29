@@ -16,7 +16,9 @@ public enum PacketType {
     CHAT(10),
     INVENTORY_SNAPSHOT(11),
     CRAFT_REQUEST(12),
-    BLOCK_INTERACT(13);
+    BLOCK_INTERACT(13),
+    STORAGE_OPEN(14),
+    STORAGE_TRANSFER(15);
 
     private static final Map<Integer, PacketType> BY_ID = new HashMap<>();
 

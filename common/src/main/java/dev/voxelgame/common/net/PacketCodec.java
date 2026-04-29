@@ -97,6 +97,19 @@ public final class PacketCodec {
                     }
                 }
                 case GamePacket.InventorySnapshot inventory -> writeItemStacks(out, inventory.slots());
+                case GamePacket.StorageOpen storage -> {
+                    out.writeInt(storage.x());
+                    out.writeInt(storage.y());
+                    out.writeInt(storage.z());
+                    writeItemStacks(out, storage.slots());
+                }
+                case GamePacket.StorageTransfer transfer -> {
+                    out.writeInt(transfer.x());
+                    out.writeInt(transfer.y());
+                    out.writeInt(transfer.z());
+                    out.writeBoolean(transfer.fromStorage());
+                    out.writeInt(transfer.slot());
+                }
                 case GamePacket.CraftRequest craft -> out.writeUTF(craft.recipeKey());
                 case GamePacket.Chat chat -> out.writeUTF(chat.message());
             }
@@ -159,6 +172,8 @@ public final class PacketCodec {
                     yield new GamePacket.EntitySnapshots(snapshots);
                 }
                 case INVENTORY_SNAPSHOT -> new GamePacket.InventorySnapshot(readItemStacks(in));
+                case STORAGE_OPEN -> new GamePacket.StorageOpen(in.readInt(), in.readInt(), in.readInt(), readItemStacks(in));
+                case STORAGE_TRANSFER -> new GamePacket.StorageTransfer(in.readInt(), in.readInt(), in.readInt(), in.readBoolean(), in.readInt());
                 case CRAFT_REQUEST -> new GamePacket.CraftRequest(in.readUTF());
                 case CHAT -> new GamePacket.Chat(in.readUTF());
             };

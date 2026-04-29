@@ -55,4 +55,23 @@ class HotbarTest {
         assertTrue(hotbar.scroll(1));
         assertEquals(0, hotbar.selectedIndex());
     }
+
+    @Test
+    void localStorageTransfersStacksBothWays() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack((short) 2, 4));
+        hotbar.applySnapshot(slots);
+        hotbar.openStorage(1, 70, -2);
+
+        assertTrue(hotbar.transferStorage(false, 0));
+        assertTrue(hotbar.slotView(0).isEmpty());
+        assertEquals("voxel:dirt", hotbar.storageSlotView(0).itemKey());
+        assertEquals(4, hotbar.storageSlotView(0).count());
+
+        assertTrue(hotbar.transferStorage(true, 0));
+        assertEquals("voxel:dirt", hotbar.slotView(0).itemKey());
+        assertEquals(4, hotbar.slotView(0).count());
+        assertTrue(hotbar.storageSlotView(0).isEmpty());
+    }
 }
