@@ -1,0 +1,102 @@
+#version 330 core
+
+in float vLight;
+in float vBlockId;
+in float vShade;
+in float vDistance;
+in float vAo;
+in vec3 vWorldPosition;
+in vec3 vNormal;
+uniform int uFogEnabled;
+uniform int uAtlasEnabled;
+uniform float uFogStart;
+uniform float uFogEnd;
+uniform vec3 uFogColor;
+uniform sampler2D uBlockAtlas;
+uniform vec4 uSideUv[256];
+uniform vec4 uTopUv[256];
+uniform vec4 uBottomUv[256];
+out vec4 fragColor;
+
+vec3 blockColor(int id) {
+    if (id == 1) return vec3(0.48, 0.48, 0.47);
+    if (id == 2) return vec3(0.42, 0.27, 0.15);
+    if (id == 3) return vec3(0.33, 0.62, 0.24);
+    if (id == 4) return vec3(0.20, 0.42, 0.82);
+    if (id == 5) return vec3(0.78, 0.70, 0.45);
+    if (id == 6) return vec3(0.42, 0.28, 0.16);
+    if (id == 7) return vec3(0.20, 0.48, 0.24);
+    if (id == 8) return vec3(0.28, 0.27, 0.26);
+    if (id == 9) return vec3(1.00, 0.72, 0.30);
+    if (id == 10) return vec3(0.25, 0.58, 0.20);
+    if (id == 11) return vec3(0.95, 0.75, 0.20);
+    if (id == 12) return vec3(0.58, 0.50, 0.43);
+    if (id == 13) return vec3(0.62, 0.36, 0.20);
+    if (id == 14) return vec3(0.46, 0.55, 0.62);
+    if (id == 15) return vec3(0.18, 0.50, 0.25);
+    if (id == 16) return vec3(0.34, 0.43, 0.32);
+    if (id == 17) return vec3(0.45, 0.43, 0.38);
+    if (id == 18) return vec3(0.86, 0.91, 0.91);
+    if (id == 19) return vec3(0.50, 0.74, 0.88);
+    if (id == 20) return vec3(0.38, 0.23, 0.13);
+    if (id == 21) return vec3(0.12, 0.31, 0.25);
+    if (id == 22) return vec3(0.62, 0.20, 0.16);
+    if (id == 23) return vec3(0.58, 0.39, 0.20);
+    return vec3(0.70, 0.30, 0.70);
+}
+
+float blockAlpha(int id) {
+    if (id == 4) return 0.58;
+    if (id == 19) return 0.70;
+    return 1.0;
+}
+
+vec2 faceUv() {
+    vec3 n = abs(normalize(vNormal));
+    vec2 uv;
+    if (n.y > 0.5) {
+        uv = vWorldPosition.xz;
+    } else if (n.x > 0.5) {
+        uv = vWorldPosition.zy;
+    } else {
+        uv = vWorldPosition.xy;
+    }
+    return fract(uv);
+}
+
+vec4 atlasRect(int id) {
+    int safeId = clamp(id, 0, 255);
+    if (vNormal.y > 0.5) return uTopUv[safeId];
+    if (vNormal.y < -0.5) return uBottomUv[safeId];
+    return uSideUv[safeId];
+}
+
+vec4 blockSurface(int id) {
+    vec4 color = vec4(blockColor(id), 1.0);
+    if (uAtlasEnabled == 0) {
+        return color;
+    }
+    vec4 rect = atlasRect(id);
+    if (rect.z <= rect.x || rect.w <= rect.y) {
+        return color;
+    }
+    vec2 uv = mix(rect.xy, rect.zw, faceUv());
+    vec4 sampled = texture(uBlockAtlas, uv);
+    if (sampled.a < 0.05) {
+        discard;
+    }
+    return vec4(mix(color.rgb, sampled.rgb, sampled.a), sampled.a);
+}
+
+void main() {
+    int id = int(vBlockId + 0.5);
+    vec4 surface = blockSurface(id);
+    vec3 lit = surface.rgb * vLight * vShade * vAo;
+    lit = pow(lit, vec3(0.92));
+    lit = mix(vec3(dot(lit, vec3(0.299, 0.587, 0.114))), lit, 1.12);
+    if (uFogEnabled == 1) {
+        float fog = smoothstep(uFogStart, uFogEnd, vDistance);
+        lit = mix(lit, uFogColor, fog);
+    }
+    fragColor = vec4(lit, blockAlpha(id) * surface.a);
+}
