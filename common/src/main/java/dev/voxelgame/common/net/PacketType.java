@@ -18,7 +18,12 @@ public enum PacketType {
     CRAFT_REQUEST(12),
     BLOCK_INTERACT(13),
     STORAGE_OPEN(14),
-    STORAGE_TRANSFER(15);
+    STORAGE_TRANSFER(15),
+    ENTITY_INTERACT(16),
+    PLAYER_STATS_SNAPSHOT(17),
+    STORAGE_OPEN_REQUEST(18),
+    SLEEP_REQUEST(19),
+    COOK_REQUEST(20);
 
     private static final Map<Integer, PacketType> BY_ID = new HashMap<>();
 

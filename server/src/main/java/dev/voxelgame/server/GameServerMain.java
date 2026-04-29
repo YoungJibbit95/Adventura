@@ -23,7 +23,12 @@ public final class GameServerMain {
 
         TickLoop tickLoop = new TickLoop(tick -> {
             double now = System.nanoTime() / 1_000_000_000.0;
+            world.tickTime(1L);
             world.tickCampfires(now).forEach(server::broadcast);
+            server.tickCooking(now);
+            if (tick % 10 == 0) {
+                server.tickEntities(tick);
+            }
             if (tick % TickLoop.TPS == 0) {
                 System.out.println("Server tick " + tick);
             }

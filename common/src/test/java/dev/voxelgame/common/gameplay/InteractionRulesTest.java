@@ -29,6 +29,35 @@ class InteractionRulesTest {
     }
 
     @Test
+    void itemToolLevelAndSpeedComeFromTierProperties() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ItemType stonePickaxe = items.requireByKey("voxel:stone_pickaxe");
+        ItemType copperPickaxe = items.requireByKey("voxel:copper_pickaxe");
+
+        assertEquals(1, InteractionRules.toolLevel(stonePickaxe));
+        assertEquals(2, InteractionRules.toolLevel(copperPickaxe));
+        assertTrue(copperPickaxe.toolSpeed() > stonePickaxe.toolSpeed());
+    }
+
+    @Test
+    void oreMiningRequiresMatchingToolTier() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Registry<BlockType> blocks = Blocks.createDefaultRegistry();
+        ItemStack stonePickaxe = new ItemStack(items.requireByKey("voxel:stone_pickaxe").id(), 1);
+        ItemStack copperPickaxe = new ItemStack(items.requireByKey("voxel:copper_pickaxe").id(), 1);
+        BlockType copperOre = blocks.requireByKey("voxel:copper_ore");
+        BlockType ironOre = blocks.requireByKey("voxel:iron_ore");
+        BlockType crystalNode = blocks.requireByKey("voxel:glow_crystal_node");
+
+        assertEquals(1, InteractionRules.requiredToolLevel(copperOre));
+        assertEquals(2, InteractionRules.requiredToolLevel(ironOre));
+        assertTrue(InteractionRules.canHarvest(stonePickaxe, items, copperOre));
+        assertFalse(InteractionRules.canHarvest(stonePickaxe, items, ironOre));
+        assertTrue(InteractionRules.canHarvest(copperPickaxe, items, ironOre));
+        assertFalse(InteractionRules.canHarvest(copperPickaxe, items, crystalNode));
+    }
+
+    @Test
     void berryBushCanBeHarvestedByInteraction() {
         BlockType berryBush = Blocks.createDefaultRegistry().requireByKey("voxel:berry_bush");
 
@@ -36,5 +65,15 @@ class InteractionRulesTest {
 
         assertEquals("voxel:berries", interaction.itemKey());
         assertEquals(2, interaction.count());
+    }
+
+    @Test
+    void pineLogCanBeTappedForResin() {
+        BlockType pineLog = Blocks.createDefaultRegistry().requireByKey("voxel:pine_log");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(pineLog).orElseThrow();
+
+        assertEquals("voxel:resin", interaction.itemKey());
+        assertEquals(1, interaction.count());
     }
 }

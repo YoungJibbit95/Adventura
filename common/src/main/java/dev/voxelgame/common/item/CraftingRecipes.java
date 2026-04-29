@@ -29,6 +29,7 @@ public final class CraftingRecipes {
         short mushroom = items.requireByKey("voxel:mushroom").id();
         short roastedMushroom = items.requireByKey("voxel:roasted_mushroom").id();
         short herbs = items.requireByKey("voxel:wild_herbs").id();
+        short dryGrass = items.requireByKey("voxel:dry_grass").id();
         short snack = items.requireByKey("voxel:healing_snack").id();
         short clayLump = items.requireByKey("voxel:clay_lump").id();
         short clayBowl = items.requireByKey("voxel:clay_bowl").id();
@@ -42,6 +43,7 @@ public final class CraftingRecipes {
         short copperPickaxe = items.requireByKey("voxel:copper_pickaxe").id();
         short campfire = items.requireByKey("voxel:campfire").id();
         short storageCrate = items.requireByKey("voxel:storage_crate").id();
+        short sleepingMat = items.requireByKey("voxel:sleeping_mat").id();
         short flowerPot = items.requireByKey("voxel:flower_pot").id();
         short lantern = items.requireByKey("voxel:lantern").id();
         short rug = items.requireByKey("voxel:woven_rug").id();
@@ -222,6 +224,13 @@ public final class CraftingRecipes {
                         "Build Simple Chest",
                         List.of(new CraftingRecipe.Ingredient(planks, 6), new CraftingRecipe.Ingredient(fiber, 2)),
                         new ItemStack(storageCrate, 1),
+                        CraftingCategory.BUILDING
+                ),
+                recipe(
+                        "voxel:sleeping_mat",
+                        "Weave Sleeping Mat",
+                        List.of(new CraftingRecipe.Ingredient(dryGrass, 3), new CraftingRecipe.Ingredient(fiber, 2)),
+                        new ItemStack(sleepingMat, 1),
                         CraftingCategory.BUILDING
                 ),
                 recipe(

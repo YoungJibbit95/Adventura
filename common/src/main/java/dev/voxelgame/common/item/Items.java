@@ -41,6 +41,7 @@ public final class Items {
         block(registry, (short) 60, "voxel:campfire");
         block(registry, (short) 61, "voxel:small_stone");
         block(registry, (short) 62, "voxel:tree_stump");
+        block(registry, (short) 67, "voxel:sleeping_mat");
         block(registry, (short) 70, "voxel:mushroom_cluster");
         block(registry, (short) 71, "voxel:clay_deposit");
         block(registry, (short) 72, "voxel:glow_crystal_node");

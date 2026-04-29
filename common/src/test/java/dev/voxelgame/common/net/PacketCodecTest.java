@@ -14,6 +14,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketCodecTest {
     @Test
+    void roundTripsHandshake() {
+        GamePacket.Handshake decoded = (GamePacket.Handshake) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.Handshake(GamePacket.PROTOCOL_VERSION, "voxel-client")
+        ));
+
+        assertEquals(GamePacket.PROTOCOL_VERSION, decoded.protocolVersion());
+        assertEquals("voxel-client", decoded.clientName());
+    }
+
+    @Test
+    void roundTripsLoginRequest() {
+        GamePacket.LoginRequest decoded = (GamePacket.LoginRequest) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.LoginRequest("Player", "dev-token")
+        ));
+
+        assertEquals("Player", decoded.username());
+        assertEquals("dev-token", decoded.authToken());
+    }
+
+    @Test
     void roundTripsLoginAccepted() {
         UUID playerId = UUID.randomUUID();
         GamePacket decoded = PacketCodec.decode(PacketCodec.encode(new GamePacket.LoginAccepted(playerId, 99L, -64, 320)));
@@ -23,6 +43,15 @@ class PacketCodecTest {
         assertEquals(99L, accepted.worldSeed());
         assertEquals(-64, accepted.minY());
         assertEquals(320, accepted.maxYExclusive());
+    }
+
+    @Test
+    void roundTripsLoginRejected() {
+        GamePacket.LoginRejected decoded = (GamePacket.LoginRejected) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.LoginRejected("Nope")
+        ));
+
+        assertEquals("Nope", decoded.reason());
     }
 
     @Test
@@ -64,6 +93,32 @@ class PacketCodecTest {
     }
 
     @Test
+    void roundTripsBlockUpdate() {
+        GamePacket.BlockUpdate decoded = (GamePacket.BlockUpdate) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.BlockUpdate(4, 5, -6, (short) 7)
+        ));
+
+        assertEquals(4, decoded.x());
+        assertEquals(5, decoded.y());
+        assertEquals(-6, decoded.z());
+        assertEquals(7, decoded.blockId());
+    }
+
+    @Test
+    void roundTripsPlayerMove() {
+        GamePacket.PlayerMove decoded = (GamePacket.PlayerMove) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.PlayerMove(1.5, 80.25, -3.75, 45.0f, -12.5f, true)
+        ));
+
+        assertEquals(1.5, decoded.x());
+        assertEquals(80.25, decoded.y());
+        assertEquals(-3.75, decoded.z());
+        assertEquals(45.0f, decoded.yaw());
+        assertEquals(-12.5f, decoded.pitch());
+        assertTrue(decoded.onGround());
+    }
+
+    @Test
     void roundTripsBlockInteract() {
         GamePacket.BlockInteract decoded = (GamePacket.BlockInteract) PacketCodec.decode(PacketCodec.encode(
                 new GamePacket.BlockInteract(4, 12, 70, -3)
@@ -78,7 +133,7 @@ class PacketCodecTest {
     @Test
     void roundTripsEntitySnapshots() {
         UUID playerId = UUID.randomUUID();
-        EntitySnapshot snapshot = new EntitySnapshot(123L, "voxel:player", playerId, 1.0, 2.0, 3.0, 90.0f, -10.0f, 20);
+        EntitySnapshot snapshot = new EntitySnapshot(123L, "voxel:player", playerId, 1.0, 2.0, 3.0, 90.0f, -10.0f, 20, EntitySnapshot.STATE_WANDER);
 
         GamePacket.EntitySnapshots decoded = (GamePacket.EntitySnapshots) PacketCodec.decode(PacketCodec.encode(
                 new GamePacket.EntitySnapshots(List.of(snapshot))
@@ -91,6 +146,18 @@ class PacketCodecTest {
         assertEquals(playerId, actual.ownerPlayerId());
         assertEquals(3.0, actual.z());
         assertEquals(90.0f, actual.yaw());
+        assertEquals(EntitySnapshot.STATE_WANDER, actual.stateKey());
+    }
+
+    @Test
+    void roundTripsEntityInteract() {
+        GamePacket.EntityInteract decoded = (GamePacket.EntityInteract) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.EntityInteract(123L, 4, GamePacket.EntityInteract.Action.FEED)
+        ));
+
+        assertEquals(123L, decoded.entityId());
+        assertEquals(4, decoded.selectedSlot());
+        assertEquals(GamePacket.EntityInteract.Action.FEED, decoded.action());
     }
 
     @Test
@@ -102,6 +169,55 @@ class PacketCodecTest {
         assertEquals(2, decoded.slots().size());
         assertEquals(new ItemStack((short) 2, 16), decoded.slots().getFirst());
         assertEquals(ItemStack.EMPTY, decoded.slots().get(1));
+    }
+
+    @Test
+    void roundTripsPlayerStatsSnapshot() {
+        GamePacket.PlayerStatsSnapshot decoded = (GamePacket.PlayerStatsSnapshot) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.PlayerStatsSnapshot(18, 17, 16, 15, 2, 9)
+        ));
+
+        assertEquals(18, decoded.health());
+        assertEquals(17, decoded.hunger());
+        assertEquals(16, decoded.stamina());
+        assertEquals(15, decoded.breath());
+        assertEquals(2, decoded.armor());
+        assertEquals(9, decoded.comfort());
+    }
+
+    @Test
+    void roundTripsStorageOpenRequest() {
+        GamePacket.StorageOpenRequest decoded = (GamePacket.StorageOpenRequest) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.StorageOpenRequest(-3, 72, 8)
+        ));
+
+        assertEquals(-3, decoded.x());
+        assertEquals(72, decoded.y());
+        assertEquals(8, decoded.z());
+    }
+
+    @Test
+    void roundTripsSleepRequest() {
+        GamePacket.SleepRequest decoded = (GamePacket.SleepRequest) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.SleepRequest(4, 80, -9)
+        ));
+
+        assertEquals(4, decoded.x());
+        assertEquals(80, decoded.y());
+        assertEquals(-9, decoded.z());
+    }
+
+    @Test
+    void roundTripsCookRequest() {
+        GamePacket.CookRequest decoded = (GamePacket.CookRequest) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.CookRequest(4, 80, -9, "voxel:cooked_berries", List.of(3, 5))
+        ));
+
+        assertEquals(4, decoded.stationX());
+        assertEquals(80, decoded.stationY());
+        assertEquals(-9, decoded.stationZ());
+        assertEquals("voxel:cooked_berries", decoded.recipeKey());
+        assertEquals(List.of(3, 5), decoded.inputSlots());
     }
 
     @Test
@@ -120,22 +236,40 @@ class PacketCodecTest {
     @Test
     void roundTripsStorageTransfer() {
         GamePacket.StorageTransfer decoded = (GamePacket.StorageTransfer) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.StorageTransfer(-2, 72, 8, true, 6)
+                new GamePacket.StorageTransfer(-2, 72, 8, true, 6, 3, 5, 99)
         ));
 
         assertEquals(-2, decoded.x());
         assertEquals(72, decoded.y());
         assertEquals(8, decoded.z());
         assertTrue(decoded.fromStorage());
+        assertEquals(6, decoded.sourceSlot());
         assertEquals(6, decoded.slot());
+        assertEquals(3, decoded.targetSlot());
+        assertEquals(5, decoded.count());
+        assertEquals(99, decoded.transactionId());
     }
 
     @Test
     void roundTripsCraftRequest() {
         GamePacket.CraftRequest decoded = (GamePacket.CraftRequest) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.CraftRequest("voxel:stone_pickaxe")
+                GamePacket.CraftRequest.atStation("voxel:stone_pickaxe", 3, 10, 80, -4)
         ));
 
         assertEquals("voxel:stone_pickaxe", decoded.recipeKey());
+        assertEquals(3, decoded.count());
+        assertTrue(decoded.hasStation());
+        assertEquals(10, decoded.stationX());
+        assertEquals(80, decoded.stationY());
+        assertEquals(-4, decoded.stationZ());
+    }
+
+    @Test
+    void roundTripsChat() {
+        GamePacket.Chat decoded = (GamePacket.Chat) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.Chat("Hello server")
+        ));
+
+        assertEquals("Hello server", decoded.message());
     }
 }

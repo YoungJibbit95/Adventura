@@ -6,7 +6,10 @@ import dev.voxelgame.common.world.BiomeType;
 import dev.voxelgame.common.world.Biomes;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
+
+import java.util.Optional;
 
 public final class OverworldGenerator implements WorldGenerator {
     private static final int SEA_LEVEL = 63;
@@ -170,16 +173,9 @@ public final class OverworldGenerator implements WorldGenerator {
         }
 
         double detailChance = normalize(ValueNoise.hashUnit(seed ^ 0xC07ED11L, x, z));
-        if (detailChance < 0.009 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, Blocks.SMALL_STONE);
-        } else if (detailChance >= 0.009 && detailChance < 0.014 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, Blocks.BERRY_BUSH);
-        } else if (detailChance >= 0.014 && detailChance < 0.018 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, Blocks.HERB_PLANTER);
-        } else if ("voxel:lakeside".equals(biome.key()) && detailChance >= 0.018 && detailChance < 0.032 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, Blocks.CLAY_DEPOSIT);
-        } else if ("voxel:mushroom_grove".equals(biome.key()) && detailChance >= 0.018 && detailChance < 0.036 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, Blocks.MUSHROOM_CLUSTER);
+        short detailResource = detailResourceFor(biome.key(), detailChance);
+        if (detailResource != Blocks.AIR && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, detailResource);
         }
 
         if ("voxel:sun_dunes".equals(biome.key())) {
@@ -202,42 +198,50 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     private void decorateChunkStructures(Chunk chunk) {
-        int centerX = chunk.pos().x() * ChunkPos.SIZE + 8;
-        int centerZ = chunk.pos().z() * ChunkPos.SIZE + 8;
+        structureAtChunk(chunk.pos()).ifPresent(structure -> structure.template()
+                .placeIntoChunk(chunk, structure.originX(), structure.originY(), structure.originZ()));
+    }
+
+    public Optional<GeneratedStructure> structureAtChunk(ChunkPos pos) {
+        int centerX = pos.x() * ChunkPos.SIZE + 8;
+        int centerZ = pos.z() * ChunkPos.SIZE + 8;
         BiomeType biome = biomeAt(centerX, centerZ);
-        if (chunk.pos().x() == 1 && chunk.pos().z() == 1) {
+        if (pos.x() == 1 && pos.z() == 1) {
             int groundY = terrainHeight(centerX, centerZ, biome) + 1;
-            Structures.compactVillage().placeIntoChunk(chunk, centerX, groundY, centerZ);
-            return;
+            return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
         }
-        double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, chunk.pos().x(), chunk.pos().z()));
-        double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, chunk.pos().x(), chunk.pos().z()));
+        double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, pos.x(), pos.z()));
+        double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, pos.x(), pos.z()));
         if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.014) {
             int groundY = terrainHeight(centerX, centerZ, biome) + 1;
-            Structures.compactVillage().placeIntoChunk(chunk, centerX, groundY, centerZ);
-            return;
+            return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
         }
         if (roll > biome.structureChance()) {
-            return;
+            return Optional.empty();
         }
         int groundY = terrainHeight(centerX, centerZ, biome) + 1;
+        StructureTemplate template;
         if ("voxel:sun_dunes".equals(biome.key())) {
-            Structures.desertWell().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            template = Structures.desertWell();
         } else if ("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:lakeside".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) {
             if (roll < biome.structureChance() * 0.35) {
-                Structures.campsite().placeIntoChunk(chunk, centerX, groundY, centerZ);
+                template = Structures.campsite();
             } else {
-                Structures.simpleHouse().placeIntoChunk(chunk, centerX, groundY, centerZ);
+                template = Structures.simpleHouse();
             }
         } else if ("voxel:frost_peaks".equals(biome.key())) {
-            Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            template = Structures.smallRuin();
         } else if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
-            Structures.watchtower().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            template = Structures.watchtower();
         } else if ("voxel:mushroom_grove".equals(biome.key())) {
-            Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            template = Structures.smallRuin();
         } else {
-            Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
+            template = Structures.smallRuin();
         }
+        return Optional.of(new GeneratedStructure(template, centerX, groundY, centerZ));
+    }
+
+    public record GeneratedStructure(StructureTemplate template, int originX, int originY, int originZ) {
     }
 
     private boolean canPlaceTree(Chunk chunk, int x, int y, int z) {
@@ -308,6 +312,127 @@ public final class OverworldGenerator implements WorldGenerator {
                 }
             }
         }
+    }
+
+    static short detailResourceFor(String biomeKey, double roll) {
+        return switch (biomeKey) {
+            case "voxel:meadow", "voxel:cozy_meadow" -> {
+                if (roll < 0.008) {
+                    yield Blocks.SMALL_STONE;
+                }
+                if (roll < 0.015) {
+                    yield Blocks.BERRY_BUSH;
+                }
+                if (roll < 0.022) {
+                    yield Blocks.HERB_PLANTER;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:flower_fields" -> {
+                if (roll < 0.018) {
+                    yield Blocks.SUN_BLOOM;
+                }
+                if (roll < 0.030) {
+                    yield Blocks.HERB_PLANTER;
+                }
+                if (roll < 0.035) {
+                    yield Blocks.BERRY_BUSH;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:lakeside" -> {
+                if (roll < 0.014) {
+                    yield Blocks.CLAY_DEPOSIT;
+                }
+                if (roll < 0.022) {
+                    yield Blocks.BERRY_BUSH;
+                }
+                if (roll < 0.030) {
+                    yield Blocks.SMALL_STONE;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:mire" -> {
+                if (roll < 0.018) {
+                    yield Blocks.CLAY_DEPOSIT;
+                }
+                if (roll < 0.030) {
+                    yield Blocks.RED_MUSHROOM;
+                }
+                if (roll < 0.040) {
+                    yield Blocks.MUSHROOM_CLUSTER;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:mushroom_grove" -> {
+                if (roll < 0.024) {
+                    yield Blocks.MUSHROOM_CLUSTER;
+                }
+                if (roll < 0.038) {
+                    yield Blocks.RED_MUSHROOM;
+                }
+                if (roll < 0.046) {
+                    yield Blocks.CLAY_DEPOSIT;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:skyroot_forest" -> {
+                if (roll < 0.012) {
+                    yield Blocks.TREE_STUMP;
+                }
+                if (roll < 0.022) {
+                    yield Blocks.BERRY_BUSH;
+                }
+                if (roll < 0.032) {
+                    yield Blocks.HERB_PLANTER;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:pine_forest" -> {
+                if (roll < 0.012) {
+                    yield Blocks.TREE_STUMP;
+                }
+                if (roll < 0.022) {
+                    yield Blocks.RED_MUSHROOM;
+                }
+                if (roll < 0.032) {
+                    yield Blocks.SMALL_STONE;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:highlands" -> {
+                if (roll < 0.018) {
+                    yield Blocks.SMALL_STONE;
+                }
+                if (roll < 0.026) {
+                    yield Blocks.GLOW_CRYSTAL_NODE;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:old_ruins" -> {
+                if (roll < 0.014) {
+                    yield Blocks.GLOW_CRYSTAL_NODE;
+                }
+                if (roll < 0.030) {
+                    yield Blocks.SMALL_STONE;
+                }
+                if (roll < 0.038) {
+                    yield Blocks.HERB_PLANTER;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:frost_peaks" -> {
+                if (roll < 0.016) {
+                    yield Blocks.SMALL_STONE;
+                }
+                if (roll < 0.026) {
+                    yield Blocks.GLOW_CRYSTAL_NODE;
+                }
+                yield Blocks.AIR;
+            }
+            case "voxel:sun_dunes" -> roll < 0.016 ? Blocks.SMALL_STONE : Blocks.AIR;
+            default -> Blocks.AIR;
+        };
     }
 
     private short oreOrStone(int x, int y, int z) {

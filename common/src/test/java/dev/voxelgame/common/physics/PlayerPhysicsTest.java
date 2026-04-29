@@ -1,0 +1,164 @@
+package dev.voxelgame.common.physics;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PlayerPhysicsTest {
+    @Test
+    void defaultBoundsAreDerivedFromEyePosition() {
+        PlayerBounds bounds = PlayerBounds.DEFAULT;
+
+        assertEquals(7.7, bounds.minX(8.0), 0.001);
+        assertEquals(8.3, bounds.maxX(8.0), 0.001);
+        assertEquals(78.38, bounds.minY(80.0), 0.001);
+        assertEquals(80.18, bounds.maxY(80.0), 0.001);
+    }
+
+    @Test
+    void collisionSubstepsSplitLargeMovements() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+
+        assertEquals(1, PlayerPhysics.collisionSubsteps(0.1f, 0.0f, 0.0f, config));
+        assertTrue(PlayerPhysics.collisionSubsteps(0.0f, -2.1f, 0.0f, config) > 1);
+    }
+
+    @Test
+    void playerInputNormalizesHorizontalMovement() {
+        PlayerInput input = new PlayerInput(1.0f, 1.0f, false, false, false);
+
+        assertEquals(1.0f, input.moveX() * input.moveX() + input.moveZ() * input.moveZ(), 0.001f);
+    }
+
+    @Test
+    void playerBoundsDetectPlacedBlockOverlap() {
+        PlayerBounds bounds = PlayerBounds.DEFAULT;
+
+        assertTrue(bounds.intersectsBlock(8.5, 65.62, 8.5, 8, 64, 8));
+        assertFalse(bounds.intersectsBlock(8.5, 65.62, 8.5, 8, 66, 8));
+        assertFalse(bounds.intersectsBlock(8.5, 65.62, 8.5, 10, 64, 8));
+    }
+
+    @Test
+    void movementRulesRejectNonFiniteOrientation() {
+        assertFalse(PlayerMovementRules.isFinite(8.0, 64.0, 8.0, Float.NaN, 0.0f));
+        assertFalse(PlayerMovementRules.isFinite(8.0, Double.POSITIVE_INFINITY, 8.0, 0.0f, 0.0f));
+        assertTrue(PlayerMovementRules.isFinite(8.0, 64.0, 8.0, 180.0f, -25.0f));
+    }
+
+    @Test
+    void movementRulesRejectExtremeTeleportDeltas() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+
+        assertTrue(PlayerMovementRules.isPlausibleDelta(8.0, 64.0, 8.0, 9.5, 64.2, 8.0, 0.05, config));
+        assertFalse(PlayerMovementRules.isPlausibleDelta(8.0, 64.0, 8.0, 80.0, 64.0, 8.0, 0.05, config));
+        assertFalse(PlayerMovementRules.isPlausibleDelta(8.0, 64.0, 8.0, 8.0, 180.0, 8.0, 0.05, config));
+    }
+
+    @Test
+    void movementRulesKeepPlayerInsideVerticalWorldBounds() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+
+        assertTrue(PlayerMovementRules.withinVerticalBounds(64.0, config, -64, 320));
+        assertFalse(PlayerMovementRules.withinVerticalBounds(-80.0, config, -64, 320));
+        assertFalse(PlayerMovementRules.withinVerticalBounds(320.0, config, -64, 320));
+    }
+
+    @Test
+    void survivalStepStartsJumpOnlyWhenGrounded() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerInput jump = new PlayerInput(0.0f, 0.0f, true, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState grounded = new PlayerState(8.0, 65.0, 8.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
+        PlayerState jumped = PlayerPhysics.stepSurvival(grounded, jump, dry, 0.016f, config, (x, y, z) -> false);
+
+        PlayerState airborne = new PlayerState(8.0, 65.0, 8.0, 0.0f, 0.0f, 0.0f, false, false, 0.0f);
+        PlayerState noDoubleJump = PlayerPhysics.stepSurvival(airborne, jump, dry, 0.016f, config, (x, y, z) -> false);
+
+        assertTrue(jumped.velocityY() > 0.0f);
+        assertFalse(jumped.onGround());
+        assertTrue(noDoubleJump.velocityY() < 0.0f);
+    }
+
+    @Test
+    void survivalStepSlidesAlongBlockedHorizontalAxis() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
+        PlayerInput diagonal = new PlayerInput(1.0f, 1.0f, false, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(state, diagonal, dry, 0.1f, config, (x, y, z) -> x > 0.05);
+
+        assertEquals(0.0, next.x(), 0.001);
+        assertTrue(next.z() > 0.1);
+    }
+
+    @Test
+    void survivalStepReportsFallImpactWhenLanding() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState falling = new PlayerState(8.0, 65.2, 8.0, 0.0f, -30.0f, 0.0f, false, false, 0.0f);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState landed = PlayerPhysics.stepSurvival(falling, PlayerInput.idle(), dry, 0.1f, config, (x, y, z) -> y <= 64.0);
+
+        assertTrue(landed.onGround());
+        assertEquals(0.0f, landed.velocityY(), 0.001f);
+        assertTrue(landed.fallImpactSpeed() > 15.0f);
+    }
+
+    @Test
+    void survivalStepZerosVerticalVelocityOnHeadBump() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState rising = new PlayerState(8.0, 65.0, 8.0, 0.0f, 8.0f, 0.0f, false, false, 0.0f);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState bumped = PlayerPhysics.stepSurvival(rising, PlayerInput.idle(), dry, 0.1f, config, (x, y, z) -> y > 65.2);
+
+        assertFalse(bumped.onGround());
+        assertEquals(0.0f, bumped.velocityY(), 0.001f);
+        assertEquals(0.0f, bumped.fallImpactSpeed(), 0.001f);
+    }
+
+    @Test
+    void survivalStepUsesWaterMovementFlagsForSwimming() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(8.0, 65.0, 8.0, 0.0f, 0.0f, 0.0f, false, false, 0.0f);
+        PlayerInput swimUp = new PlayerInput(0.0f, 0.0f, true, false, true);
+        PlayerWaterState bodyInWater = new PlayerWaterState(false, true, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(state, swimUp, bodyInWater, 0.1f, config, (x, y, z) -> false);
+
+        assertFalse(next.underwater());
+        assertTrue(next.velocityY() > 0.0f);
+        assertEquals(0.0f, next.velocityX(), 0.001f);
+    }
+
+    @Test
+    void flyingStepNormalizesThreeDimensionalMovement() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, false, false, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepFlying(state, 1.0f, 1.0f, 0.0f, false, 0.1f, config, (x, y, z) -> false);
+
+        double expected = config.flySpeed() * 0.1 / Math.sqrt(2.0);
+        assertEquals(expected, next.x(), 0.001);
+        assertEquals(65.0 + expected, next.y(), 0.001);
+        assertEquals(0.0, next.z(), 0.001);
+        assertEquals(0.0f, next.velocityY(), 0.001f);
+    }
+
+    @Test
+    void flyingStepUsesCollisionSubsteps() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, false, false, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepFlying(state, 1.0f, 0.0f, 0.0f, true, 0.1f, config, (x, y, z) -> x > 0.2);
+
+        assertEquals(0.0, next.x(), 0.001);
+        assertEquals(65.0, next.y(), 0.001);
+        assertEquals(0.0, next.z(), 0.001);
+    }
+}

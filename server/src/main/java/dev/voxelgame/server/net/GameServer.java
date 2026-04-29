@@ -58,6 +58,17 @@ public final class GameServer implements AutoCloseable {
         ServerConnectionHandler.broadcast(packet);
     }
 
+    public void tickEntities(long tick) {
+        if (entityTracker.tickAmbient(tick).isEmpty()) {
+            return;
+        }
+        broadcast(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+    }
+
+    public void tickCooking(double nowSeconds) {
+        ServerConnectionHandler.tickCookingJobs(nowSeconds);
+    }
+
     @Override
     public void close() {
         if (channel != null) {

@@ -6,6 +6,7 @@ public final class GameSettings {
     private int meshBuildBudgetChunks = 2;
     private int fieldOfViewDegrees = 72;
     private int mouseSensitivityPercent = 100;
+    private int uiScalePercent = 100;
     private boolean fogEnabled = true;
     private boolean ambientOcclusionEnabled = true;
     private boolean softShadowsEnabled = true;
@@ -48,6 +49,14 @@ public final class GameSettings {
 
     public int mouseSensitivityPercent() {
         return mouseSensitivityPercent;
+    }
+
+    public float uiScale() {
+        return uiScalePercent / 100.0f;
+    }
+
+    public int uiScalePercent() {
+        return uiScalePercent;
     }
 
     public boolean fogEnabled() {
@@ -106,6 +115,10 @@ public final class GameSettings {
         meshBuildBudgetChunks = clamp(value, 1, 12);
     }
 
+    public void setUiScalePercent(int value) {
+        uiScalePercent = clamp(value, 80, 150);
+    }
+
     public void applyPreset(RenderPreset preset) {
         renderDistanceChunks = clamp(preset.renderDistanceChunks(), 2, 18);
         previewRadiusChunks = clamp(preset.previewRadiusChunks(), 1, 8);
@@ -135,6 +148,10 @@ public final class GameSettings {
 
     public void adjustMouseSensitivity(int delta) {
         mouseSensitivityPercent = clamp(mouseSensitivityPercent + delta, 40, 180);
+    }
+
+    public void adjustUiScale(int delta) {
+        setUiScalePercent(uiScalePercent + delta);
     }
 
     public void toggleFog() {

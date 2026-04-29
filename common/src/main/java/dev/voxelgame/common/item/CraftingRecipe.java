@@ -44,16 +44,30 @@ public record CraftingRecipe(
     }
 
     public boolean canCraft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation) {
+        return canCraft(inventory, items, availableStation, 1);
+    }
+
+    public boolean canCraft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation, int count) {
+        if (count < 1) {
+            return false;
+        }
         if (!isAvailableAt(availableStation)) {
             return false;
         }
         Inventory simulated = inventory.copy();
-        for (Ingredient ingredient : ingredients) {
-            if (!simulated.remove(ingredient.itemId(), ingredient.count())) {
+        for (int crafted = 0; crafted < count; crafted++) {
+            for (Ingredient ingredient : ingredients) {
+                if (!simulated.remove(ingredient.itemId(), ingredient.count())) {
+                    return false;
+                }
+            }
+        }
+        for (int crafted = 0; crafted < count; crafted++) {
+            if (simulated.add(result.itemId(), result.count(), items) != 0) {
                 return false;
             }
         }
-        return simulated.canAdd(result.itemId(), result.count(), items);
+        return true;
     }
 
     public boolean craft(Inventory inventory, Registry<ItemType> items) {
@@ -61,15 +75,26 @@ public record CraftingRecipe(
     }
 
     public boolean craft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation) {
-        if (!canCraft(inventory, items, availableStation)) {
+        return craft(inventory, items, availableStation, 1);
+    }
+
+    public boolean craft(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation, int count) {
+        if (!canCraft(inventory, items, availableStation, count)) {
             return false;
         }
-        for (Ingredient ingredient : ingredients) {
-            if (!inventory.remove(ingredient.itemId(), ingredient.count())) {
+        for (int crafted = 0; crafted < count; crafted++) {
+            for (Ingredient ingredient : ingredients) {
+                if (!inventory.remove(ingredient.itemId(), ingredient.count())) {
+                    return false;
+                }
+            }
+        }
+        for (int crafted = 0; crafted < count; crafted++) {
+            if (inventory.add(result.itemId(), result.count(), items) != 0) {
                 return false;
             }
         }
-        return inventory.add(result.itemId(), result.count(), items) == 0;
+        return true;
     }
 
     public boolean isAvailableAt(CraftingStationType availableStation) {

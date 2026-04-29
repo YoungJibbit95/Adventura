@@ -116,6 +116,19 @@ class ClientWorldMeshInvalidationTest {
         assertTrue(hasTransparentMesh);
     }
 
+    @Test
+    void layeredBuildsKeepCutoutBlocksSeparateFromSolidTerrain() {
+        ClientWorld world = loadedCleanWorld();
+        world.applyBlock(new GamePacket.BlockUpdate(8, 250, 8, Blocks.WILD_GRASS));
+
+        ClientWorld.LayeredMeshBuild build = world.buildDirtyLayeredMeshes(new ChunkMesher(), true, true, 1)
+                .getFirst();
+
+        assertTrue(build.opaqueMesh().indexCount() > 0);
+        assertTrue(build.cutoutMesh().indexCount() > 0);
+        assertEquals(0, build.transparentMesh().indexCount());
+    }
+
     private static ClientWorld loadedCleanWorld() {
         ClientWorld world = new ClientWorld(123L);
         world.generatePreview(1);

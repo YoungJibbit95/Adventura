@@ -2,6 +2,7 @@ package dev.voxelgame.client.net;
 
 import dev.voxelgame.client.Hotbar;
 import dev.voxelgame.client.ChatLog;
+import dev.voxelgame.client.PlayerStats;
 import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.net.GamePacket;
 import io.netty.channel.ChannelHandlerContext;
@@ -11,17 +12,19 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
     private final String username;
     private final ClientWorld world;
     private final Hotbar hotbar;
+    private final PlayerStats playerStats;
     private final ChatLog chatLog;
     private final ClientNetworkStats stats;
 
     public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog) {
-        this(username, world, hotbar, chatLog, new ClientNetworkStats());
+        this(username, world, hotbar, new PlayerStats(), chatLog, new ClientNetworkStats());
     }
 
-    public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog, ClientNetworkStats stats) {
+    public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, PlayerStats playerStats, ChatLog chatLog, ClientNetworkStats stats) {
         this.username = username;
         this.world = world;
         this.hotbar = hotbar;
+        this.playerStats = playerStats;
         this.chatLog = chatLog;
         this.stats = stats;
     }
@@ -63,6 +66,14 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
             }
             case GamePacket.EntitySnapshots snapshots -> world.applyEntitySnapshots(snapshots.snapshots());
             case GamePacket.InventorySnapshot inventory -> hotbar.applySnapshot(inventory.slots());
+            case GamePacket.PlayerStatsSnapshot snapshot -> playerStats.applySnapshot(
+                    snapshot.health(),
+                    snapshot.hunger(),
+                    snapshot.stamina(),
+                    snapshot.breath(),
+                    snapshot.armor(),
+                    snapshot.comfort()
+            );
             case GamePacket.StorageOpen storage -> hotbar.applyStorageSnapshot(storage.x(), storage.y(), storage.z(), storage.slots());
             default -> {
             }

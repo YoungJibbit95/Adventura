@@ -1,6 +1,7 @@
 package dev.voxelgame.client;
 
 import dev.voxelgame.client.audio.AudioCue;
+import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
@@ -9,6 +10,8 @@ import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
 import dev.voxelgame.client.render.WorldRenderer;
 import dev.voxelgame.client.render.entity.EntityRenderer;
+import dev.voxelgame.client.render.particle.ParticleSystem;
+import dev.voxelgame.client.ui.BitmapFont;
 import dev.voxelgame.client.ui.GameSprites;
 import dev.voxelgame.client.ui.UiButton;
 import dev.voxelgame.client.ui.UiColor;
@@ -17,24 +20,37 @@ import dev.voxelgame.client.ui.UiSpriteRenderer;
 import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.ToolType;
+import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.item.CraftingCategory;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.registry.Registry;
+import dev.voxelgame.common.world.BiomeType;
+import dev.voxelgame.common.world.Biomes;
 import dev.voxelgame.common.world.ChunkPos;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFWErrorCallback;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.DoubleBuffer;
+import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
@@ -48,8 +64,10 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_O;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_R;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_SLASH;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_T;
@@ -90,22 +108,32 @@ import static org.lwjgl.opengl.GL11.glEnable;
 import static org.lwjgl.opengl.GL11.glViewport;
 
 public final class GameClient {
+    private static final double LOCAL_DAY_LENGTH_SECONDS = 900.0;
+    private static final int DAY_START_MINUTES = 6 * 60;
+
     private final ConnectionOptions connectionOptions;
     private final GameSettings settings;
     private final Camera camera = new Camera();
     private final Hotbar hotbar = new Hotbar();
     private final ChatLog chatLog = new ChatLog();
+    private final FeedbackLog feedbackLog = new FeedbackLog();
+    private final EnumSet<CraftingStationType> discoveredRecipeStations = EnumSet.of(CraftingStationType.INVENTORY);
     private final PlayerStats playerStats = new PlayerStats();
     private final BlockBreakAnimation blockBreakAnimation = new BlockBreakAnimation();
     private final GameAudio audio = new GameAudio();
+    private final Registry<BiomeType> biomes = Biomes.createDefaultRegistry();
     private final StringBuilder chatDraft = new StringBuilder();
+    private final StringBuilder craftingSearch = new StringBuilder();
+    private final Set<String> announcedRecipeUnlocks = new HashSet<>();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
     private ClientWorld world;
     private WorldRenderer worldRenderer;
     private ChunkBorderRenderer chunkBorderRenderer;
     private EntityRenderer entityRenderer;
+    private ParticleSystem particleSystem;
     private UiRenderer uiRenderer;
+    private UiSpriteRenderer backgroundSpriteRenderer;
     private UiSpriteRenderer spriteRenderer;
     private GameSprites sprites;
     private GameClientConnection connection;
@@ -136,14 +164,33 @@ public final class GameClient {
     private double nextBlockActionTime;
     private double pendingScrollY;
     private double frameTimeSeconds;
+    private double worldStartTimeSeconds;
     private String pickupAnimationItemKey = "";
     private double pickupAnimationUntil;
     private double lastFrameMilliseconds;
     private double lastWorldRenderMilliseconds;
     private int lastMeshBuilds;
     private int lastRenderedEntities;
+    private EntityRenderer.RenderStats lastEntityRenderStats = EntityRenderer.RenderStats.empty();
+    private ParticleSystem.RenderStats lastParticleRenderStats = ParticleSystem.RenderStats.empty();
     private int lastRenderedEntityHitboxes;
     private int lastChunkBorderDebugChunks;
+    private CraftingCategory craftingCategoryFilter;
+    private boolean craftableRecipesOnly;
+    private boolean craftingSearchFocused;
+    private boolean inventoryTrashMode;
+    private int draggedInventorySlot = -1;
+    private int storageTransactionId;
+    private boolean previousUnderwater;
+    private double nextAmbientParticleSourceScanTime;
+    private double nextStepAudioTime;
+    private double nextAmbientAudioTime;
+    private double nextToolHintTime;
+    private double nextComfortScanTime;
+    private double nextRecipeUnlockScanTime;
+    private int lastComfortFeedbackValue = -1;
+    private List<ClientWorld.BlockPos> ambientLeafParticleSources = List.of();
+    private List<ClientWorld.BlockPos> ambientSporeParticleSources = List.of();
 
     public GameClient(ConnectionOptions connectionOptions) {
         this.connectionOptions = connectionOptions;
@@ -193,7 +240,9 @@ public final class GameClient {
         worldRenderer = new WorldRenderer();
         chunkBorderRenderer = new ChunkBorderRenderer();
         entityRenderer = new EntityRenderer();
+        particleSystem = new ParticleSystem();
         uiRenderer = new UiRenderer();
+        backgroundSpriteRenderer = new UiSpriteRenderer();
         spriteRenderer = new UiSpriteRenderer();
         sprites = GameSprites.loadDefault();
         setCursorForState();
@@ -219,6 +268,7 @@ public final class GameClient {
             boolean leftMouse = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
             boolean rightMouse = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
             boolean leftClicked = leftMouse && !previousLeftMouse;
+            boolean leftReleased = !leftMouse && previousLeftMouse;
             boolean rightClicked = rightMouse && !previousRightMouse;
             MousePosition mouse = mousePosition();
 
@@ -233,7 +283,14 @@ public final class GameClient {
                 if (gameMode == GameMode.SURVIVAL && fallImpact > 13.0f) {
                     playerStats.hurt(Math.round((fallImpact - 12.0f) * 0.55f));
                 }
-                playerStats.tick(deltaSeconds, gameMode, world != null && world.isUnderwater(camera.position()), sprinting, moving);
+                PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(camera.position());
+                refreshLocalComfort(now);
+                playerStats.tick(deltaSeconds, gameMode, water.headUnderwater(), sprinting, moving);
+                emitComfortFeedback();
+                emitRecipeUnlockFeedback(now);
+                handleDeathIfNeeded();
+                emitWaterSplashIfNeeded(water.movementAffected(), now);
+                emitMovementAudio(moving, sprinting, water.movementAffected(), now);
                 if (!onlineMode) {
                     world.tickCampfires(now);
                     world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks(), settings.meshBuildBudgetChunks());
@@ -247,6 +304,12 @@ public final class GameClient {
                 handleBlockInteraction(leftMouse, rightClicked, now);
             } else if (gameState == GameState.CHAT) {
                 handleChatInput();
+            } else if (gameState == GameState.CRAFTING) {
+                handleCraftingSearchInput();
+            }
+            if (gameState == GameState.PLAYING || gameState == GameState.CRAFTING) {
+                emitAmbientParticles(now);
+                emitAmbientAudio(now);
             }
 
             glClearColor(0.52f, 0.72f, 0.95f, 1.0f);
@@ -261,9 +324,12 @@ public final class GameClient {
                         1200.0f
                 );
                 Matrix4f view = camera.viewMatrix();
-                List<EntitySnapshot> visibleEntities = world.visibleEntities();
+                List<EntitySnapshot> visibleEntities = world.visibleEntities(now);
                 lastRenderStats = worldRenderer.render(projection, view, world, camera.position(), currentRenderSettings(), now);
-                lastRenderedEntities = entityRenderer.render(projection, view, visibleEntities, now);
+                lastEntityRenderStats = entityRenderer.renderDetailed(projection, view, visibleEntities, now);
+                emitEntityParticles(visibleEntities, now);
+                lastParticleRenderStats = particleSystem.render(projection, view, now);
+                lastRenderedEntities = lastEntityRenderStats.renderedEntities();
                 lastChunkBorderDebugChunks = settings.debugChunkBordersEnabled()
                         ? chunkBorderRenderer.render(projection, view, camera.position(), world.dimension(), settings.renderDistanceChunks())
                         : 0;
@@ -274,13 +340,17 @@ public final class GameClient {
             } else {
                 lastMeshBuilds = 0;
                 lastRenderedEntities = 0;
+                lastEntityRenderStats = EntityRenderer.RenderStats.empty();
+                lastParticleRenderStats = ParticleSystem.RenderStats.empty();
                 lastRenderedEntityHitboxes = 0;
                 lastChunkBorderDebugChunks = 0;
                 lastWorldRenderMilliseconds = 0.0;
                 lastRenderStats = new WorldRenderer.RenderStats(0, 0);
+                previousUnderwater = false;
             }
 
             uiRenderer.begin();
+            backgroundSpriteRenderer.begin();
             spriteRenderer.begin();
             if (gameState == GameState.MAIN_MENU) {
                 renderMainMenu(mouse, leftClicked);
@@ -289,12 +359,15 @@ public final class GameClient {
             } else if (gameState == GameState.SETTINGS) {
                 renderSettingsMenu(mouse, leftClicked);
             } else if (gameState == GameState.CRAFTING) {
-                renderCraftingScreen(mouse, leftClicked);
+                renderCraftingScreen(mouse, leftClicked, leftReleased);
             } else if (gameState == GameState.STORAGE) {
-                renderStorageScreen(mouse, leftClicked);
+                renderStorageScreen(mouse, leftClicked, rightClicked);
+            } else if (gameState == GameState.DEAD) {
+                renderDeathScreen(mouse, leftClicked);
             }
             renderHud();
             renderChatOverlay();
+            backgroundSpriteRenderer.flush(framebufferWidth, framebufferHeight);
             uiRenderer.flush(framebufferWidth, framebufferHeight);
             spriteRenderer.flush(framebufferWidth, framebufferHeight);
 
@@ -310,6 +383,9 @@ public final class GameClient {
         if (uiRenderer != null) {
             uiRenderer.close();
         }
+        if (backgroundSpriteRenderer != null) {
+            backgroundSpriteRenderer.close();
+        }
         if (spriteRenderer != null) {
             spriteRenderer.close();
         }
@@ -324,6 +400,9 @@ public final class GameClient {
         }
         if (entityRenderer != null) {
             entityRenderer.close();
+        }
+        if (particleSystem != null) {
+            particleSystem.close();
         }
         if (connection != null) {
             connection.close();
@@ -343,24 +422,42 @@ public final class GameClient {
         }
         if (rightClicked) {
             blockBreakAnimation.clear();
-            Optional<dev.voxelgame.common.math.Raycast.Hit> pickedHit = world.pick(camera.position(), camera.forward(), 7.0);
+            Optional<dev.voxelgame.common.math.Raycast.Hit> pickedHit = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
             if (pickedHit.isPresent() && targetIsStorageCrate(pickedHit.get())) {
                 openStorageCrate(pickedHit.get(), now);
                 return;
             }
+            if (pickedHit.isPresent() && targetIsSleepingMat(pickedHit.get())) {
+                requestSleep(pickedHit.get(), now);
+                return;
+            }
+            Optional<EntitySnapshot> pickedEntity = nearestEntityTarget(
+                    world.visibleEntities(now),
+                    camera.position(),
+                    camera.forward(),
+                    pickedHit.map(dev.voxelgame.common.math.Raycast.Hit::distance).orElse(InteractionRules.BLOCK_REACH)
+            );
+            if (pickedEntity.isPresent()) {
+                handleEntityInteract(pickedEntity.get(), now);
+                return;
+            }
             String foodLabel = hotbar.selectedLabel();
             if (hotbar.useSelectedFood(playerStats)) {
-                statusMessage = "Ate " + foodLabel;
+                setStatus("Ate " + foodLabel);
                 nextBlockActionTime = now + 0.22;
                 audio.play(AudioCue.EAT);
                 return;
             }
             Optional<Short> placeBlockId = hotbar.selectedPlaceBlockId();
+            if (pickedHit.isEmpty()) {
+                showTooFarAwayIfFarTarget(now);
+                return;
+            }
             pickedHit.ifPresent(hit -> {
                 if (targetIsCampfire(hit) && selectedItemIsCampfireFuel()) {
                     if (onlineMode) {
                         connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
-                        statusMessage = "Campfire fuel requested";
+                        setStatus("Campfire fuel requested");
                         nextBlockActionTime = now + 0.15;
                         updateWindowTitle();
                     } else {
@@ -371,7 +468,7 @@ public final class GameClient {
                 if (placeBlockId.isEmpty()) {
                     if (onlineMode) {
                         connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
-                        statusMessage = "Interaction requested";
+                        setStatus("Interaction requested");
                         nextBlockActionTime = now + 0.15;
                         updateWindowTitle();
                     } else {
@@ -380,6 +477,12 @@ public final class GameClient {
                     return;
                 }
                 short blockId = placeBlockId.get();
+                org.joml.Vector3f eyePosition = camera.position();
+                if (PlayerBounds.DEFAULT.intersectsBlock(eyePosition.x, eyePosition.y, eyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ())) {
+                    setStatus("Too close to place");
+                    nextBlockActionTime = now + 0.10;
+                    return;
+                }
                 if (onlineMode) {
                     connection.send(new GamePacket.BlockAction(
                             GamePacket.BlockAction.Action.PLACE,
@@ -394,7 +497,7 @@ public final class GameClient {
                     ));
                     nextBlockActionTime = now + 0.15;
                 } else {
-                    if (world.placeBlock(hit, blockId)) {
+                    if (world.placeBlock(hit, blockId, eyePosition)) {
                         hotbar.consumeSelectedOne();
                         nextBlockActionTime = now + 0.12;
                         audio.play(AudioCue.BLOCK_PLACE);
@@ -405,8 +508,9 @@ public final class GameClient {
     }
 
     private void handleBlockBreakHold(double now) {
-        Optional<dev.voxelgame.common.math.Raycast.Hit> picked = world.pick(camera.position(), camera.forward(), 7.0);
+        Optional<dev.voxelgame.common.math.Raycast.Hit> picked = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
         if (picked.isEmpty()) {
+            showTooFarAwayIfFarTarget(now);
             blockBreakAnimation.clear();
             return;
         }
@@ -418,6 +522,12 @@ public final class GameClient {
         }
         BlockType block = target.get();
         float multiplier = hotbar.selectedBreakMultiplier(block);
+        boolean canHarvest = gameMode == GameMode.CREATIVE || hotbar.canHarvestSelected(block);
+        emitToolRequirementHint(block, canHarvest, multiplier, now);
+        if (!canHarvest) {
+            blockBreakAnimation.clear();
+            return;
+        }
         double duration = gameMode == GameMode.CREATIVE ? 0.08 : Math.max(0.16, breakDelay(block, multiplier));
         blockBreakAnimation.startOrContinue(hit, block, duration, now);
         if (!blockBreakAnimation.complete(now)) {
@@ -445,11 +555,12 @@ public final class GameClient {
             return;
         }
         if (world.breakBlock(hit)) {
-            collectDrops(target, hit, multiplier, now);
+            particleSystem.spawnBlockBreak(target, hit, now);
+            collectDrops(target, multiplier, now);
             hotbar.damageSelectedTool(target);
             nextBlockActionTime = now + 0.10;
-            statusMessage = "Gathered " + cozyName(target.dropItemKey());
-            audio.play(AudioCue.BLOCK_BREAK);
+            announceNewRecipeUnlocks();
+            audio.play(breakCueFor(target));
             blockBreakAnimation.hit(now);
         }
     }
@@ -466,12 +577,12 @@ public final class GameClient {
                     : OptionalDouble.empty();
             if (fuelSeconds.isPresent() && world.fuelCampfire(hit, now, fuelSeconds.getAsDouble())) {
                 hotbar.consumeSelectedOne();
-                statusMessage = "Campfire fueled";
+                setStatus("Campfire fueled");
                 nextBlockActionTime = now + 0.25;
                 audio.play(AudioCue.CRAFT);
                 updateWindowTitle();
             } else {
-                statusMessage = "Campfire needs fuel";
+                setStatus("Campfire needs fuel");
                 nextBlockActionTime = now + 0.15;
                 updateWindowTitle();
             }
@@ -479,12 +590,14 @@ public final class GameClient {
         }
         InteractionRules.blockInteraction(target.get()).ifPresent(interaction -> {
             if (hotbar.addItem(interaction.itemKey(), interaction.count())) {
-                statusMessage = interaction.message();
+                particleSystem.spawnHarvestSparkle(hit, now);
+                setStatus(interaction.message());
+                announceNewRecipeUnlocks();
                 nextBlockActionTime = now + interaction.cooldownSeconds();
-                audio.play(AudioCue.INVENTORY_CLICK);
+                audio.play(AudioCue.COLLECT_ITEM);
                 updateWindowTitle();
             } else {
-                statusMessage = "Inventory full";
+                setStatus("Inventory full");
                 updateWindowTitle();
             }
         });
@@ -493,10 +606,10 @@ public final class GameClient {
     private void openStorageCrate(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
         hotbar.openStorage(hit.x(), hit.y(), hit.z());
         if (onlineMode) {
-            connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
-            statusMessage = "Opening storage crate";
+            connection.send(new GamePacket.StorageOpenRequest(hit.x(), hit.y(), hit.z()));
+            setStatus("Opening storage crate");
         } else {
-            statusMessage = "Storage crate opened";
+            setStatus("Storage crate opened");
         }
         gameState = GameState.STORAGE;
         nextBlockActionTime = now + 0.12;
@@ -513,8 +626,136 @@ public final class GameClient {
         return world.targetBlock(hit).map(block -> block.id() == Blocks.STORAGE_CRATE).orElse(false);
     }
 
+    private boolean targetIsSleepingMat(dev.voxelgame.common.math.Raycast.Hit hit) {
+        return world.targetBlock(hit).map(block -> block.id() == Blocks.SLEEPING_MAT).orElse(false);
+    }
+
+    private void requestSleep(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
+        if (onlineMode) {
+            connection.send(new GamePacket.SleepRequest(hit.x(), hit.y(), hit.z()));
+            setStatus("Sleep requested");
+        } else {
+            setStatus("Sleeping mat needs the server clock");
+        }
+        nextBlockActionTime = now + 0.25;
+        updateWindowTitle();
+    }
+
+    private void handleEntityInteract(EntitySnapshot target, double now) {
+        GamePacket.EntityInteract.Action action = hotbar.selectedItemIsFood()
+                ? GamePacket.EntityInteract.Action.FEED
+                : GamePacket.EntityInteract.Action.OBSERVE;
+        if (onlineMode) {
+            connection.send(new GamePacket.EntityInteract(target.entityId(), hotbar.selectedIndex(), action));
+            setStatus(action == GamePacket.EntityInteract.Action.FEED ? "Feed requested" : "Entity observed");
+        } else {
+            setStatus(action == GamePacket.EntityInteract.Action.FEED
+                    ? cozyName(target.typeKey()) + " seems interested"
+                    : cozyName(target.typeKey()));
+        }
+        nextBlockActionTime = now + 0.22;
+        updateWindowTitle();
+    }
+
     private boolean selectedItemIsCampfireFuel() {
         return hotbar.selectedItemKey().map(key -> CampfireRules.fuelSeconds(key).isPresent()).orElse(false);
+    }
+
+    private boolean showTooFarAwayIfFarTarget(double now) {
+        if (world == null || world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH + 3.0).isEmpty()) {
+            return false;
+        }
+        setStatus("Too far away");
+        nextBlockActionTime = now + 0.35;
+        return true;
+    }
+
+    private void emitToolRequirementHint(BlockType target, boolean canHarvest, float multiplier, double now) {
+        if (gameMode == GameMode.CREATIVE
+                || target.preferredTool() == ToolType.NONE
+                || now < nextToolHintTime) {
+            return;
+        }
+        if (!canHarvest) {
+            int requiredLevel = InteractionRules.requiredToolLevel(target);
+            if (requiredLevel > 0) {
+                setStatus("Need Level " + requiredLevel + " " + toolLabel(target.preferredTool()));
+            } else {
+                setStatus("Need " + articleFor(target.preferredTool()) + " " + toolLabel(target.preferredTool()));
+            }
+            nextToolHintTime = now + 2.0;
+            return;
+        }
+        if (multiplier >= 1.0f) {
+            return;
+        }
+        setStatus("Need " + articleFor(target.preferredTool()) + " " + toolLabel(target.preferredTool()));
+        nextToolHintTime = now + 2.0;
+    }
+
+    private void refreshLocalComfort(double now) {
+        if (onlineMode || world == null || now < nextComfortScanTime) {
+            return;
+        }
+        playerStats.applyComfort(world.comfortAt(camera.position()));
+        nextComfortScanTime = now + 1.0;
+    }
+
+    private void handleDeathIfNeeded() {
+        if (gameMode != GameMode.SURVIVAL || !playerStats.dead() || gameState == GameState.DEAD) {
+            return;
+        }
+        gameState = GameState.DEAD;
+        setStatus("You died");
+        setCursorForState();
+        updateWindowTitle();
+    }
+
+    private void respawnPlayer() {
+        playerStats.respawn();
+        setCameraToSpawn();
+        gameState = GameState.PLAYING;
+        setStatus("Respawned");
+        setCursorForState();
+        camera.resetMouseTracking();
+        updateWindowTitle();
+    }
+
+    private void emitComfortFeedback() {
+        int comfort = playerStats.comfort();
+        if (lastComfortFeedbackValue < 0) {
+            lastComfortFeedbackValue = comfort;
+            return;
+        }
+        if (comfort >= 5 && lastComfortFeedbackValue < 5) {
+            setStatus("You feel cozy");
+        }
+        lastComfortFeedbackValue = comfort;
+    }
+
+    private void emitRecipeUnlockFeedback(double now) {
+        if (world == null || now < nextRecipeUnlockScanTime) {
+            return;
+        }
+        nextRecipeUnlockScanTime = now + 1.0;
+        CraftingStationType stationType = currentCraftingStation();
+        if (stationType != CraftingStationType.INVENTORY && discoveredRecipeStations.add(stationType)) {
+            setStatus("New recipe unlocked");
+        }
+    }
+
+    private static String articleFor(ToolType toolType) {
+        return toolType == ToolType.AXE ? "an" : "a";
+    }
+
+    private static String toolLabel(ToolType toolType) {
+        return switch (toolType) {
+            case PICKAXE -> "pickaxe";
+            case SHOVEL -> "shovel";
+            case AXE -> "axe";
+            case KNIFE -> "knife";
+            case NONE -> "tool";
+        };
     }
 
     private boolean consumeHotbarScroll() {
@@ -526,17 +767,116 @@ public final class GameClient {
         return hotbar.scroll(scroll > 0.0 ? -1 : 1);
     }
 
-    private void collectDrops(BlockType target, dev.voxelgame.common.math.Raycast.Hit hit, float multiplier, double now) {
-        world.dropFor(hit).ifPresent(drop -> {
-            int count = InteractionRules.dropCount(target, multiplier);
-            hotbar.addItem(drop, count);
+    private void collectDrops(BlockType target, float multiplier, double now) {
+        String drop = target.dropItemKey();
+        if (drop == null || drop.isBlank()) {
+            setStatus("Broke " + cozyName(target.key()));
+            return;
+        }
+        int count = InteractionRules.dropCount(target, multiplier);
+        if (hotbar.addItem(drop, count)) {
             pickupAnimationItemKey = drop;
             pickupAnimationUntil = now + 0.48;
-        });
+            setStatus("Gathered " + cozyName(drop));
+            audio.play(AudioCue.COLLECT_ITEM);
+        } else {
+            setStatus("Inventory full");
+        }
+    }
+
+    private void emitAmbientParticles(double now) {
+        if (world == null || particleSystem == null) {
+            return;
+        }
+        for (ClientWorld.BlockPos campfire : world.activeCampfiresWithin(camera.position(), 16, 3, now)) {
+            particleSystem.spawnCampfireAmbient(campfire.x(), campfire.y(), campfire.z(), now);
+            if (gameState == GameState.CRAFTING) {
+                particleSystem.spawnCookingSteam(campfire.x(), campfire.y(), campfire.z(), now);
+            }
+        }
+        if (now >= nextAmbientParticleSourceScanTime) {
+            ClientWorld.AmbientParticleSources sources = world.ambientParticleSourcesWithin(camera.position(), 9, 4, 3);
+            ambientLeafParticleSources = sources.leafSources();
+            ambientSporeParticleSources = sources.sporeSources();
+            nextAmbientParticleSourceScanTime = now + 0.35;
+        }
+        for (ClientWorld.BlockPos source : ambientLeafParticleSources) {
+            particleSystem.spawnLeafDrift(source.x(), source.y(), source.z(), now);
+        }
+        for (ClientWorld.BlockPos source : ambientSporeParticleSources) {
+            particleSystem.spawnGlowSpores(source.x(), source.y(), source.z(), now);
+        }
+    }
+
+    private void emitEntityParticles(List<EntitySnapshot> visibleEntities, double now) {
+        if (particleSystem == null) {
+            return;
+        }
+        for (EntitySnapshot entity : visibleEntities) {
+            particleSystem.spawnEntityGlow(entity, now);
+        }
+    }
+
+    private void emitWaterSplashIfNeeded(boolean underwater, double now) {
+        if (particleSystem != null && underwater != previousUnderwater) {
+            Vector3f splashPosition = new Vector3f(camera.position());
+            splashPosition.y = (float) Math.floor(splashPosition.y);
+            particleSystem.spawnWaterSplash(splashPosition, now);
+            audio.play(AudioCue.WATER_SPLASH);
+        }
+        previousUnderwater = underwater;
+    }
+
+    private void emitMovementAudio(boolean moving, boolean sprinting, boolean waterAffected, double now) {
+        if (!moving || waterAffected || !camera.onGround() || world == null || now < nextStepAudioTime) {
+            return;
+        }
+        Optional<BlockType> footing = world.blockBelowPlayer(camera.position());
+        if (footing.isEmpty()) {
+            nextStepAudioTime = now + 0.15;
+            return;
+        }
+        audio.play(AudioCueRules.stepCueFor(footing.get()));
+        nextStepAudioTime = now + (sprinting ? 0.30 : 0.46);
+    }
+
+    private void emitAmbientAudio(double now) {
+        if (world == null || now < nextAmbientAudioTime) {
+            return;
+        }
+        Vector3f position = camera.position();
+        if (world.nearestActiveCampfireWithin(position, 10, now).isPresent()) {
+            audio.play(AudioCue.CAMPFIRE_CRACKLE);
+            nextAmbientAudioTime = now + 4.0;
+            return;
+        }
+        int x = (int) Math.floor(position.x);
+        int y = (int) Math.floor(position.y);
+        int z = (int) Math.floor(position.z);
+        if (y < 58 && world.skyLightAt(x, y, z) < 4) {
+            audio.play(AudioCue.CAVE_DRIP);
+            nextAmbientAudioTime = now + 9.0;
+            return;
+        }
+        String biomeKey = world.biomeKeyAt(x, z);
+        if (isNightTime()) {
+            audio.play(AudioCue.NIGHT_AMBIENCE);
+            nextAmbientAudioTime = now + 12.0;
+        } else if (biomeKey.contains("meadow") || biomeKey.contains("flower")) {
+            audio.play(AudioCue.MEADOW_BIRDS);
+            nextAmbientAudioTime = now + 10.0;
+        } else {
+            audio.play(AudioCue.DAY_AMBIENCE);
+            nextAmbientAudioTime = now + 14.0;
+        }
     }
 
     private static double breakDelay(BlockType target, float multiplier) {
         return InteractionRules.breakDelaySeconds(target, multiplier);
+    }
+
+    private static AudioCue breakCueFor(BlockType target) {
+        return AudioCueRules.breakCueFor(target);
     }
 
     private CraftingStationType currentCraftingStation() {
@@ -555,7 +895,12 @@ public final class GameClient {
         boolean modeCycle = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
         boolean settingsKey = glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS;
         boolean spawnKey = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+        boolean craftingTextInput = gameState == GameState.CRAFTING && craftingSearchFocused;
+        boolean gameplayHotkeys = gameState == GameState.PLAYING || (gameState == GameState.CRAFTING && !craftingTextInput);
 
+        if (gameState == GameState.DEAD && spawnKey && !previousSpawnKey) {
+            respawnPlayer();
+        }
         if (gameState == GameState.PLAYING && settings.chatEnabled()) {
             if (chat && !previousChat) {
                 openChat("");
@@ -565,22 +910,22 @@ public final class GameClient {
         }
         if (gameState == GameState.STORAGE && crafting && !previousCrafting) {
             closeStorageScreen();
-        } else if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && crafting && !previousCrafting) {
+        } else if (gameplayHotkeys && crafting && !previousCrafting) {
             toggleCrafting();
         }
-        if (f3 && !previousF3) {
+        if (!craftingTextInput && f3 && !previousF3) {
             settings.toggleDebugOverlay();
         }
-        if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && hudToggle && !previousHudToggle) {
+        if (gameplayHotkeys && hudToggle && !previousHudToggle) {
             settings.toggleHud();
         }
-        if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && modeCycle && !previousModeCycle) {
+        if (gameplayHotkeys && modeCycle && !previousModeCycle) {
             cycleGameMode();
         }
-        if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && settingsKey && !previousSettingsKey) {
+        if (gameplayHotkeys && settingsKey && !previousSettingsKey) {
             openSettings(gameState);
         }
-        if ((gameState == GameState.PLAYING || gameState == GameState.CRAFTING) && spawnKey && !previousSpawnKey) {
+        if (gameplayHotkeys && spawnKey && !previousSpawnKey) {
             setCameraToSpawn();
             chatLog.add("Teleported to spawn");
         }
@@ -603,6 +948,19 @@ public final class GameClient {
         }
         if (backspace && !previousBackspace && !chatDraft.isEmpty()) {
             chatDraft.deleteCharAt(chatDraft.length() - 1);
+        }
+        previousEnter = enter;
+        previousBackspace = backspace;
+    }
+
+    private void handleCraftingSearchInput() {
+        boolean enter = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS;
+        boolean backspace = glfwGetKey(window, GLFW_KEY_BACKSPACE) == GLFW_PRESS;
+        if (craftingSearchFocused && backspace && !previousBackspace && !craftingSearch.isEmpty()) {
+            craftingSearch.deleteCharAt(craftingSearch.length() - 1);
+        }
+        if (craftingSearchFocused && enter && !previousEnter) {
+            craftingSearchFocused = false;
         }
         previousEnter = enter;
         previousBackspace = backspace;
@@ -641,10 +999,14 @@ public final class GameClient {
     }
 
     private void appendChatCharacter(int codepoint) {
-        if (gameState != GameState.CHAT || codepoint < 32 || codepoint > 126 || chatDraft.length() >= 96) {
+        if (codepoint < 32 || codepoint > 126) {
             return;
         }
-        chatDraft.append((char) codepoint);
+        if (gameState == GameState.CHAT && chatDraft.length() < 96) {
+            chatDraft.append((char) codepoint);
+        } else if (gameState == GameState.CRAFTING && craftingSearchFocused && craftingSearch.length() < 28) {
+            craftingSearch.append((char) codepoint);
+        }
     }
 
     private void executeCommand(String commandLine) {
@@ -864,6 +1226,45 @@ public final class GameClient {
         return value.replace('_', ' ');
     }
 
+    static Optional<EntitySnapshot> nearestEntityTarget(Collection<EntitySnapshot> snapshots, Vector3f origin, Vector3f direction, double maxDistance) {
+        Vector3f rayDirection = new Vector3f(direction);
+        if (rayDirection.lengthSquared() <= 0.000001f || maxDistance <= 0.0) {
+            return Optional.empty();
+        }
+        rayDirection.normalize();
+        EntitySnapshot best = null;
+        double bestDistance = maxDistance;
+        for (EntitySnapshot snapshot : snapshots) {
+            double distance = rayDistanceToEntity(snapshot, origin, rayDirection, maxDistance);
+            if (distance >= 0.0 && distance < bestDistance) {
+                bestDistance = distance;
+                best = snapshot;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static double rayDistanceToEntity(EntitySnapshot snapshot, Vector3f origin, Vector3f direction, double maxDistance) {
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        float centerX = (float) snapshot.x();
+        float centerY = EntityBounds.baseY(snapshot) + bounds.height() * 0.5f;
+        float centerZ = (float) snapshot.z();
+        float toX = centerX - origin.x;
+        float toY = centerY - origin.y;
+        float toZ = centerZ - origin.z;
+        double projected = toX * direction.x + toY * direction.y + toZ * direction.z;
+        if (projected < 0.0 || projected > maxDistance) {
+            return -1.0;
+        }
+        double centerDistanceSquared = toX * toX + toY * toY + toZ * toZ;
+        double perpendicularSquared = centerDistanceSquared - projected * projected;
+        double radius = Math.max(bounds.width(), Math.max(bounds.height(), bounds.depth())) * 0.5 + 0.12;
+        if (perpendicularSquared > radius * radius) {
+            return -1.0;
+        }
+        return Math.max(0.0, projected - Math.sqrt(radius * radius - perpendicularSquared));
+    }
+
     private void sendMovementIfDue(double now) {
         if (connection == null || now < nextMoveSendTime) {
             return;
@@ -889,6 +1290,7 @@ public final class GameClient {
                 case CHAT -> "Chat";
                 case CRAFTING -> "Crafting";
                 case STORAGE -> "Storage Crate";
+                case DEAD -> "You Died";
                 case PLAYING -> hotbar.selectedLabel();
             };
             glfwSetWindowTitle(window, "Adventura - " + suffix);
@@ -911,9 +1313,13 @@ public final class GameClient {
             } else if (gameState == GameState.CHAT) {
                 closeChat();
             } else if (gameState == GameState.CRAFTING) {
+                craftingSearchFocused = false;
+                draggedInventorySlot = -1;
                 resumeGame();
             } else if (gameState == GameState.STORAGE) {
                 closeStorageScreen();
+            } else if (gameState == GameState.DEAD) {
+                returnToMainMenu();
             }
         }
         previousEscape = escape;
@@ -955,7 +1361,22 @@ public final class GameClient {
         drawButton(new UiButton(x, y + 174.0f, buttonWidth, buttonHeight, "QUIT", true), mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
     }
 
-    private void renderCraftingScreen(MousePosition mouse, boolean clicked) {
+    private void renderDeathScreen(MousePosition mouse, boolean clicked) {
+        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.05f, 0.01f, 0.012f, 0.72f));
+        float panelWidth = Math.min(420.0f, framebufferWidth - 72.0f);
+        float panelHeight = 246.0f;
+        float x = framebufferWidth * 0.5f - panelWidth * 0.5f;
+        float y = framebufferHeight * 0.5f - panelHeight * 0.5f;
+        drawAssetPanel("panel_journal", x, y, panelWidth, panelHeight, new UiColor(0.04f, 0.025f, 0.025f, 0.88f));
+        uiRenderer.rect(x + 18.0f, y + 18.0f, panelWidth - 36.0f, panelHeight - 36.0f, new UiColor(0.045f, 0.018f, 0.016f, 0.42f));
+        uiRenderer.centeredText("YOU DIED", framebufferWidth * 0.5f, y + 52.0f, 5.2f, UiColor.HEART);
+        uiRenderer.centeredText("DAY " + Math.max(1, (int) ((frameTimeSeconds - worldStartTimeSeconds) / LOCAL_DAY_LENGTH_SECONDS) + 1), framebufferWidth * 0.5f, y + 104.0f, 1.55f, UiColor.MUTED);
+        float buttonWidth = Math.min(260.0f, panelWidth - 80.0f);
+        drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, y + 136.0f, buttonWidth, 42.0f, "RESPAWN", true), mouse, clicked, this::respawnPlayer);
+        drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, y + 188.0f, buttonWidth, 34.0f, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
+    }
+
+    private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.72f));
         uiRenderer.centeredText("CRAFTING", framebufferWidth * 0.5f, 70.0f, 5.0f, UiColor.WHITE);
         uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
@@ -967,17 +1388,17 @@ public final class GameClient {
         CraftingStationType stationType = currentCraftingStation();
         renderWorkbenchPreview(previewCraftingRecipe(stationType), x, y, stationType);
         renderCraftingMenu(mouse, clicked, x + 360.0f, y, stationType);
-        renderInventoryGridCompact(x, y + 266.0f);
+        renderInventoryGridCompact(mouse, clicked, released, x, y + 266.0f);
     }
 
-    private void renderStorageScreen(MousePosition mouse, boolean clicked) {
+    private void renderStorageScreen(MousePosition mouse, boolean clicked, boolean rightClicked) {
         if (!hotbar.storageOpen()) {
             resumeGame();
             return;
         }
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.74f));
         uiRenderer.centeredText("STORAGE CRATE", framebufferWidth * 0.5f, 62.0f, 4.8f, UiColor.WHITE);
-        uiRenderer.centeredText("CLICK STACKS TO MOVE  E OR ESC CLOSE", framebufferWidth * 0.5f, 106.0f, 1.55f, UiColor.MUTED);
+        uiRenderer.centeredText("CLICK MOVE  RIGHT-CLICK SPLIT  E OR ESC CLOSE", framebufferWidth * 0.5f, 106.0f, 1.55f, UiColor.MUTED);
 
         float slot = framebufferWidth < 820 ? 36.0f : 42.0f;
         float gap = 6.0f;
@@ -987,20 +1408,25 @@ public final class GameClient {
         float x = framebufferWidth * 0.5f - panelWidth * 0.5f + 28.0f;
         float y = Math.max(132.0f, framebufferHeight * 0.20f);
 
-        uiRenderer.rect(x - 24.0f, y - 40.0f, panelWidth, 130.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
+        drawAssetPanel("panel_inventory", x - 24.0f, y - 40.0f, panelWidth, 130.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
         uiRenderer.text("CRATE", x, y - 26.0f, 2.2f, UiColor.WHITE);
         uiRenderer.text("POS " + hotbar.storageX() + " " + hotbar.storageY() + " " + hotbar.storageZ(), x + panelWidth - 194.0f, y - 21.0f, 1.15f, UiColor.MUTED);
+        String hoverHint = "";
         for (int i = 0; i < Math.min(hotbar.storageSlotCount(), 18); i++) {
             int slotIndex = i;
             int column = i % columns;
             int row = i / columns;
             float sx = x + column * (slot + gap);
             float sy = y + row * (slot + gap);
-            renderTransferSlot(mouse, clicked, sx, sy, slot, hotbar.storageSlotView(i), false, false, () -> transferStorageSlot(true, slotIndex));
+            Hotbar.SlotView slotView = hotbar.storageSlotView(i);
+            String slotHint = renderTransferSlot(mouse, clicked, rightClicked, sx, sy, slot, slotView, false, false, () -> transferStorageSlot(true, slotIndex, Integer.MAX_VALUE), () -> transferStorageSlot(true, slotIndex, splitCount(slotView)));
+            if (!slotHint.isBlank()) {
+                hoverHint = slotHint;
+            }
         }
 
         float inventoryY = y + 178.0f;
-        uiRenderer.rect(x - 24.0f, inventoryY - 40.0f, panelWidth, 238.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
+        drawAssetPanel("panel_inventory", x - 24.0f, inventoryY - 40.0f, panelWidth, 238.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
         uiRenderer.text("BACKPACK", x, inventoryY - 26.0f, 2.2f, UiColor.WHITE);
         for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), 36); i++) {
             int slotIndex = i;
@@ -1009,14 +1435,21 @@ public final class GameClient {
             float sx = x + column * (slot + gap);
             float sy = inventoryY + row * (slot + gap);
             boolean selected = i == hotbar.selectedIndex();
-            renderTransferSlot(mouse, clicked, sx, sy, slot, hotbar.slotView(i), selected, i < Hotbar.HOTBAR_SLOTS, () -> transferStorageSlot(false, slotIndex));
+            Hotbar.SlotView slotView = hotbar.slotView(i);
+            String slotHint = renderTransferSlot(mouse, clicked, rightClicked, sx, sy, slot, slotView, selected, i < Hotbar.HOTBAR_SLOTS, () -> transferStorageSlot(false, slotIndex, Integer.MAX_VALUE), () -> transferStorageSlot(false, slotIndex, splitCount(slotView)));
+            if (!slotHint.isBlank()) {
+                hoverHint = slotHint;
+            }
         }
 
         float buttonWidth = Math.min(220.0f, panelWidth);
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, Math.min(framebufferHeight - 62.0f, inventoryY + 224.0f), buttonWidth, 40.0f, "CLOSE", true), mouse, clicked, this::closeStorageScreen);
+        if (!hoverHint.isBlank()) {
+            renderSlotHoverHint(mouse, hoverHint);
+        }
     }
 
-    private void renderTransferSlot(MousePosition mouse, boolean clicked, float x, float y, float size, Hotbar.SlotView slotView, boolean selected, boolean hotbarSlot, Runnable transfer) {
+    private String renderTransferSlot(MousePosition mouse, boolean clicked, boolean rightClicked, float x, float y, float size, Hotbar.SlotView slotView, boolean selected, boolean hotbarSlot, Runnable transfer, Runnable splitTransfer) {
         boolean hovered = contains(mouse, x, y, size, size);
         if (hovered) {
             uiRenderer.rect(x - 3.0f, y - 3.0f, size + 6.0f, size + 6.0f, UiColor.BUTTON_HOVER);
@@ -1031,23 +1464,47 @@ public final class GameClient {
                 drawDurabilityBar(x + 6.0f, y + size - 6.0f, size - 12.0f, slotView.durabilityLeft(), slotView.maxDurability());
             }
         }
-        if (hovered && clicked) {
+        if (hovered && clicked && !slotView.isEmpty()) {
             transfer.run();
+        } else if (hovered && rightClicked && !slotView.isEmpty()) {
+            splitTransfer.run();
         }
+        return hovered && !slotView.isEmpty() ? slotHoverText(slotView) : "";
     }
 
-    private void transferStorageSlot(boolean fromStorage, int slot) {
+    private int splitCount(Hotbar.SlotView slotView) {
+        return Math.max(1, (slotView.count() + 1) / 2);
+    }
+
+    private void transferStorageSlot(boolean fromStorage, int slot, int count) {
         if (!hotbar.storageOpen()) {
             return;
         }
         if (onlineMode && connection != null) {
-            connection.send(new GamePacket.StorageTransfer(hotbar.storageX(), hotbar.storageY(), hotbar.storageZ(), fromStorage, slot));
-            statusMessage = "Storage transfer requested";
-        } else if (hotbar.transferStorage(fromStorage, slot)) {
-            statusMessage = fromStorage ? "Moved from crate" : "Stored in crate";
+            connection.send(new GamePacket.StorageTransfer(
+                    hotbar.storageX(),
+                    hotbar.storageY(),
+                    hotbar.storageZ(),
+                    fromStorage,
+                    slot,
+                    GamePacket.StorageTransfer.AUTO_TARGET_SLOT,
+                    count,
+                    nextStorageTransactionId()
+            ));
+            setStatus("Storage transfer requested");
+        } else if (hotbar.transferStorage(fromStorage, slot, count)) {
+            setStatus(fromStorage ? "Moved from crate" : "Stored in crate");
+            if (fromStorage) {
+                announceNewRecipeUnlocks();
+            }
             audio.play(AudioCue.INVENTORY_CLICK);
         }
         updateWindowTitle();
+    }
+
+    private int nextStorageTransactionId() {
+        storageTransactionId = storageTransactionId == Integer.MAX_VALUE ? 1 : storageTransactionId + 1;
+        return storageTransactionId;
     }
 
     private void closeStorageScreen() {
@@ -1058,11 +1515,13 @@ public final class GameClient {
     private void renderInventoryTabs(float x, float y, float width) {
         float tabWidth = Math.min(170.0f, width / 3.0f - 8.0f);
         String[] labels = {"CRAFT", "PACK", "COZY LOG"};
+        String[] icons = {"crafting_icon", "backpack_icon", "book_icon"};
         for (int i = 0; i < labels.length; i++) {
             float tx = x + i * (tabWidth + 8.0f);
-            uiRenderer.rect(tx, y, tabWidth, 32.0f, i == 0 ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            drawAssetPanel(i == 0 ? "frame_moss" : "frame_wood", tx, y, tabWidth, 32.0f, i == 0 ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            drawHudBackdropSprite(icons[i], tx + 9.0f, y + 6.0f, 26.0f, 18.0f, new UiColor(1.0f, 1.0f, 1.0f, i == 0 ? 0.72f : 0.42f));
             uiRenderer.rect(tx, y + 30.0f, tabWidth, 2.0f, i == 0 ? UiColor.ACCENT : UiColor.BUTTON);
-            uiRenderer.centeredText(labels[i], tx + tabWidth * 0.5f, y + 9.0f, 1.45f, i == 0 ? UiColor.WHITE : UiColor.MUTED);
+            uiRenderer.centeredText(labels[i], tx + tabWidth * 0.5f + 10.0f, y + 9.0f, 1.35f, i == 0 ? UiColor.WHITE : UiColor.MUTED);
         }
         uiRenderer.text("Selected: " + clampText(hotbar.selectedTooltip(), 42), x + Math.min(width - 360.0f, 540.0f), y + 9.0f, 1.35f, UiColor.MUTED);
     }
@@ -1125,8 +1584,12 @@ public final class GameClient {
             settings.toggleVsync();
             glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
         });
+        settingStepperCompact(mouse, clicked, rightX + 18.0f, y + 280.0f, columnWidth - 36.0f, "UI scale", settings.uiScalePercent() + "%",
+                () -> settings.adjustUiScale(-10),
+                () -> settings.adjustUiScale(10));
 
-        uiRenderer.rect(x, y + 352.0f, panelWidth, 54.0f, new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
+        drawAssetPanel("frame_moss", x, y + 352.0f, panelWidth, 54.0f, new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
+        uiRenderer.rect(x + 8.0f, y + 360.0f, panelWidth - 16.0f, 38.0f, new UiColor(0.02f, 0.032f, 0.030f, 0.26f));
         uiRenderer.text("PRESET", x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
         float presetButtonWidth = 106.0f;
         float presetX = x + 112.0f;
@@ -1143,13 +1606,14 @@ public final class GameClient {
     }
 
     private void settingsSection(float x, float y, float width, float height, String title) {
-        uiRenderer.rect(x, y, width, height, UiColor.PANEL);
-        uiRenderer.rect(x, y, width, 3.0f, UiColor.ACCENT);
+        drawAssetPanel("panel_settings", x, y, width, height, UiColor.PANEL);
+        uiRenderer.rect(x + 8.0f, y + 7.0f, width - 16.0f, 3.0f, UiColor.ACCENT);
         uiRenderer.text(title, x + 18.0f, y + 18.0f, 2.0f, UiColor.WHITE);
     }
 
     private void settingStepperCompact(MousePosition mouse, boolean clicked, float x, float y, float width, String label, String value, Runnable minus, Runnable plus) {
-        uiRenderer.rect(x, y, width, 40.0f, UiColor.SLOT);
+        drawAssetPanel("frame_stone", x, y, width, 40.0f, UiColor.SLOT);
+        uiRenderer.rect(x + 5.0f, y + 5.0f, width - 10.0f, 30.0f, new UiColor(0.02f, 0.032f, 0.030f, 0.34f));
         uiRenderer.text(label.toUpperCase(Locale.ROOT), x + 10.0f, y + 7.0f, 1.15f, UiColor.MUTED);
         uiRenderer.text(value.toUpperCase(Locale.ROOT), x + 10.0f, y + 23.0f, 1.2f, UiColor.WHITE);
         drawButton(new UiButton(x + width - 78.0f, y + 5.0f, 30.0f, 30.0f, "-", true), mouse, clicked, minus);
@@ -1157,7 +1621,8 @@ public final class GameClient {
     }
 
     private void settingToggleCompact(MousePosition mouse, boolean clicked, float x, float y, float width, String label, boolean enabled, Runnable toggle) {
-        uiRenderer.rect(x, y, width, 44.0f, UiColor.SLOT);
+        drawAssetPanel("frame_wood", x, y, width, 44.0f, UiColor.SLOT);
+        uiRenderer.rect(x + 5.0f, y + 5.0f, width - 10.0f, 34.0f, new UiColor(0.02f, 0.032f, 0.030f, 0.30f));
         uiRenderer.text(label.toUpperCase(Locale.ROOT), x + 10.0f, y + 8.0f, 1.2f, UiColor.WHITE);
         drawButton(new UiButton(x + width - 80.0f, y + 7.0f, 68.0f, 30.0f, enabled ? "ON" : "OFF", true), mouse, clicked, toggle);
     }
@@ -1167,43 +1632,182 @@ public final class GameClient {
         if (panelWidth < 260.0f) {
             return;
         }
-        List<CraftingRecipe> recipes = prioritizedRecipes(stationType);
-        int visibleRecipes = Math.min(9, recipes.size());
-        float panelHeight = 70.0f + visibleRecipes * 42.0f + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
-        uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
+        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationType);
+        int visibleRecipes = Math.min(6, recipes.size());
+        float rowHeight = 50.0f;
+        float panelHeight = 142.0f + Math.max(1, visibleRecipes) * rowHeight + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
+        drawAssetPanel("panel_crafting", x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
+        uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, panelHeight - 56.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.20f));
         uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
         uiRenderer.text("STATION " + Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x + panelWidth - 210.0f, y - 25.0f, 1.2f, UiColor.MUTED);
+        renderCraftingFilters(mouse, clicked, x, y + 2.0f, panelWidth);
+        renderCraftingSearchField(mouse, clicked, x, y + 34.0f, panelWidth);
         float buttonHeight = 34.0f;
         for (int index = 0; index < visibleRecipes; index++) {
             CraftingRecipe recipe = recipes.get(index);
-            boolean canCraft = hotbar.canCraft(recipe, stationType);
-            float rowY = y + index * 42.0f;
+            boolean unlocked = recipeUnlockedForUi(recipe, stationType);
+            boolean canCraft = unlocked && hotbar.canCraft(recipe, stationType);
+            float rowY = y + 76.0f + index * rowHeight;
             String buttonLabel = recipe.label().toUpperCase(Locale.ROOT) + " [" + recipe.category().name() + "]";
             UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, buttonLabel, canCraft);
             drawButton(button, mouse, clicked, () -> {
                 if (onlineMode) {
-                    connection.send(new GamePacket.CraftRequest(recipe.key()));
-                    statusMessage = "Crafting requested";
+                    connection.send(craftRequestFor(recipe));
+                    setStatus("Crafting requested");
                     updateWindowTitle();
                 } else if (hotbar.craft(recipe, stationType)) {
-                    statusMessage = "Crafted " + recipe.label();
-                    audio.play(AudioCue.CRAFT);
+                    setStatus("Crafted " + recipe.label());
+                    announceNewRecipeUnlocks();
+                    audio.play(AudioCue.CRAFT_SUCCESS);
                     updateWindowTitle();
                 }
             });
-            uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 42), x + 42.0f, rowY + 24.0f, 1.15f, canCraft ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            uiRenderer.text(hotbar.recipeStatus(recipe, stationType).toUpperCase(Locale.ROOT), x + panelWidth - 142.0f, rowY + 24.0f, 1.0f, canCraft ? UiColor.ACCENT : UiColor.BUTTON_DISABLED);
+            if (!canCraft && clicked && button.contains(mouse.x(), mouse.y())) {
+                setStatus(craftFailMessage(recipe, stationType));
+                audio.play(AudioCue.CRAFT_FAIL);
+            }
+            UiColor stationColor = recipe.isAvailableAt(stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED;
+            UiColor statusColor = canCraft ? UiColor.ACCENT : unlocked && recipe.isAvailableAt(stationType) ? UiColor.HEART : UiColor.BUTTON_DISABLED;
+            uiRenderer.text(clampText(stationRequirementLine(recipe), 42), x + 42.0f, rowY + 23.0f, 0.95f, stationColor);
+            uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 42), x + 42.0f, rowY + 36.0f, 0.95f, unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(recipeStatusLine(recipe, stationType).toUpperCase(Locale.ROOT), x + panelWidth - 168.0f, rowY + 36.0f, 0.9f, statusColor);
             drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, rowY + 4.0f, 26.0f);
         }
+        if (recipes.isEmpty()) {
+            uiRenderer.text("NO MATCHING RECIPES", x + 12.0f, y + 92.0f, 1.55f, UiColor.MUTED);
+            if (clicked && contains(mouse, x, y + 76.0f, panelWidth, 42.0f)) {
+                setStatus("No matching recipe");
+                audio.play(AudioCue.CRAFT_FAIL);
+            }
+        }
         if (recipes.size() > visibleRecipes) {
-            uiRenderer.text("Craftable and station recipes are sorted to the top.", x, y + visibleRecipes * 42.0f + 10.0f, 1.15f, UiColor.MUTED);
+            uiRenderer.text("MORE RECIPES IN THIS FILTER", x, y + 76.0f + visibleRecipes * rowHeight + 10.0f, 1.15f, UiColor.MUTED);
+        }
+    }
+
+    private GamePacket craftRequestFor(CraftingRecipe recipe) {
+        if (recipe.stationType() == CraftingStationType.CAMPFIRE && world != null) {
+            Optional<ClientWorld.BlockPos> station = world.nearestActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds);
+            Optional<List<Integer>> inputSlots = hotbar.inputSlotsFor(recipe);
+            if (station.isPresent() && inputSlots.isPresent()) {
+                ClientWorld.BlockPos pos = station.get();
+                return new GamePacket.CookRequest(pos.x(), pos.y(), pos.z(), recipe.key(), inputSlots.get());
+            }
+        }
+        return new GamePacket.CraftRequest(recipe.key());
+    }
+
+    private boolean recipeUnlockedForUi(CraftingRecipe recipe, CraftingStationType stationType) {
+        return switch (recipe.unlockCondition()) {
+            case ALWAYS -> true;
+            case NEAR_STATION -> recipe.isAvailableAt(stationType);
+            case DISCOVERED_ITEM, FOUND_LORE_NOTE, BIOME_DISCOVERED -> false;
+        };
+    }
+
+    private String recipeStatusLine(CraftingRecipe recipe, CraftingStationType stationType) {
+        if (!recipeUnlockedForUi(recipe, stationType)) {
+            return "Locked: " + unlockRequirementLine(recipe);
+        }
+        return hotbar.recipeStatus(recipe, stationType);
+    }
+
+    private String craftFailMessage(CraftingRecipe recipe, CraftingStationType stationType) {
+        if (!recipe.isAvailableAt(stationType)) {
+            return "This needs a " + Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT);
+        }
+        if (!recipeUnlockedForUi(recipe, stationType)) {
+            return "Locked: " + unlockRequirementLine(recipe);
+        }
+        return "Missing ingredients";
+    }
+
+    private String stationRequirementLine(CraftingRecipe recipe) {
+        return "Station: " + Hotbar.stationLabel(recipe.stationType());
+    }
+
+    private String unlockRequirementLine(CraftingRecipe recipe) {
+        return switch (recipe.unlockCondition()) {
+            case ALWAYS -> "Unlocked";
+            case NEAR_STATION -> "Near " + Hotbar.stationLabel(recipe.stationType());
+            case DISCOVERED_ITEM -> "Discover item";
+            case FOUND_LORE_NOTE -> "Find lore note";
+            case BIOME_DISCOVERED -> "Discover biome";
+        };
+    }
+
+    private void renderCraftingFilters(MousePosition mouse, boolean clicked, float x, float y, float width) {
+        float gap = 6.0f;
+        float chipHeight = 26.0f;
+        float chipWidth = Math.min(66.0f, (width - gap * 6.0f) / 7.0f);
+        float cx = x;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "ALL", craftingCategoryFilter == null, () -> craftingCategoryFilter = null);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "TOOLS", craftingCategoryFilter == CraftingCategory.TOOLS, () -> craftingCategoryFilter = CraftingCategory.TOOLS);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "FOOD", craftingCategoryFilter == CraftingCategory.FOOD, () -> craftingCategoryFilter = CraftingCategory.FOOD);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "BUILD", craftingCategoryFilter == CraftingCategory.BUILDING, () -> craftingCategoryFilter = CraftingCategory.BUILDING);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "DECOR", craftingCategoryFilter == CraftingCategory.DECOR, () -> craftingCategoryFilter = CraftingCategory.DECOR);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "ADV", craftingCategoryFilter == CraftingCategory.ADVENTURE, () -> craftingCategoryFilter = CraftingCategory.ADVENTURE);
+        cx += chipWidth + gap;
+        renderCraftingFilterChip(mouse, clicked, cx, y, chipWidth, chipHeight, "READY", craftableRecipesOnly, () -> craftableRecipesOnly = !craftableRecipesOnly);
+    }
+
+    private void renderCraftingFilterChip(MousePosition mouse, boolean clicked, float x, float y, float width, float height, String label, boolean selected, Runnable action) {
+        boolean hovered = contains(mouse, x, y, width, height);
+        UiColor color = selected ? UiColor.SLOT_ACTIVE : hovered ? UiColor.BUTTON_HOVER : UiColor.SLOT;
+        uiRenderer.rect(x, y, width, height, color);
+        if (selected) {
+            uiRenderer.rect(x, y + height - 3.0f, width, 3.0f, UiColor.ACCENT);
+        }
+        float textScale = Math.min(1.15f, (width - 6.0f) / Math.max(1.0f, BitmapFont.textWidth(label, 1.0f)));
+        uiRenderer.centeredText(
+                label,
+                x + width * 0.5f,
+                y + (height - BitmapFont.textHeight(textScale)) * 0.5f,
+                textScale,
+                selected ? UiColor.WHITE : UiColor.MUTED
+        );
+        if (hovered && clicked) {
+            action.run();
+            audio.play(AudioCue.INVENTORY_CLICK);
+        }
+    }
+
+    private void renderCraftingSearchField(MousePosition mouse, boolean clicked, float x, float y, float width) {
+        boolean hovered = contains(mouse, x, y, width, 28.0f);
+        if (clicked) {
+            craftingSearchFocused = hovered;
+        }
+        UiColor color = craftingSearchFocused ? UiColor.SLOT_ACTIVE : hovered ? UiColor.BUTTON_HOVER : UiColor.SLOT;
+        uiRenderer.rect(x, y, width, 28.0f, color);
+        uiRenderer.rect(x, y + 26.0f, width, 2.0f, craftingSearchFocused ? UiColor.ACCENT : UiColor.BUTTON);
+        String value = craftingSearch.isEmpty() ? "SEARCH" : craftingSearch.toString().toUpperCase(Locale.ROOT);
+        UiColor textColor = craftingSearch.isEmpty() ? UiColor.MUTED : UiColor.WHITE;
+        uiRenderer.text(clampText(value, 50), x + 10.0f, y + 9.0f, 1.15f, textColor);
+        if (!craftingSearch.isEmpty()) {
+            float clearWidth = 24.0f;
+            float clearX = x + width - clearWidth - 5.0f;
+            boolean clearHovered = contains(mouse, clearX, y + 2.0f, clearWidth, 24.0f);
+            uiRenderer.rect(clearX, y + 2.0f, clearWidth, 24.0f, clearHovered ? UiColor.BUTTON_HOVER : UiColor.BUTTON);
+            uiRenderer.centeredText("X", clearX + clearWidth * 0.5f, y + 8.0f, 1.15f, UiColor.WHITE);
+            if (clearHovered && clicked) {
+                craftingSearch.setLength(0);
+                craftingSearchFocused = true;
+                audio.play(AudioCue.INVENTORY_CLICK);
+            }
         }
     }
 
     private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y, CraftingStationType stationType) {
         float panelWidth = 316.0f;
         float panelHeight = 232.0f;
-        uiRenderer.rect(x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.76f));
+        String panelSprite = stationType == CraftingStationType.CAMPFIRE ? "panel_campfire" : "panel_crafting";
+        drawAssetPanel(panelSprite, x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.76f));
+        uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, 136.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
         uiRenderer.text(Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x, y - 30.0f, 2.6f, UiColor.WHITE);
         uiRenderer.text("3 x 3", x + panelWidth - 62.0f, y - 25.0f, 1.25f, UiColor.MUTED);
 
@@ -1224,8 +1828,13 @@ public final class GameClient {
                 int row = i / 3;
                 float sx = x + column * (slot + gap);
                 float sy = y + row * (slot + gap);
+                int owned = hotbar.itemCount(ingredient.itemId());
+                boolean hasIngredient = owned >= ingredient.count();
+                if (!hasIngredient) {
+                    uiRenderer.rect(sx + 3.0f, sy + 3.0f, slot - 6.0f, slot - 6.0f, new UiColor(0.55f, 0.10f, 0.12f, 0.34f));
+                }
                 drawItemIcon(hotbar.itemKey(ingredient.itemId()), sx + 6.0f, sy + 5.0f, 30.0f);
-                uiRenderer.text(String.valueOf(ingredient.count()), sx + 29.0f, sy + 27.0f, 1.05f, UiColor.WHITE);
+                uiRenderer.text(owned + "/" + ingredient.count(), sx + 8.0f, sy + 28.0f, 0.95f, hasIngredient ? UiColor.WHITE : UiColor.HEART);
             }
             float arrowX = x + 164.0f;
             float arrowY = y + 58.0f;
@@ -1240,23 +1849,46 @@ public final class GameClient {
                 uiRenderer.text(String.valueOf(recipe.result().count()), outX + 38.0f, outY + 39.0f, 1.15f, UiColor.WHITE);
             }
             uiRenderer.text(clampText(recipe.label(), 28), x, y + 158.0f, 1.55f, UiColor.WHITE);
-            uiRenderer.text(hotbar.recipeStatus(recipe, stationType).toUpperCase(Locale.ROOT), x, y + 180.0f, 1.25f, canCraft ? UiColor.ACCENT : UiColor.MUTED);
+            uiRenderer.text(stationRequirementLine(recipe).toUpperCase(Locale.ROOT), x, y + 178.0f, 1.05f, recipe.isAvailableAt(stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(recipeStatusLine(recipe, stationType).toUpperCase(Locale.ROOT), x, y + 196.0f, 1.1f, canCraft ? UiColor.ACCENT : recipeUnlockedForUi(recipe, stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
         }
     }
 
     private CraftingRecipe previewCraftingRecipe(CraftingStationType stationType) {
-        for (CraftingRecipe recipe : prioritizedRecipes(stationType)) {
+        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationType);
+        for (CraftingRecipe recipe : recipes) {
             if (hotbar.canCraft(recipe, stationType)) {
                 return recipe;
             }
         }
-        return hotbar.recipes().isEmpty() ? null : hotbar.recipes().get(0);
+        if (!recipes.isEmpty()) {
+            return recipes.get(0);
+        }
+        return null;
+    }
+
+    private List<CraftingRecipe> filteredCraftingRecipes(CraftingStationType stationType) {
+        return prioritizedRecipes(stationType).stream()
+                .filter(recipe -> craftingCategoryFilter == null || recipe.category() == craftingCategoryFilter)
+                .filter(recipe -> !craftableRecipesOnly || recipeUnlockedForUi(recipe, stationType) && hotbar.canCraft(recipe, stationType))
+                .filter(recipe -> craftingSearch.isEmpty() || recipeMatchesSearch(recipe))
+                .toList();
+    }
+
+    private boolean recipeMatchesSearch(CraftingRecipe recipe) {
+        String search = craftingSearch.toString().toLowerCase(Locale.ROOT);
+        return recipe.label().toLowerCase(Locale.ROOT).contains(search)
+                || recipe.key().toLowerCase(Locale.ROOT).contains(search)
+                || recipe.category().name().toLowerCase(Locale.ROOT).contains(search)
+                || hotbar.recipeSummary(recipe).toLowerCase(Locale.ROOT).contains(search)
+                || Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT).contains(search);
     }
 
     private List<CraftingRecipe> prioritizedRecipes(CraftingStationType stationType) {
         return hotbar.recipes().stream()
                 .sorted(Comparator
-                        .comparingInt((CraftingRecipe recipe) -> hotbar.canCraft(recipe, stationType) ? 0 : 1)
+                        .comparingInt((CraftingRecipe recipe) -> recipeUnlockedForUi(recipe, stationType) ? 0 : 1)
+                        .thenComparingInt(recipe -> hotbar.canCraft(recipe, stationType) ? 0 : 1)
                         .thenComparingInt(recipe -> recipe.isAvailableAt(stationType) ? 0 : 1)
                         .thenComparing(CraftingRecipe::category)
                         .thenComparing(CraftingRecipe::label))
@@ -1291,7 +1923,7 @@ public final class GameClient {
         }
     }
 
-    private void renderInventoryGridCompact(float x, float y) {
+    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
         float slot = 42.0f;
         float gap = 6.0f;
         int columns = 9;
@@ -1301,8 +1933,28 @@ public final class GameClient {
         if (x + panelWidth > framebufferWidth - 24.0f) {
             x = Math.max(24.0f, framebufferWidth * 0.5f - panelWidth * 0.5f);
         }
-        uiRenderer.rect(x - 14.0f, y - 42.0f, panelWidth, rows * (slot + gap) + 48.0f, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
+        drawAssetPanel("panel_inventory", x - 14.0f, y - 42.0f, panelWidth, rows * (slot + gap) + 48.0f, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
+        uiRenderer.rect(x + 2.0f, y - 2.0f, gridWidth - 4.0f, rows * (slot + gap) - gap + 4.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
         uiRenderer.text("INVENTORY", x, y - 28.0f, 2.4f, UiColor.WHITE);
+        drawButton(new UiButton(x + panelWidth - 188.0f, y - 36.0f, 76.0f, 28.0f, "SORT", true), mouse, clicked, () -> {
+            if (hotbar.sortBackpack()) {
+                setStatus("Backpack sorted");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            }
+        });
+        boolean trashEnabled = gameMode == GameMode.CREATIVE;
+        if (!trashEnabled) {
+            inventoryTrashMode = false;
+        }
+        drawButton(new UiButton(x + panelWidth - 104.0f, y - 36.0f, 90.0f, 28.0f, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
+            inventoryTrashMode = !inventoryTrashMode;
+            setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
+            audio.play(AudioCue.INVENTORY_CLICK);
+            updateWindowTitle();
+        });
+        String hoverHint = "";
+        boolean droppedOnSlot = false;
         for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), columns * rows); i++) {
             int column = i % columns;
             int row = i / columns;
@@ -1310,6 +1962,13 @@ public final class GameClient {
             float sy = y + row * (slot + gap);
             boolean selected = i == hotbar.selectedIndex();
             Hotbar.SlotView slotView = hotbar.slotView(i);
+            boolean hovered = contains(mouse, sx, sy, slot, slot);
+            if (hovered) {
+                uiRenderer.rect(sx - 3.0f, sy - 3.0f, slot + 6.0f, slot + 6.0f, UiColor.BUTTON_HOVER);
+            }
+            if (draggedInventorySlot == i) {
+                uiRenderer.rect(sx - 2.0f, sy - 2.0f, slot + 4.0f, slot + 4.0f, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
+            }
             drawAssetSlot(sx, sy, slot, selected, i < Hotbar.HOTBAR_SLOTS);
             if (!slotView.isEmpty()) {
                 drawItemIcon(slotView.itemKey(), sx + 6.0f, sy + 5.0f, 30.0f);
@@ -1319,7 +1978,132 @@ public final class GameClient {
                 if (slotView.hasDurability()) {
                     drawDurabilityBar(sx + 7.0f, sy + 36.0f, 28.0f, slotView.durabilityLeft(), slotView.maxDurability());
                 }
+                if (hovered) {
+                    hoverHint = slotHoverText(slotView);
+                }
             }
+            if (hovered && released && draggedInventorySlot >= 0) {
+                droppedOnSlot = true;
+                if (draggedInventorySlot != i && hotbar.moveInventorySlot(draggedInventorySlot, i)) {
+                    setStatus("Moved stack");
+                    audio.play(AudioCue.INVENTORY_CLICK);
+                    updateWindowTitle();
+                }
+            } else if (hovered && clicked && inventoryTrashMode && hotbar.trashInventorySlot(i)) {
+                setStatus("Item trashed");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            } else if (hovered && clicked && isShiftDown() && hotbar.quickMoveInventorySlot(i)) {
+                setStatus(i < Hotbar.HOTBAR_SLOTS ? "Moved to backpack" : "Moved to hotbar");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            } else if (hovered && clicked && !slotView.isEmpty()) {
+                draggedInventorySlot = i;
+            }
+        }
+        renderDraggedInventoryStack(mouse);
+        if (released && draggedInventorySlot >= 0) {
+            if (!droppedOnSlot) {
+                setStatus("Drag cancelled");
+            }
+            draggedInventorySlot = -1;
+        }
+        if (!hoverHint.isBlank()) {
+            renderSlotHoverHint(mouse, hoverHint);
+        }
+    }
+
+    private void renderDraggedInventoryStack(MousePosition mouse) {
+        if (draggedInventorySlot < 0 || draggedInventorySlot >= hotbar.inventorySlotCount()) {
+            return;
+        }
+        Hotbar.SlotView slotView = hotbar.slotView(draggedInventorySlot);
+        if (slotView.isEmpty()) {
+            draggedInventorySlot = -1;
+            return;
+        }
+        float size = 38.0f;
+        float x = (float) mouse.x() + 14.0f;
+        float y = (float) mouse.y() + 14.0f;
+        drawAssetSlot(x, y, size, false, draggedInventorySlot < Hotbar.HOTBAR_SLOTS);
+        drawItemIcon(slotView.itemKey(), x + 5.0f, y + 4.0f, size - 10.0f);
+        if (slotView.count() > 1) {
+            uiRenderer.text(String.valueOf(slotView.count()), x + size - 15.0f, y + size - 14.0f, 0.95f, UiColor.WHITE);
+        }
+    }
+
+    private String slotHoverText(Hotbar.SlotView slotView) {
+        StringBuilder text = new StringBuilder(slotView.label());
+        if (!slotView.category().isBlank()) {
+            text.append(" | ").append(slotView.category());
+        }
+        if (!slotView.description().isBlank()) {
+            text.append(" | ").append(slotView.description());
+        }
+        if (!slotView.rarity().isBlank()) {
+            text.append(" | ").append(slotView.rarity());
+        }
+        if (slotView.count() > 1) {
+            text.append(" x").append(slotView.count());
+        }
+        if (!slotView.toolTypeLabel().isBlank()) {
+            text.append(" | ").append(slotView.toolTypeLabel()).append(" Level ").append(slotView.toolLevel());
+        }
+        if (slotView.foodValue() > 0) {
+            text.append(" | Food +").append(slotView.foodValue());
+        }
+        if (slotView.healValue() > 0) {
+            text.append(" | Heal +").append(slotView.healValue());
+        }
+        if (slotView.comfortValue() > 0) {
+            text.append(" | Comfort +").append(slotView.comfortValue());
+        }
+        if (slotView.hasDurability()) {
+            text.append(" | Durability ").append(slotView.durabilityLeft()).append("/").append(slotView.maxDurability());
+        }
+        if (slotView.placeable()) {
+            text.append(" | Placeable");
+        }
+        return text.toString();
+    }
+
+    private void renderSlotHoverHint(MousePosition mouse, String text) {
+        String label = clampText(text, 52);
+        float scale = 1.2f;
+        float width = BitmapFont.textWidth(label, scale) + 16.0f;
+        float height = BitmapFont.textHeight(scale) + 14.0f;
+        float maxX = Math.max(12.0f, framebufferWidth - width - 12.0f);
+        float maxY = Math.max(12.0f, framebufferHeight - height - 12.0f);
+        float x = Math.max(12.0f, Math.min((float) mouse.x() + 16.0f, maxX));
+        float y = Math.max(12.0f, Math.min((float) mouse.y() - height - 10.0f, maxY));
+        uiRenderer.rect(x, y, width, height, new UiColor(0.035f, 0.045f, 0.042f, 0.96f));
+        uiRenderer.rect(x, y, width, 2.0f, UiColor.ACCENT);
+        uiRenderer.text(label, x + 8.0f, y + 8.0f, scale, UiColor.WHITE);
+    }
+
+    private void renderFeedbackOverlay(float centerX, float bottomY) {
+        List<String> messages = feedbackLog.visible(frameTimeSeconds);
+        if (messages.isEmpty()) {
+            return;
+        }
+        float uiScale = settings.uiScale();
+        float scale = 1.15f * uiScale;
+        float lineHeight = 18.0f * uiScale;
+        float width = 0.0f;
+        for (String message : messages) {
+            width = Math.max(width, BitmapFont.textWidth(clampText(message, 48), scale));
+        }
+        width = Math.min(width + 24.0f * uiScale, Math.max(240.0f * uiScale, framebufferWidth - 48.0f * uiScale));
+        float height = messages.size() * lineHeight + 14.0f * uiScale;
+        float margin = 18.0f * uiScale;
+        float x = Math.max(margin, Math.min(centerX - width * 0.5f, framebufferWidth - width - margin));
+        float y = Math.max(24.0f * uiScale, bottomY - height);
+        uiRenderer.rect(x, y, width, height, new UiColor(0.025f, 0.035f, 0.032f, 0.68f));
+        uiRenderer.rect(x, y, width, 2.0f * uiScale, UiColor.ACCENT);
+        float textY = y + 9.0f * uiScale;
+        for (String message : messages) {
+            uiRenderer.centeredText(clampText(message, 48), x + width * 0.5f, textY, scale, UiColor.WHITE);
+            textY += lineHeight;
         }
     }
 
@@ -1327,28 +2111,41 @@ public final class GameClient {
         if ((gameState != GameState.PLAYING && gameState != GameState.CHAT) || world == null || !settings.hudEnabled()) {
             return;
         }
-        uiRenderer.rect(framebufferWidth * 0.5f - 5.0f, framebufferHeight * 0.5f - 1.0f, 10.0f, 2.0f, UiColor.WHITE);
-        uiRenderer.rect(framebufferWidth * 0.5f - 1.0f, framebufferHeight * 0.5f - 5.0f, 2.0f, 10.0f, UiColor.WHITE);
+        float uiScale = settings.uiScale();
+        float crosshairLength = 10.0f * uiScale;
+        float crosshairThickness = Math.max(1.0f, 2.0f * uiScale);
+        uiRenderer.rect(framebufferWidth * 0.5f - crosshairLength * 0.5f, framebufferHeight * 0.5f - crosshairThickness * 0.5f, crosshairLength, crosshairThickness, UiColor.WHITE);
+        uiRenderer.rect(framebufferWidth * 0.5f - crosshairThickness * 0.5f, framebufferHeight * 0.5f - crosshairLength * 0.5f, crosshairThickness, crosshairLength, UiColor.WHITE);
         renderBreakOverlay();
 
-        float hotbarSlotSize = 58.0f;
-        float hotbarGap = 6.0f;
+        float hotbarSlotSize = 58.0f * uiScale;
+        float hotbarGap = 6.0f * uiScale;
         float hotbarWidth = Hotbar.HOTBAR_SLOTS * hotbarSlotSize + (Hotbar.HOTBAR_SLOTS - 1) * hotbarGap;
-        float hotbarX = Math.max(20.0f, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
-        float hotbarY = framebufferHeight - 86.0f;
-        float statsY = hotbarY - 58.0f;
-        drawHudSprite("frame_moss", hotbarX - 18.0f, statsY - 20.0f, hotbarWidth + 36.0f, 138.0f);
-        uiRenderer.rect(hotbarX - 12.0f, statsY - 14.0f, hotbarWidth + 24.0f, 128.0f, new UiColor(0.025f, 0.032f, 0.03f, 0.36f));
-        uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 38.0f, 1.55f, UiColor.WHITE);
-        drawIconMeter("heart_full", "heart_half", "heart_empty", playerStats.health(), 20, hotbarX + 8.0f, statsY, 18.0f);
-        drawIconMeter("hunger_full", "hunger_half", "hunger_empty", playerStats.hunger(), 20, hotbarX + hotbarWidth - 226.0f, statsY - 4.0f, 18.0f);
-        drawIconMeter("leaf_full", "leaf_half", "leaf_empty", playerStats.stamina(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 28.0f, 16.0f);
-        uiRenderer.text("MODE " + gameMode.name(), hotbarX + hotbarWidth - 116.0f, statsY + 33.0f, 1.15f, UiColor.MUTED);
+        float hotbarX = Math.max(20.0f * uiScale, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
+        float hotbarY = framebufferHeight - 86.0f * uiScale;
+        float statsY = hotbarY - 44.0f * uiScale;
+        uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 42.0f * uiScale, 1.45f * uiScale, UiColor.WHITE);
+        float statWidth = Math.min(188.0f * uiScale, hotbarWidth * 0.31f);
+        drawStatStrip("HEALTH", "heart_full", "heart_half", "heart_empty", playerStats.health(), 20, hotbarX + 4.0f * uiScale, statsY, statWidth, 11.0f * uiScale, UiColor.HEART);
+        drawStatStrip("ENERGY", "leaf_full", "leaf_half", "leaf_empty", playerStats.stamina(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, statsY, statWidth, 10.5f * uiScale, UiColor.ENERGY);
+        drawStatStrip("HUNGER", "hunger_full", "hunger_half", "hunger_empty", playerStats.hunger(), 20, hotbarX + hotbarWidth - statWidth - 4.0f * uiScale, statsY, statWidth, 11.0f * uiScale, UiColor.HUNGER);
+        if (playerStats.comfort() > 0) {
+            uiRenderer.centeredText("COMFORT " + playerStats.comfort(), framebufferWidth * 0.5f, statsY + 22.0f * uiScale, 0.9f * uiScale, UiColor.MUTED);
+        }
+        uiRenderer.centeredText("TIME " + dayTimeLabel(), framebufferWidth * 0.5f, statsY - 18.0f * uiScale, 1.0f * uiScale, UiColor.MUTED);
+        uiRenderer.text("MODE " + gameMode.name(), Math.max(18.0f * uiScale, framebufferWidth - 150.0f * uiScale), 18.0f * uiScale, 1.0f * uiScale, UiColor.MUTED);
+        org.joml.Vector3f position = camera.position();
+        String biomeKey = world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z));
+        String biome = biomeLabel(biomeKey);
+        uiRenderer.text("BIOME " + clampText(biome, 20), 18.0f * uiScale, 18.0f * uiScale, 1.0f * uiScale, UiColor.MUTED);
+        uiRenderer.text("TEMP " + temperatureLabel(biomeKey), 18.0f * uiScale, 34.0f * uiScale, 0.95f * uiScale, UiColor.MUTED);
+        renderFeedbackOverlay(framebufferWidth * 0.5f, statsY - 66.0f * uiScale);
         if (playerStats.breath() < 20) {
-            drawIconMeter("air_full", "air_half", "air_empty", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY - 28.0f, 16.0f);
+            drawStatStrip("AIR", "air_full", "air_half", "air_empty", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, statsY - 28.0f * uiScale, statWidth, 10.5f * uiScale, UiColor.WATER);
         }
         if (playerStats.armor() > 0) {
-            drawIconMeter("armor_full", "armor_half", "armor_empty", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - 110.0f, statsY + 52.0f, 16.0f);
+            float armorY = playerStats.breath() < 20 ? statsY - 54.0f * uiScale : statsY - 28.0f * uiScale;
+            drawStatStrip("ARMOR", "armor_full", "armor_half", "armor_empty", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, armorY, statWidth, 10.5f * uiScale, UiColor.MUTED);
         }
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {
             float x = hotbarX + i * (hotbarSlotSize + hotbarGap);
@@ -1356,14 +2153,14 @@ public final class GameClient {
             Hotbar.SlotView slot = hotbar.slotView(i);
             boolean selected = i == hotbar.selectedIndex();
             drawAssetSlot(x, y, hotbarSlotSize, selected, true);
-            uiRenderer.text(String.valueOf(i + 1), x + 7.0f, y + 8.0f, 1.05f, UiColor.MUTED);
+            uiRenderer.text(String.valueOf(i + 1), x + 7.0f * uiScale, y + 8.0f * uiScale, 1.05f * uiScale, UiColor.MUTED);
             if (!slot.isEmpty()) {
-                drawItemIcon(slot.itemKey(), x + 14.0f, y + 10.0f, 34.0f);
+                drawItemIcon(slot.itemKey(), x + 14.0f * uiScale, y + 10.0f * uiScale, 34.0f * uiScale);
                 if (slot.count() > 1) {
-                    uiRenderer.text(String.valueOf(slot.count()), x + 40.0f, y + 39.0f, 1.15f, UiColor.WHITE);
+                    uiRenderer.text(String.valueOf(slot.count()), x + 40.0f * uiScale, y + 39.0f * uiScale, 1.15f * uiScale, UiColor.WHITE);
                 }
                 if (slot.hasDurability()) {
-                    drawDurabilityBar(x + 10.0f, y + 51.0f, 38.0f, slot.durabilityLeft(), slot.maxDurability());
+                    drawDurabilityBar(x + 10.0f * uiScale, y + 51.0f * uiScale, 38.0f * uiScale, slot.durabilityLeft(), slot.maxDurability());
                 }
             }
         }
@@ -1378,31 +2175,103 @@ public final class GameClient {
 
     private void renderHeldItem() {
         hotbar.selectedItemKey().ifPresent(itemKey -> {
-            float size = Math.max(82.0f, Math.min(128.0f, framebufferHeight * 0.16f));
-            float bob = (float) Math.sin(frameTimeSeconds * 5.0) * 3.0f;
-            float swing = blockBreakAnimation.handSwing(frameTimeSeconds);
-            float punch = (float) Math.sin((1.0f - swing) * Math.PI) * swing;
-            float x = framebufferWidth - size - 54.0f - punch * 28.0f;
-            float y = framebufferHeight - size - 26.0f + bob + punch * 22.0f;
-            uiRenderer.rect(x + size * 0.38f, y + size * 0.40f, size * 0.34f, size * 0.72f, new UiColor(0.70f, 0.50f, 0.34f, 0.92f));
-            uiRenderer.rect(x + size * 0.34f, y + size * 0.36f, size * 0.42f, size * 0.20f, new UiColor(0.82f, 0.62f, 0.42f, 0.96f));
-            uiRenderer.rect(x + 10.0f, y + 12.0f, size - 14.0f, size - 10.0f, new UiColor(0.02f, 0.02f, 0.018f, 0.20f));
-            drawItemIcon(itemKey, x - punch * 10.0f, y - punch * 8.0f, size);
+            float uiScale = settings.uiScale();
+            float size = Math.max(78.0f * uiScale, Math.min(116.0f * uiScale, framebufferHeight * 0.15f * uiScale));
+            float bob = (float) Math.sin(frameTimeSeconds * 5.0) * 1.4f * uiScale;
+            float swingPhase = 1.0f - blockBreakAnimation.handSwing(frameTimeSeconds);
+            float punch = (float) Math.sin(swingPhase * Math.PI);
+            float x = framebufferWidth - size - 50.0f * uiScale - punch * 8.0f * uiScale;
+            float y = framebufferHeight - size - 28.0f * uiScale + bob + punch * 6.0f * uiScale;
+            uiRenderer.rect(x + size * 0.55f, y + size * 0.62f, size * 0.16f, size * 0.34f, new UiColor(0.70f, 0.50f, 0.34f, 0.90f));
+            uiRenderer.rect(x + size * 0.49f, y + size * 0.56f, size * 0.28f, size * 0.14f, new UiColor(0.82f, 0.62f, 0.42f, 0.92f));
+            drawItemIcon(itemKey, x - punch * 3.0f * uiScale, y - punch * 3.0f * uiScale, size);
         });
     }
 
     private void drawMeterBar(String label, int value, int max, float x, float y, UiColor fill) {
-        float width = 128.0f;
+        float uiScale = settings.uiScale();
+        float width = 128.0f * uiScale;
         float ratio = Math.max(0.0f, Math.min(1.0f, value / (float) max));
-        float barX = label.isBlank() ? x : x + 78.0f;
+        float barX = label.isBlank() ? x : x + 78.0f * uiScale;
         if (!label.isBlank()) {
-            uiRenderer.text(label, x, y + 2.0f, 1.2f, UiColor.MUTED);
+            uiRenderer.text(label, x, y + 2.0f * uiScale, 1.2f * uiScale, UiColor.MUTED);
         }
-        uiRenderer.rect(barX, y, width, 14.0f, UiColor.SLOT);
-        uiRenderer.rect(barX + 2.0f, y + 2.0f, (width - 4.0f) * ratio, 10.0f, fill);
+        uiRenderer.rect(barX, y, width, 14.0f * uiScale, UiColor.SLOT);
+        uiRenderer.rect(barX + 2.0f * uiScale, y + 2.0f * uiScale, (width - 4.0f * uiScale) * ratio, 10.0f * uiScale, fill);
         if (!label.isBlank()) {
-            uiRenderer.text(value + "/" + max, barX + width + 8.0f, y + 2.0f, 1.05f, UiColor.WHITE);
+            uiRenderer.text(value + "/" + max, barX + width + 8.0f * uiScale, y + 2.0f * uiScale, 1.05f * uiScale, UiColor.WHITE);
         }
+    }
+
+    private String dayTimeLabel() {
+        double elapsed = Math.max(0.0, frameTimeSeconds - worldStartTimeSeconds);
+        int day = (int) (elapsed / LOCAL_DAY_LENGTH_SECONDS) + 1;
+        int totalMinutes = localDayMinutes();
+        int hour = totalMinutes / 60;
+        int minute = totalMinutes % 60;
+        return "DAY " + day + " " + dayPhaseLabel(totalMinutes) + " " + String.format(Locale.ROOT, "%02d:%02d", hour, minute);
+    }
+
+    private int localDayMinutes() {
+        double elapsed = Math.max(0.0, frameTimeSeconds - worldStartTimeSeconds);
+        double dayProgress = elapsed % LOCAL_DAY_LENGTH_SECONDS / LOCAL_DAY_LENGTH_SECONDS;
+        return Math.floorMod((int) Math.floor(dayProgress * 24.0 * 60.0) + DAY_START_MINUTES, 24 * 60);
+    }
+
+    private boolean isNightTime() {
+        int totalMinutes = localDayMinutes();
+        return totalMinutes < 5 * 60 || totalMinutes >= 19 * 60;
+    }
+
+    private static String dayPhaseLabel(int totalMinutes) {
+        if (totalMinutes < 5 * 60) {
+            return "NIGHT";
+        }
+        if (totalMinutes < 7 * 60) {
+            return "DAWN";
+        }
+        if (totalMinutes < 12 * 60) {
+            return "MORNING";
+        }
+        if (totalMinutes < 17 * 60) {
+            return "AFTERNOON";
+        }
+        if (totalMinutes < 19 * 60) {
+            return "DUSK";
+        }
+        return "NIGHT";
+    }
+
+    private String temperatureLabel(String biomeKey) {
+        float temperature = biomes.findByKey(biomeKey).map(BiomeType::temperature).orElse(0.65f);
+        double elapsed = Math.max(0.0, frameTimeSeconds - worldStartTimeSeconds);
+        double dayProgress = elapsed % LOCAL_DAY_LENGTH_SECONDS / LOCAL_DAY_LENGTH_SECONDS;
+        float dayWarmth = (float) Math.sin(dayProgress * Math.PI * 2.0 - Math.PI * 0.5);
+        float apparent = Math.max(0.0f, Math.min(1.0f, temperature + dayWarmth * 0.05f));
+        if (apparent < 0.22f) {
+            return "FREEZING";
+        }
+        if (apparent < 0.42f) {
+            return "COLD";
+        }
+        if (apparent > 0.84f) {
+            return "HOT";
+        }
+        if (apparent > 0.68f) {
+            return "WARM";
+        }
+        return "MILD";
+    }
+
+    private void drawStatStrip(String label, String fullKey, String halfKey, String emptyKey, int value, int max, float x, float y, float width, float iconSize, UiColor accent) {
+        float uiScale = settings.uiScale();
+        float gap = Math.max(3.0f, iconSize * 0.22f);
+        float meterWidth = iconSize * 10.0f + gap * 9.0f;
+        float meterX = x + Math.max(43.0f * uiScale, width - meterWidth);
+        int clampedValue = Math.max(0, Math.min(max, value));
+        uiRenderer.text(label, x, y + 1.0f * uiScale, 0.72f * uiScale, UiColor.MUTED);
+        uiRenderer.text(clampedValue + "/" + max, x, y + 10.5f * uiScale, 0.66f * uiScale, accent);
+        drawIconMeter(fullKey, halfKey, emptyKey, clampedValue, max, meterX, y + 4.0f * uiScale, iconSize);
     }
 
     private void drawIconMeter(String fullKey, String halfKey, String emptyKey, int value, int max, float x, float y, float size) {
@@ -1417,9 +2286,29 @@ public final class GameClient {
             if (key.isBlank()) {
                 continue;
             }
-            float sx = x + i * (size + 4.0f);
-            sprites.hud(key).ifPresent(sprite -> spriteRenderer.sprite(sprite, sx, y, size, size));
+            float sx = x + i * (size + Math.max(3.0f, size * 0.22f));
+            drawHudSpriteFit(key, sx, y, size, size);
         }
+    }
+
+    private boolean drawHudSpriteFit(String key, float x, float y, float boxWidth, float boxHeight) {
+        if (sprites == null || spriteRenderer == null) {
+            return false;
+        }
+        Optional<dev.voxelgame.client.ui.UiSprite> sprite = sprites.hud(key);
+        sprite.ifPresent(value -> {
+            float drawWidth = boxWidth;
+            float drawHeight = boxHeight;
+            if (value.pixelWidth() > 0 && value.pixelHeight() > 0) {
+                if (value.pixelWidth() > value.pixelHeight()) {
+                    drawHeight = boxWidth * value.pixelHeight() / (float) value.pixelWidth();
+                } else if (value.pixelHeight() > value.pixelWidth()) {
+                    drawWidth = boxHeight * value.pixelWidth() / (float) value.pixelHeight();
+                }
+            }
+            spriteRenderer.sprite(value, x + (boxWidth - drawWidth) * 0.5f, y + (boxHeight - drawHeight) * 0.5f, drawWidth, drawHeight);
+        });
+        return sprite.isPresent();
     }
 
     private void drawDurabilityBar(float x, float y, float width, int value, int max) {
@@ -1427,9 +2316,23 @@ public final class GameClient {
             return;
         }
         float ratio = Math.max(0.0f, Math.min(1.0f, value / (float) max));
-        UiColor color = ratio > 0.45f ? UiColor.ACCENT : ratio > 0.18f ? UiColor.ENERGY : UiColor.HEART;
-        uiRenderer.rect(x, y, width, 3.0f, new UiColor(0.02f, 0.025f, 0.025f, 0.85f));
-        uiRenderer.rect(x, y, width * ratio, 3.0f, color);
+        float filledWidth = Math.max(ratio > 0.0f ? 2.0f : 0.0f, width * ratio);
+        uiRenderer.rect(x - 1.0f, y - 1.0f, width + 2.0f, 5.0f, new UiColor(0.01f, 0.012f, 0.012f, 0.92f));
+        uiRenderer.rect(x, y, width, 3.0f, new UiColor(0.10f, 0.115f, 0.105f, 0.84f));
+        uiRenderer.rect(x, y, filledWidth, 3.0f, durabilityColor(ratio));
+        if (ratio <= 0.18f && ratio > 0.0f) {
+            uiRenderer.rect(x + filledWidth, y, width - filledWidth, 3.0f, new UiColor(0.18f, 0.04f, 0.035f, 0.42f));
+        }
+    }
+
+    private static UiColor durabilityColor(float ratio) {
+        if (ratio > 0.55f) {
+            return new UiColor(0.42f, 0.88f, 0.46f, 0.96f);
+        }
+        if (ratio > 0.25f) {
+            return new UiColor(0.94f, 0.72f, 0.26f, 0.96f);
+        }
+        return new UiColor(0.95f, 0.28f, 0.22f, 0.98f);
     }
 
     private void renderChatOverlay() {
@@ -1437,17 +2340,19 @@ public final class GameClient {
             return;
         }
         List<String> lines = chatLog.recent(gameState == GameState.CHAT ? 8 : 4);
-        float y = framebufferHeight - 176.0f - lines.size() * 18.0f;
+        float uiScale = settings.uiScale();
+        float lineHeight = 18.0f * uiScale;
+        float y = framebufferHeight - 176.0f * uiScale - lines.size() * lineHeight;
         if (!lines.isEmpty()) {
-            uiRenderer.rect(14.0f, y - 8.0f, Math.min(760.0f, framebufferWidth - 28.0f), lines.size() * 18.0f + 14.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.45f));
+            uiRenderer.rect(14.0f * uiScale, y - 8.0f * uiScale, Math.min(760.0f * uiScale, framebufferWidth - 28.0f * uiScale), lines.size() * lineHeight + 14.0f * uiScale, new UiColor(0.02f, 0.03f, 0.035f, 0.45f));
         }
         for (String line : lines) {
-            uiRenderer.text(clampText(line, 86), 22.0f, y, 1.55f, UiColor.WHITE);
-            y += 18.0f;
+            uiRenderer.text(clampText(line, 86), 22.0f * uiScale, y, 1.55f * uiScale, UiColor.WHITE);
+            y += lineHeight;
         }
         if (gameState == GameState.CHAT) {
-            uiRenderer.rect(14.0f, framebufferHeight - 42.0f, Math.min(820.0f, framebufferWidth - 28.0f), 30.0f, new UiColor(0.02f, 0.025f, 0.03f, 0.82f));
-            uiRenderer.text("> " + chatDraft, 24.0f, framebufferHeight - 34.0f, 1.8f, UiColor.WHITE);
+            uiRenderer.rect(14.0f * uiScale, framebufferHeight - 42.0f * uiScale, Math.min(820.0f * uiScale, framebufferWidth - 28.0f * uiScale), 30.0f * uiScale, new UiColor(0.02f, 0.025f, 0.03f, 0.82f));
+            uiRenderer.text("> " + chatDraft, 24.0f * uiScale, framebufferHeight - 34.0f * uiScale, 1.8f * uiScale, UiColor.WHITE);
         }
     }
 
@@ -1480,11 +2385,11 @@ public final class GameClient {
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome), 22.0f, 64.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("RD " + settings.renderDistanceChunks() + " MB " + settings.meshBuildBudgetChunks() + " DIRTY " + (world == null ? 0 : world.dirtyChunkCount()) + " BUILT " + lastMeshBuilds, 22.0f, 84.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("LOADED " + (world == null ? 0 : world.loadedChunkCount()) + " GPU MESH " + lastRenderStats.loadedGpuMeshes(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + lastRenderStats.drawCalls() + " OPAQUE " + lastRenderStats.renderedOpaqueChunks() + " WATER " + lastRenderStats.renderedTransparentChunks() + " CULL " + lastRenderStats.culledChunks(), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("TRIS " + formatCount(lastRenderStats.triangles()) + " VRAM " + formatMegabytes(lastRenderStats.meshBytes()) + " ENT " + lastRenderedEntities + " HITBOX " + lastRenderedEntityHitboxes, 22.0f, 144.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOADED " + (world == null ? 0 : world.loadedChunkCount()) + " GPU MESH " + lastRenderStats.loadedGpuMeshes() + " GPU CHUNK " + lastRenderStats.loadedChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + lastRenderStats.drawCalls() + " SOLID " + lastRenderStats.renderedOpaqueChunks() + " CUTOUT " + lastRenderStats.renderedCutoutChunks() + " WATER " + lastRenderStats.renderedTransparentChunks() + " CULLM " + lastRenderStats.culledMeshes() + " CULLC " + lastRenderStats.culledChunkPositions(), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("TRIS " + formatCount(lastRenderStats.triangles()) + " VRAM " + formatMegabytes(lastRenderStats.meshBytes()) + " ENT " + lastRenderedEntities + " EDC " + lastEntityRenderStats.drawCalls() + " EP " + lastEntityRenderStats.modelParts() + " EMDL " + lastEntityRenderStats.cachedModels() + " ECULL " + lastEntityRenderStats.culledEntities() + " HITBOX " + lastRenderedEntityHitboxes, 22.0f, 144.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()) + " BORDERS " + lastChunkBorderDebugChunks, 22.0f, 164.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 184.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PART " + lastParticleRenderStats.liveParticles() + " PDC " + lastParticleRenderStats.drawCalls() + " PTRI " + lastParticleRenderStats.triangles() + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 184.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("NET " + onOff(onlineMode) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SEL " + clampText(selectedItem, 52), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOOK " + clampText(lookingAt, 52), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
@@ -1495,23 +2400,29 @@ public final class GameClient {
             return;
         }
         float progress = blockBreakAnimation.progress(frameTimeSeconds);
-        float size = 42.0f + progress * 16.0f;
-        float x = framebufferWidth * 0.5f - size * 0.5f;
-        float y = framebufferHeight * 0.5f - size * 0.5f;
-        uiRenderer.rect(x, y, size, size, new UiColor(0.05f, 0.04f, 0.035f, 0.20f + progress * 0.24f));
-        UiColor crack = new UiColor(0.95f, 0.88f, 0.72f, 0.42f + progress * 0.45f);
-        float thickness = 2.0f + progress * 2.0f;
-        uiRenderer.rect(x + size * 0.18f, y + size * 0.32f, size * 0.54f, thickness, crack);
-        uiRenderer.rect(x + size * 0.48f, y + size * 0.24f, thickness, size * 0.55f, crack);
-        uiRenderer.rect(x + size * 0.31f, y + size * 0.56f, size * 0.42f, thickness, crack);
-        if (progress > 0.38f) {
-            uiRenderer.rect(x + size * 0.22f, y + size * 0.72f, size * 0.32f, thickness, crack);
-            uiRenderer.rect(x + size * 0.69f, y + size * 0.42f, thickness, size * 0.34f, crack);
+        float uiScale = settings.uiScale();
+        float eased = progress * progress * (3.0f - 2.0f * progress);
+        float size = (24.0f + eased * 22.0f) * uiScale;
+        float cx = framebufferWidth * 0.5f;
+        float cy = framebufferHeight * 0.5f;
+        float x = cx - size * 0.5f;
+        float y = cy - size * 0.5f;
+        UiColor crack = new UiColor(0.95f, 0.88f, 0.72f, 0.24f + eased * 0.54f);
+        float thickness = Math.max(1.0f, (1.0f + eased * 1.6f) * uiScale);
+        uiRenderer.rect(x + size * 0.20f, y + size * 0.34f, size * 0.42f, thickness, crack);
+        uiRenderer.rect(x + size * 0.48f, y + size * 0.22f, thickness, size * 0.46f, crack);
+        uiRenderer.rect(x + size * 0.32f, y + size * 0.58f, size * 0.36f, thickness, crack);
+        if (eased > 0.45f) {
+            uiRenderer.rect(x + size * 0.22f, y + size * 0.72f, size * 0.26f, thickness, crack);
+            uiRenderer.rect(x + size * 0.68f, y + size * 0.44f, thickness, size * 0.24f, crack);
         }
-        if (progress > 0.70f) {
-            drawHudSprite("sparkle", x + size * 0.68f, y - size * 0.12f, 26.0f, 24.0f);
+        if (eased > 0.78f) {
+            drawHudSprite("sparkle", x + size * 0.68f, y - size * 0.12f, 26.0f * uiScale, 24.0f * uiScale);
         }
-        drawMeterBar("", Math.round(progress * 100.0f), 100, framebufferWidth * 0.5f - 104.0f, y + size + 12.0f, UiColor.ACCENT);
+        float barWidth = 96.0f * uiScale;
+        float barY = cy + 22.0f * uiScale;
+        uiRenderer.rect(cx - barWidth * 0.5f, barY, barWidth, Math.max(2.0f, 3.0f * uiScale), new UiColor(0.02f, 0.025f, 0.023f, 0.58f));
+        uiRenderer.rect(cx - barWidth * 0.5f, barY, barWidth * eased, Math.max(2.0f, 3.0f * uiScale), UiColor.ACCENT);
     }
 
     private void renderPickupAnimation() {
@@ -1520,19 +2431,47 @@ public final class GameClient {
         }
         float remaining = (float) Math.max(0.0, pickupAnimationUntil - frameTimeSeconds);
         float t = Math.max(0.0f, Math.min(1.0f, remaining / 0.48f));
-        float size = 34.0f + (1.0f - t) * 16.0f;
+        float uiScale = settings.uiScale();
+        float size = (34.0f + (1.0f - t) * 16.0f) * uiScale;
         float x = framebufferWidth * 0.5f - size * 0.5f;
-        float y = framebufferHeight * 0.5f + 36.0f - (1.0f - t) * 46.0f;
+        float y = framebufferHeight * 0.5f + 36.0f * uiScale - (1.0f - t) * 46.0f * uiScale;
         drawItemIcon(pickupAnimationItemKey, x, y, size);
-        uiRenderer.centeredText("+", x - 8.0f, y + 8.0f, 1.5f, UiColor.ACCENT);
+        uiRenderer.centeredText("+", x - 8.0f * uiScale, y + 8.0f * uiScale, 1.5f * uiScale, UiColor.ACCENT);
     }
 
     private void drawAssetSlot(float x, float y, float size, boolean selected, boolean hotbarSlot) {
-        String key = selected ? "slot_selected" : hotbarSlot ? "slot_hotbar" : "slot";
-        if (!drawHudSprite(key, x, y, size, size)) {
-            uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.55f));
-            uiRenderer.rect(x, y, size, size, selected ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+        if (selected && hotbarSlot) {
+            drawSelectedSlotPulse(x, y, size);
         }
+        UiColor outer = selected
+                ? UiColor.ACCENT
+                : hotbarSlot ? new UiColor(0.11f, 0.17f, 0.15f, 0.96f) : new UiColor(0.075f, 0.095f, 0.092f, 0.95f);
+        UiColor fill = selected
+                ? UiColor.SLOT_ACTIVE
+                : hotbarSlot ? new UiColor(0.055f, 0.075f, 0.070f, 0.95f) : UiColor.SLOT;
+        uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, new UiColor(0.012f, 0.016f, 0.015f, 0.88f));
+        uiRenderer.rect(x - 1.0f, y - 1.0f, size + 2.0f, size + 2.0f, outer);
+        uiRenderer.rect(x, y, size, size, fill);
+        uiRenderer.rect(x + 4.0f, y + 4.0f, size - 8.0f, size - 8.0f, new UiColor(0.018f, 0.026f, 0.024f, 0.62f));
+        uiRenderer.rect(x + 3.0f, y + 3.0f, size - 6.0f, 2.0f, selected ? UiColor.WHITE : new UiColor(0.20f, 0.28f, 0.25f, 0.55f));
+        uiRenderer.rect(x + 3.0f, y + size - 5.0f, size - 6.0f, 2.0f, new UiColor(0.01f, 0.014f, 0.014f, 0.70f));
+    }
+
+    private void drawHotbarPanel(float x, float y, float width, float height) {
+        uiRenderer.rect(x, y, width, height, new UiColor(0.012f, 0.018f, 0.017f, 0.72f));
+        uiRenderer.rect(x + 4.0f, y + 4.0f, width - 8.0f, height - 8.0f, new UiColor(0.028f, 0.040f, 0.036f, 0.76f));
+        uiRenderer.rect(x + 4.0f, y + 4.0f, width - 8.0f, 2.0f, new UiColor(0.30f, 0.46f, 0.35f, 0.62f));
+        uiRenderer.rect(x + 4.0f, y + height - 6.0f, width - 8.0f, 2.0f, new UiColor(0.004f, 0.006f, 0.006f, 0.55f));
+    }
+
+    private void drawSelectedSlotPulse(float x, float y, float size) {
+        float pulse = 0.5f + 0.5f * (float) Math.sin(frameTimeSeconds * 5.8f);
+        float inset = 4.0f + pulse * 2.0f;
+        UiColor glow = new UiColor(0.55f, 0.86f, 0.48f, 0.18f + pulse * 0.18f);
+        uiRenderer.rect(x - inset, y - inset, size + inset * 2.0f, 2.0f, glow);
+        uiRenderer.rect(x - inset, y + size + inset - 2.0f, size + inset * 2.0f, 2.0f, glow);
+        uiRenderer.rect(x - inset, y - inset, 2.0f, size + inset * 2.0f, glow);
+        uiRenderer.rect(x + size + inset - 2.0f, y - inset, 2.0f, size + inset * 2.0f, glow);
     }
 
     private boolean drawHudSprite(String key, float x, float y, float width, float height) {
@@ -1542,6 +2481,25 @@ public final class GameClient {
         Optional<dev.voxelgame.client.ui.UiSprite> sprite = sprites.hud(key);
         sprite.ifPresent(value -> spriteRenderer.sprite(value, x, y, width, height));
         return sprite.isPresent();
+    }
+
+    private boolean drawHudBackdropSprite(String key, float x, float y, float width, float height) {
+        return drawHudBackdropSprite(key, x, y, width, height, UiColor.WHITE);
+    }
+
+    private boolean drawHudBackdropSprite(String key, float x, float y, float width, float height, UiColor tint) {
+        if (sprites == null || backgroundSpriteRenderer == null) {
+            return false;
+        }
+        Optional<dev.voxelgame.client.ui.UiSprite> sprite = sprites.hud(key);
+        sprite.ifPresent(value -> backgroundSpriteRenderer.sprite(value, x, y, width, height, tint));
+        return sprite.isPresent();
+    }
+
+    private void drawAssetPanel(String spriteKey, float x, float y, float width, float height, UiColor fallbackColor) {
+        if (!drawHudBackdropSprite(spriteKey, x, y, width, height)) {
+            uiRenderer.rect(x, y, width, height, fallbackColor);
+        }
     }
 
     private void drawItemIcon(String itemKey, float x, float y, float size) {
@@ -1586,10 +2544,42 @@ public final class GameClient {
 
     private void drawButton(UiButton button, MousePosition mouse, boolean clicked, Runnable action) {
         boolean hovered = button.contains(mouse.x(), mouse.y());
-        uiRenderer.button(button, hovered);
+        String spriteKey = buttonSpriteKey(button.label());
+        UiColor tint = button.enabled()
+                ? hovered ? new UiColor(1.0f, 1.0f, 1.0f, 1.0f) : new UiColor(0.92f, 0.96f, 0.90f, 0.96f)
+                : new UiColor(0.34f, 0.38f, 0.34f, 0.72f);
+        if (drawHudBackdropSprite(spriteKey, button.x(), button.y(), button.width(), button.height(), tint)) {
+            if (hovered && button.enabled()) {
+                uiRenderer.rect(button.x() + 4.0f, button.y() + 4.0f, button.width() - 8.0f, button.height() - 8.0f, new UiColor(0.78f, 0.98f, 0.66f, 0.14f));
+            }
+            if (!button.enabled()) {
+                uiRenderer.rect(button.x(), button.y(), button.width(), button.height(), new UiColor(0.02f, 0.025f, 0.024f, 0.42f));
+            }
+            float scale = Math.min(2.2f, Math.min(
+                    (button.width() - 14.0f) / Math.max(1.0f, BitmapFont.textWidth(button.label(), 1.0f)),
+                    (button.height() - 10.0f) / BitmapFont.textHeight(1.0f)
+            ));
+            uiRenderer.centeredText(
+                    button.label(),
+                    button.x() + button.width() * 0.5f,
+                    button.y() + button.height() * 0.5f - BitmapFont.textHeight(scale) * 0.5f,
+                    scale,
+                    button.enabled() ? UiColor.WHITE : UiColor.MUTED
+            );
+        } else {
+            uiRenderer.button(button, hovered);
+        }
         if (button.enabled() && hovered && clicked) {
             action.run();
         }
+    }
+
+    private static String buttonSpriteKey(String label) {
+        String upper = label.toUpperCase(Locale.ROOT);
+        if (upper.contains("CLOSE") || upper.contains("BACK") || upper.contains("QUIT") || upper.equals("X")) {
+            return "button_close";
+        }
+        return "button_green";
     }
 
     private static boolean contains(MousePosition mouse, float x, float y, float width, float height) {
@@ -1605,6 +2595,38 @@ public final class GameClient {
         }
     }
 
+    private double currentTimeSeconds() {
+        return frameTimeSeconds > 0.0 ? frameTimeSeconds : System.nanoTime() / 1_000_000_000.0;
+    }
+
+    private void setStatus(String message) {
+        statusMessage = message;
+        feedbackLog.add(message, currentTimeSeconds());
+    }
+
+    private void syncKnownRecipeUnlocks() {
+        announcedRecipeUnlocks.clear();
+        for (CraftingRecipe recipe : hotbar.discoveredRecipes()) {
+            announcedRecipeUnlocks.add(recipe.key());
+        }
+    }
+
+    private void announceNewRecipeUnlocks() {
+        CraftingRecipe firstNewRecipe = null;
+        for (CraftingRecipe recipe : hotbar.discoveredRecipes()) {
+            if (announcedRecipeUnlocks.add(recipe.key()) && firstNewRecipe == null) {
+                firstNewRecipe = recipe;
+            }
+        }
+        if (firstNewRecipe != null) {
+            setStatus("New recipe unlocked: " + firstNewRecipe.label());
+        }
+    }
+
+    private boolean isShiftDown() {
+        return glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    }
+
     private void openSettings(GameState returnState) {
         settingsReturnState = returnState;
         gameState = GameState.SETTINGS;
@@ -1614,10 +2636,16 @@ public final class GameClient {
 
     private void toggleCrafting() {
         if (gameState == GameState.CRAFTING) {
+            craftingSearchFocused = false;
+            draggedInventorySlot = -1;
             resumeGame();
             return;
         }
         gameState = GameState.CRAFTING;
+        craftingSearchFocused = false;
+        draggedInventorySlot = -1;
+        previousEnter = false;
+        previousBackspace = false;
         setCursorForState();
         updateWindowTitle();
     }
@@ -1659,13 +2687,15 @@ public final class GameClient {
     private void startSingleplayer() {
         closeGameSession();
         onlineMode = false;
+        worldStartTimeSeconds = currentTimeSeconds();
         world = new ClientWorld(connectionOptions.seed());
         hotbar.resetForNewGame();
+        syncKnownRecipeUnlocks();
         world.generatePreview(settings.previewRadiusChunks());
         setCameraToSpawn();
         worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), Integer.MAX_VALUE);
         gameState = GameState.PLAYING;
-        statusMessage = "Singleplayer world loaded";
+        setStatus("Singleplayer world loaded");
         setCursorForState();
         camera.resetMouseTracking();
         updateWindowTitle();
@@ -1674,21 +2704,23 @@ public final class GameClient {
     private void startMultiplayer() {
         closeGameSession();
         onlineMode = true;
+        worldStartTimeSeconds = currentTimeSeconds();
         world = new ClientWorld(connectionOptions.seed());
         hotbar.resetForNewGame();
+        syncKnownRecipeUnlocks();
         setCameraToSpawn();
         String host = connectionOptions.host() == null ? "127.0.0.1" : connectionOptions.host();
         try {
-            connection = new GameClientConnection(host, connectionOptions.port(), connectionOptions.username(), world, hotbar, chatLog);
+            connection = new GameClientConnection(host, connectionOptions.port(), connectionOptions.username(), world, hotbar, playerStats, chatLog);
             connection.connect();
             gameState = GameState.PLAYING;
-            statusMessage = "Connected to " + host + ":" + connectionOptions.port();
+            setStatus("Connected to " + host + ":" + connectionOptions.port());
             setCursorForState();
             camera.resetMouseTracking();
             updateWindowTitle();
         } catch (RuntimeException e) {
             closeGameSession();
-            statusMessage = "Connection failed: " + host + ":" + connectionOptions.port();
+            setStatus("Connection failed: " + host + ":" + connectionOptions.port());
         }
     }
 
@@ -1706,7 +2738,7 @@ public final class GameClient {
     private void returnToMainMenu() {
         closeGameSession();
         gameState = GameState.MAIN_MENU;
-        statusMessage = "Ready";
+        setStatus("Ready");
         setCursorForState();
         updateWindowTitle();
     }
@@ -1720,9 +2752,18 @@ public final class GameClient {
             worldRenderer.clearMeshes();
         }
         hotbar.closeStorage();
+        feedbackLog.clear();
+        announcedRecipeUnlocks.clear();
+        playerStats.respawn();
         world = null;
         onlineMode = false;
         nextMoveSendTime = 0.0;
+        nextComfortScanTime = 0.0;
+        nextRecipeUnlockScanTime = 0.0;
+        nextToolHintTime = 0.0;
+        lastComfortFeedbackValue = -1;
+        discoveredRecipeStations.clear();
+        discoveredRecipeStations.add(CraftingStationType.INVENTORY);
     }
 
     private void setCursorForState() {
@@ -1745,7 +2786,8 @@ public final class GameClient {
         SETTINGS,
         CHAT,
         CRAFTING,
-        STORAGE
+        STORAGE,
+        DEAD
     }
 
     private record MousePosition(double x, double y) {

@@ -19,13 +19,18 @@ public sealed interface GamePacket permits
         GamePacket.BlockInteract,
         GamePacket.PlayerMove,
         GamePacket.EntitySnapshots,
+        GamePacket.EntityInteract,
         GamePacket.InventorySnapshot,
+        GamePacket.PlayerStatsSnapshot,
+        GamePacket.StorageOpenRequest,
+        GamePacket.SleepRequest,
+        GamePacket.CookRequest,
         GamePacket.StorageOpen,
         GamePacket.StorageTransfer,
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 7;
+    int PROTOCOL_VERSION = 15;
 
     PacketType type();
 
@@ -167,6 +172,25 @@ public sealed interface GamePacket permits
         }
     }
 
+    record EntityInteract(long entityId, int selectedSlot, Action action) implements GamePacket {
+        public EntityInteract {
+            if (selectedSlot < 0) {
+                throw new IllegalArgumentException("selectedSlot must be >= 0");
+            }
+            Objects.requireNonNull(action, "action");
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.ENTITY_INTERACT;
+        }
+
+        public enum Action {
+            OBSERVE,
+            FEED
+        }
+    }
+
     record InventorySnapshot(List<ItemStack> slots) implements GamePacket {
         public InventorySnapshot {
             slots = List.copyOf(slots);
@@ -175,6 +199,54 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.INVENTORY_SNAPSHOT;
+        }
+    }
+
+    record PlayerStatsSnapshot(int health, int hunger, int stamina, int breath, int armor, int comfort) implements GamePacket {
+        public PlayerStatsSnapshot {
+            if (health < 0 || hunger < 0 || stamina < 0 || breath < 0 || armor < 0 || comfort < 0) {
+                throw new IllegalArgumentException("Player stats cannot be negative");
+            }
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.PLAYER_STATS_SNAPSHOT;
+        }
+    }
+
+    record StorageOpenRequest(int x, int y, int z) implements GamePacket {
+        @Override
+        public PacketType type() {
+            return PacketType.STORAGE_OPEN_REQUEST;
+        }
+    }
+
+    record SleepRequest(int x, int y, int z) implements GamePacket {
+        @Override
+        public PacketType type() {
+            return PacketType.SLEEP_REQUEST;
+        }
+    }
+
+    record CookRequest(int stationX, int stationY, int stationZ, String recipeKey, List<Integer> inputSlots) implements GamePacket {
+        public CookRequest {
+            Objects.requireNonNull(recipeKey, "recipeKey");
+            Objects.requireNonNull(inputSlots, "inputSlots");
+            inputSlots = List.copyOf(inputSlots);
+            if (inputSlots.isEmpty() || inputSlots.size() > 9) {
+                throw new IllegalArgumentException("inputSlots must contain 1..9 slots");
+            }
+            for (int slot : inputSlots) {
+                if (slot < 0) {
+                    throw new IllegalArgumentException("inputSlots cannot contain negative slots");
+                }
+            }
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.COOK_REQUEST;
         }
     }
 
@@ -189,11 +261,30 @@ public sealed interface GamePacket permits
         }
     }
 
-    record StorageTransfer(int x, int y, int z, boolean fromStorage, int slot) implements GamePacket {
+    record StorageTransfer(int x, int y, int z, boolean fromStorage, int sourceSlot, int targetSlot, int count, int transactionId) implements GamePacket {
+        public static final int AUTO_TARGET_SLOT = -1;
+
+        public StorageTransfer(int x, int y, int z, boolean fromStorage, int slot) {
+            this(x, y, z, fromStorage, slot, AUTO_TARGET_SLOT, Integer.MAX_VALUE, 1);
+        }
+
         public StorageTransfer {
-            if (slot < 0) {
-                throw new IllegalArgumentException("slot must be >= 0");
+            if (sourceSlot < 0) {
+                throw new IllegalArgumentException("sourceSlot must be >= 0");
             }
+            if (targetSlot < AUTO_TARGET_SLOT) {
+                throw new IllegalArgumentException("targetSlot must be >= -1");
+            }
+            if (count < 1) {
+                throw new IllegalArgumentException("count must be >= 1");
+            }
+            if (transactionId < 0) {
+                throw new IllegalArgumentException("transactionId must be >= 0");
+            }
+        }
+
+        public int slot() {
+            return sourceSlot;
         }
 
         @Override
@@ -202,9 +293,20 @@ public sealed interface GamePacket permits
         }
     }
 
-    record CraftRequest(String recipeKey) implements GamePacket {
+    record CraftRequest(String recipeKey, int count, boolean hasStation, int stationX, int stationY, int stationZ) implements GamePacket {
         public CraftRequest {
             Objects.requireNonNull(recipeKey, "recipeKey");
+            if (count < 1 || count > 64) {
+                throw new IllegalArgumentException("count must be in 1..64");
+            }
+        }
+
+        public CraftRequest(String recipeKey) {
+            this(recipeKey, 1, false, 0, 0, 0);
+        }
+
+        public static CraftRequest atStation(String recipeKey, int count, int stationX, int stationY, int stationZ) {
+            return new CraftRequest(recipeKey, count, true, stationX, stationY, stationZ);
         }
 
         @Override

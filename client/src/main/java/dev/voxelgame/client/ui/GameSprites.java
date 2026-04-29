@@ -43,9 +43,6 @@ public final class GameSprites implements AutoCloseable {
         sprites.hud("crafting_icon", ui.sprite(150, 673, 96, 64));
         sprites.hud("furnace_icon", ui.sprite(270, 673, 96, 64));
         sprites.hud("book_icon", ui.sprite(390, 673, 96, 64));
-        sprites.hud("slot", ui.sprite(809, 142, 70, 66));
-        sprites.hud("slot_selected", ui.sprite(905, 142, 70, 66));
-        sprites.hud("slot_hotbar", ui.sprite(714, 142, 70, 66));
         sprites.hud("panel_inventory", ui.sprite(22, 228, 354, 318));
         sprites.hud("panel_crafting", ui.sprite(390, 228, 292, 331));
         sprites.hud("panel_campfire", ui.sprite(706, 228, 264, 331));

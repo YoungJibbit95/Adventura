@@ -15,6 +15,7 @@ uniform int uAmbientOcclusionEnabled;
 uniform int uSoftShadowsEnabled;
 uniform float uTime;
 uniform float uShadowStrength;
+uniform vec4 uBlockEffects[64];
 
 out float vLight;
 out float vBlockId;
@@ -24,6 +25,10 @@ out float vAo;
 out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec2 vFaceUv;
+
+bool animatedFluid(int id) {
+    return uBlockEffects[clamp(id, 0, 63)].y > 0.5;
+}
 
 void main() {
     vLight = max(aLight, 0.12);
@@ -37,7 +42,7 @@ void main() {
     }
     vAo = uAmbientOcclusionEnabled == 1 ? aAo : 1.0;
     vec3 position = aPosition;
-    if (int(aBlockId + 0.5) == 4) {
+    if (animatedFluid(int(aBlockId + 0.5))) {
         position.y += sin(uTime * 2.2 + aPosition.x * 0.45 + aPosition.z * 0.33) * 0.035;
     }
     vWorldPosition = position;

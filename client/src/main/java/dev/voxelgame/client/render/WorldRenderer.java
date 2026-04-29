@@ -7,8 +7,14 @@ import org.joml.Matrix4f;
 import org.joml.FrustumIntersection;
 import org.joml.Vector3f;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.lwjgl.opengl.GL11.GL_BLEND;
 import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
@@ -24,7 +30,10 @@ public final class WorldRenderer implements AutoCloseable {
     private final BlockTextureAtlas blockTextureAtlas;
     private final ChunkMesher mesher = new ChunkMesher();
     private final Map<ChunkPos, GpuChunkMesh> opaqueMeshes = new HashMap<>();
+    private final Map<ChunkPos, GpuChunkMesh> cutoutMeshes = new HashMap<>();
     private final Map<ChunkPos, GpuChunkMesh> transparentMeshes = new HashMap<>();
+    private final float[] blockColorAlphaTable = BlockRenderProperties.shaderColorAlphaTable();
+    private final float[] blockEffectsTable = BlockRenderProperties.shaderEffectsTable();
 
     public WorldRenderer() {
         this.shader = ShaderProgram.fromResources(
@@ -53,6 +62,7 @@ public final class WorldRenderer implements AutoCloseable {
         int updated = 0;
         for (ClientWorld.LayeredMeshBuild build : world.buildDirtyLayeredMeshes(mesher, ambientOcclusion, transparentWater, maxBuilds)) {
             replaceMesh(opaqueMeshes, build.pos(), build.opaqueMesh());
+            replaceMesh(cutoutMeshes, build.pos(), build.cutoutMesh());
             replaceMesh(transparentMeshes, build.pos(), build.transparentMesh());
             updated++;
         }
@@ -63,6 +73,7 @@ public final class WorldRenderer implements AutoCloseable {
         int updated = 0;
         for (ClientWorld.LayeredMeshBuild build : world.buildDirtyLayeredMeshes(mesher, ambientOcclusion, transparentWater, maxBuilds, priorityPosition)) {
             replaceMesh(opaqueMeshes, build.pos(), build.opaqueMesh());
+            replaceMesh(cutoutMeshes, build.pos(), build.cutoutMesh());
             replaceMesh(transparentMeshes, build.pos(), build.transparentMesh());
             updated++;
         }
@@ -95,34 +106,55 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setFloat("uShadowStrength", settings.softShadowsEnabled() ? 0.38f : 0.20f);
         shader.setFloat("uBloomStrength", settings.bloomStrength());
         shader.setVector3("uFogColor", new Vector3f(settings.skyR(), settings.skyG(), settings.skyB()));
+        shader.setVector4Array("uBlockColorAlpha[0]", blockColorAlphaTable);
+        shader.setVector4Array("uBlockEffects[0]", blockEffectsTable);
         blockTextureAtlas.bindAndApply(shader, 0);
-        int rendered = 0;
+        int renderedOpaque = 0;
+        int renderedCutout = 0;
         int renderedTransparent = 0;
-        int culled = 0;
+        int culledMeshes = 0;
+        Set<ChunkPos> culledPositions = new HashSet<>();
         int drawCalls = 0;
         int triangles = 0;
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : opaqueMeshes.entrySet()) {
             ChunkPos pos = entry.getKey();
             if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
-                culled++;
+                culledMeshes++;
+                culledPositions.add(pos);
                 continue;
             }
             GpuChunkMesh mesh = entry.getValue();
             mesh.draw();
-            rendered++;
+            renderedOpaque++;
+            drawCalls++;
+            triangles += mesh.triangleCount();
+        }
+        for (Map.Entry<ChunkPos, GpuChunkMesh> entry : cutoutMeshes.entrySet()) {
+            ChunkPos pos = entry.getKey();
+            if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
+                culledMeshes++;
+                culledPositions.add(pos);
+                continue;
+            }
+            GpuChunkMesh mesh = entry.getValue();
+            mesh.draw();
+            renderedCutout++;
             drawCalls++;
             triangles += mesh.triangleCount();
         }
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(false);
-        for (Map.Entry<ChunkPos, GpuChunkMesh> entry : transparentMeshes.entrySet()) {
-            ChunkPos pos = entry.getKey();
+        for (ChunkPos pos : transparentRenderOrder(transparentMeshes.keySet(), cameraPosition)) {
             if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
-                culled++;
+                culledMeshes++;
+                culledPositions.add(pos);
                 continue;
             }
-            GpuChunkMesh mesh = entry.getValue();
+            GpuChunkMesh mesh = transparentMeshes.get(pos);
+            if (mesh == null) {
+                continue;
+            }
             mesh.draw();
             renderedTransparent++;
             drawCalls++;
@@ -132,19 +164,23 @@ public final class WorldRenderer implements AutoCloseable {
         glDisable(GL_BLEND);
         glUseProgram(0);
         return new RenderStats(
-                rendered + renderedTransparent,
-                culled,
-                rendered,
+                renderedOpaque + renderedCutout + renderedTransparent,
+                culledMeshes,
+                culledPositions.size(),
+                renderedOpaque,
+                renderedCutout,
                 renderedTransparent,
                 drawCalls,
                 triangles,
-                opaqueMeshes.size() + transparentMeshes.size(),
+                opaqueMeshes.size() + cutoutMeshes.size() + transparentMeshes.size(),
+                loadedChunkPositions(),
                 meshBytes()
         );
     }
 
     public void clearMeshes() {
         closeMeshes(opaqueMeshes);
+        closeMeshes(cutoutMeshes);
         closeMeshes(transparentMeshes);
     }
 
@@ -166,7 +202,14 @@ public final class WorldRenderer implements AutoCloseable {
     }
 
     private long meshBytes() {
-        return meshBytes(opaqueMeshes) + meshBytes(transparentMeshes);
+        return meshBytes(opaqueMeshes) + meshBytes(cutoutMeshes) + meshBytes(transparentMeshes);
+    }
+
+    private int loadedChunkPositions() {
+        Set<ChunkPos> positions = new HashSet<>(opaqueMeshes.keySet());
+        positions.addAll(cutoutMeshes.keySet());
+        positions.addAll(transparentMeshes.keySet());
+        return positions.size();
     }
 
     private static long meshBytes(Map<ChunkPos, GpuChunkMesh> meshes) {
@@ -184,6 +227,23 @@ public final class WorldRenderer implements AutoCloseable {
         float dz = centerZ - cameraPosition.z;
         float maxDistance = (renderDistanceChunks + 1.0f) * ChunkPos.SIZE;
         return dx * dx + dz * dz <= maxDistance * maxDistance;
+    }
+
+    public static List<ChunkPos> transparentRenderOrder(Collection<ChunkPos> positions, Vector3f cameraPosition) {
+        List<ChunkPos> ordered = new ArrayList<>(positions);
+        ordered.sort(Comparator
+                .comparingDouble((ChunkPos pos) -> -distanceSquaredToChunkCenter(pos, cameraPosition))
+                .thenComparingInt(ChunkPos::x)
+                .thenComparingInt(ChunkPos::z));
+        return ordered;
+    }
+
+    private static double distanceSquaredToChunkCenter(ChunkPos pos, Vector3f cameraPosition) {
+        double centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
+        double centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
+        double dx = centerX - cameraPosition.x;
+        double dz = centerZ - cameraPosition.z;
+        return dx * dx + dz * dz;
     }
 
     private static boolean insideFrustum(FrustumIntersection frustum, ClientWorld world, ChunkPos pos) {
@@ -204,17 +264,28 @@ public final class WorldRenderer implements AutoCloseable {
     }
 
     public record RenderStats(
-            int renderedChunks,
-            int culledChunks,
+            int renderedLayers,
+            int culledMeshes,
+            int culledChunkPositions,
             int renderedOpaqueChunks,
+            int renderedCutoutChunks,
             int renderedTransparentChunks,
             int drawCalls,
             int triangles,
             int loadedGpuMeshes,
+            int loadedChunkPositions,
             long meshBytes
     ) {
         public RenderStats(int renderedChunks, int culledChunks) {
-            this(renderedChunks, culledChunks, renderedChunks, 0, renderedChunks, 0, 0, 0L);
+            this(renderedChunks, culledChunks, culledChunks, renderedChunks, 0, 0, renderedChunks, 0, 0, 0, 0L);
+        }
+
+        public int renderedChunks() {
+            return renderedLayers;
+        }
+
+        public int culledChunks() {
+            return culledChunkPositions;
         }
     }
 }

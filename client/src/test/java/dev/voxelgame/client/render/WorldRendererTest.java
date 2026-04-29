@@ -4,6 +4,8 @@ import dev.voxelgame.common.world.ChunkPos;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,6 +31,23 @@ class WorldRendererTest {
     }
 
     @Test
+    void ordersTransparentChunksBackToFront() {
+        Vector3f camera = new Vector3f(8.0f, 80.0f, 8.0f);
+
+        List<ChunkPos> ordered = WorldRenderer.transparentRenderOrder(List.of(
+                new ChunkPos(0, 0),
+                new ChunkPos(2, 0),
+                new ChunkPos(-3, 0)
+        ), camera);
+
+        assertEquals(List.of(
+                new ChunkPos(-3, 0),
+                new ChunkPos(2, 0),
+                new ChunkPos(0, 0)
+        ), ordered);
+    }
+
+    @Test
     void chunkMeshReportsCountsAndEstimatedBytes() {
         ChunkMesh mesh = new ChunkMesh(
                 new float[ChunkMesher.FLOATS_PER_VERTEX * 4],
@@ -46,7 +65,33 @@ class WorldRendererTest {
         WorldRenderer.RenderStats stats = new WorldRenderer.RenderStats(0, 0);
 
         assertEquals(0, stats.renderedChunks());
+        assertEquals(0, stats.renderedLayers());
         assertEquals(0, stats.drawCalls());
         assertEquals(0L, stats.meshBytes());
+    }
+
+    @Test
+    void renderStatsSeparatesCulledMeshesFromChunkPositions() {
+        WorldRenderer.RenderStats stats = new WorldRenderer.RenderStats(
+                3,
+                4,
+                2,
+                2,
+                1,
+                0,
+                3,
+                30,
+                5,
+                4,
+                1024L
+        );
+
+        assertEquals(3, stats.renderedLayers());
+        assertEquals(4, stats.culledMeshes());
+        assertEquals(2, stats.culledChunkPositions());
+        assertEquals(2, stats.culledChunks());
+        assertEquals(1, stats.renderedCutoutChunks());
+        assertEquals(5, stats.loadedGpuMeshes());
+        assertEquals(4, stats.loadedChunkPositions());
     }
 }

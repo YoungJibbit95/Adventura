@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InventoryTest {
@@ -21,6 +22,19 @@ class InventoryTest {
 
         assertTrue(inventory.remove(dirt, 65));
         assertEquals(5, inventory.count(dirt));
+    }
+
+    @Test
+    void fullInventoryReturnsOverflowAndCanAddPredictsSpace() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short dirt = items.requireByKey("voxel:dirt").id();
+        short torch = items.requireByKey("voxel:torch").id();
+        Inventory inventory = new Inventory(1);
+
+        assertEquals(0, inventory.add(dirt, 64, items));
+        assertFalse(inventory.canAdd(torch, 1, items));
+        assertEquals(1, inventory.add(torch, 1, items));
+        assertEquals(0, inventory.count(torch));
     }
 
     @Test
@@ -46,5 +60,17 @@ class InventoryTest {
         assertEquals(0, inventory.addStack(damagedTool, items));
 
         assertEquals(damagedTool, inventory.slot(0));
+    }
+
+    @Test
+    void damageSlotRemovesToolAtDurabilityLimit() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ItemType axe = items.requireByKey("voxel:stone_axe");
+        Inventory inventory = new Inventory(1);
+        inventory.add(axe.id(), 1, items);
+
+        assertTrue(inventory.damageSlot(0, axe.durability(), items));
+
+        assertEquals(ItemStack.EMPTY, inventory.slot(0));
     }
 }

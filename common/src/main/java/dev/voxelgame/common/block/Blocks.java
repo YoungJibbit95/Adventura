@@ -45,6 +45,7 @@ public final class Blocks {
     public static final short GLOW_CRYSTAL_NODE = 39;
     public static final short CAMPFIRE_ACTIVE = 40;
     public static final short CAMPFIRE_BURNED_OUT = 41;
+    public static final short SLEEPING_MAT = 42;
 
     private Blocks() {
     }
@@ -59,12 +60,12 @@ public final class Blocks {
         register(registry, SAND, "voxel:sand", 0.5f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:sand");
         register(registry, SKYROOT_LOG, "voxel:skyroot_log", 2.0f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:skyroot_log");
         register(registry, SKYROOT_LEAVES, "voxel:skyroot_leaves", 0.2f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:skyroot_leaves");
-        register(registry, COAL_ORE, "voxel:coal_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:coal");
+        register(registry, COAL_ORE, "voxel:coal_ore", 3.0f, ToolType.PICKAXE, 1, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:coal");
         register(registry, TORCH, "voxel:torch", 0.0f, ToolType.NONE, false, false, false, 14, BlockRenderLayer.CUTOUT, "voxel:torch");
         register(registry, WILD_GRASS, "voxel:wild_grass", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:fiber");
         register(registry, SUN_BLOOM, "voxel:sun_bloom", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:wild_herbs");
-        register(registry, IRON_ORE, "voxel:iron_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_iron");
-        register(registry, COPPER_ORE, "voxel:copper_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_copper");
+        register(registry, IRON_ORE, "voxel:iron_ore", 3.0f, ToolType.PICKAXE, 2, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_iron");
+        register(registry, COPPER_ORE, "voxel:copper_ore", 3.0f, ToolType.PICKAXE, 1, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_copper");
         register(registry, CLAY, "voxel:clay", 0.6f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:clay_lump");
         register(registry, CACTUS, "voxel:cactus", 0.4f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:cactus");
         register(registry, MOSSY_STONE, "voxel:mossy_stone", 1.6f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:mossy_stone");
@@ -90,9 +91,10 @@ public final class Blocks {
         register(registry, TREE_STUMP, "voxel:tree_stump", 1.0f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:skyroot_log");
         register(registry, MUSHROOM_CLUSTER, "voxel:mushroom_cluster", 0.0f, ToolType.KNIFE, false, false, false, 1, BlockRenderLayer.CUTOUT, "voxel:mushroom");
         register(registry, CLAY_DEPOSIT, "voxel:clay_deposit", 0.3f, ToolType.SHOVEL, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:clay_lump");
-        register(registry, GLOW_CRYSTAL_NODE, "voxel:glow_crystal_node", 2.8f, ToolType.PICKAXE, true, false, true, 10, BlockRenderLayer.CUTOUT, "voxel:glow_crystal");
+        register(registry, GLOW_CRYSTAL_NODE, "voxel:glow_crystal_node", 2.8f, ToolType.PICKAXE, 3, true, false, true, 10, BlockRenderLayer.CUTOUT, "voxel:glow_crystal");
         register(registry, CAMPFIRE_ACTIVE, "voxel:campfire_active", 0.5f, ToolType.AXE, false, false, false, 14, BlockRenderLayer.CUTOUT, "voxel:campfire");
         register(registry, CAMPFIRE_BURNED_OUT, "voxel:campfire_burned_out", 0.4f, ToolType.AXE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:campfire");
+        register(registry, SLEEPING_MAT, "voxel:sleeping_mat", 0.1f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:sleeping_mat");
         return registry;
     }
 
@@ -109,6 +111,23 @@ public final class Blocks {
             BlockRenderLayer renderLayer,
             String dropItemKey
     ) {
-        registry.register(id, key, new BlockType(id, key, hardness, tool, solid, opaque, collidable, lightEmission, renderLayer, dropItemKey));
+        register(registry, id, key, hardness, tool, 0, solid, opaque, collidable, lightEmission, renderLayer, dropItemKey);
+    }
+
+    private static void register(
+            Registry<BlockType> registry,
+            short id,
+            String key,
+            float hardness,
+            ToolType tool,
+            int requiredToolLevel,
+            boolean solid,
+            boolean opaque,
+            boolean collidable,
+            int lightEmission,
+            BlockRenderLayer renderLayer,
+            String dropItemKey
+    ) {
+        registry.register(id, key, new BlockType(id, key, hardness, tool, requiredToolLevel, solid, opaque, collidable, lightEmission, renderLayer, dropItemKey));
     }
 }

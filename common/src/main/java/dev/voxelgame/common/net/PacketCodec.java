@@ -94,9 +94,43 @@ public final class PacketCodec {
                         out.writeFloat(snapshot.yaw());
                         out.writeFloat(snapshot.pitch());
                         out.writeInt(snapshot.health());
+                        out.writeUTF(snapshot.stateKey());
                     }
                 }
+                case GamePacket.EntityInteract interact -> {
+                    out.writeLong(interact.entityId());
+                    out.writeInt(interact.selectedSlot());
+                    out.writeUTF(interact.action().name());
+                }
                 case GamePacket.InventorySnapshot inventory -> writeItemStacks(out, inventory.slots());
+                case GamePacket.PlayerStatsSnapshot stats -> {
+                    out.writeInt(stats.health());
+                    out.writeInt(stats.hunger());
+                    out.writeInt(stats.stamina());
+                    out.writeInt(stats.breath());
+                    out.writeInt(stats.armor());
+                    out.writeInt(stats.comfort());
+                }
+                case GamePacket.StorageOpenRequest storage -> {
+                    out.writeInt(storage.x());
+                    out.writeInt(storage.y());
+                    out.writeInt(storage.z());
+                }
+                case GamePacket.SleepRequest sleep -> {
+                    out.writeInt(sleep.x());
+                    out.writeInt(sleep.y());
+                    out.writeInt(sleep.z());
+                }
+                case GamePacket.CookRequest cook -> {
+                    out.writeInt(cook.stationX());
+                    out.writeInt(cook.stationY());
+                    out.writeInt(cook.stationZ());
+                    out.writeUTF(cook.recipeKey());
+                    out.writeInt(cook.inputSlots().size());
+                    for (int slot : cook.inputSlots()) {
+                        out.writeInt(slot);
+                    }
+                }
                 case GamePacket.StorageOpen storage -> {
                     out.writeInt(storage.x());
                     out.writeInt(storage.y());
@@ -108,9 +142,19 @@ public final class PacketCodec {
                     out.writeInt(transfer.y());
                     out.writeInt(transfer.z());
                     out.writeBoolean(transfer.fromStorage());
-                    out.writeInt(transfer.slot());
+                    out.writeInt(transfer.sourceSlot());
+                    out.writeInt(transfer.targetSlot());
+                    out.writeInt(transfer.count());
+                    out.writeInt(transfer.transactionId());
                 }
-                case GamePacket.CraftRequest craft -> out.writeUTF(craft.recipeKey());
+                case GamePacket.CraftRequest craft -> {
+                    out.writeUTF(craft.recipeKey());
+                    out.writeInt(craft.count());
+                    out.writeBoolean(craft.hasStation());
+                    out.writeInt(craft.stationX());
+                    out.writeInt(craft.stationY());
+                    out.writeInt(craft.stationZ());
+                }
                 case GamePacket.Chat chat -> out.writeUTF(chat.message());
             }
             out.flush();
@@ -166,15 +210,59 @@ public final class PacketCodec {
                                 in.readDouble(),
                                 in.readFloat(),
                                 in.readFloat(),
-                                in.readInt()
+                                in.readInt(),
+                                in.readUTF()
                         ));
                     }
                     yield new GamePacket.EntitySnapshots(snapshots);
                 }
+                case ENTITY_INTERACT -> new GamePacket.EntityInteract(
+                        in.readLong(),
+                        in.readInt(),
+                        GamePacket.EntityInteract.Action.valueOf(in.readUTF())
+                );
                 case INVENTORY_SNAPSHOT -> new GamePacket.InventorySnapshot(readItemStacks(in));
+                case PLAYER_STATS_SNAPSHOT -> new GamePacket.PlayerStatsSnapshot(
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt()
+                );
+                case STORAGE_OPEN_REQUEST -> new GamePacket.StorageOpenRequest(in.readInt(), in.readInt(), in.readInt());
+                case SLEEP_REQUEST -> new GamePacket.SleepRequest(in.readInt(), in.readInt(), in.readInt());
+                case COOK_REQUEST -> {
+                    int stationX = in.readInt();
+                    int stationY = in.readInt();
+                    int stationZ = in.readInt();
+                    String recipeKey = in.readUTF();
+                    int count = checkedLength(in.readInt());
+                    List<Integer> inputSlots = new ArrayList<>(count);
+                    for (int i = 0; i < count; i++) {
+                        inputSlots.add(in.readInt());
+                    }
+                    yield new GamePacket.CookRequest(stationX, stationY, stationZ, recipeKey, inputSlots);
+                }
                 case STORAGE_OPEN -> new GamePacket.StorageOpen(in.readInt(), in.readInt(), in.readInt(), readItemStacks(in));
-                case STORAGE_TRANSFER -> new GamePacket.StorageTransfer(in.readInt(), in.readInt(), in.readInt(), in.readBoolean(), in.readInt());
-                case CRAFT_REQUEST -> new GamePacket.CraftRequest(in.readUTF());
+                case STORAGE_TRANSFER -> new GamePacket.StorageTransfer(
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readBoolean(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt()
+                );
+                case CRAFT_REQUEST -> new GamePacket.CraftRequest(
+                        in.readUTF(),
+                        in.readInt(),
+                        in.readBoolean(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt()
+                );
                 case CHAT -> new GamePacket.Chat(in.readUTF());
             };
         } catch (IOException e) {

@@ -9,9 +9,11 @@ import dev.voxelgame.common.world.structure.Structures;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class OverworldContentTest {
     @Test
@@ -40,6 +42,15 @@ class OverworldContentTest {
     void biomeRegistryContainsExpandedBiomes() {
         assertTrue(Biomes.createDefaultRegistry().findByKey("voxel:frost_peaks").isPresent());
         assertTrue(Biomes.createDefaultRegistry().findByKey("voxel:mire").isPresent());
+    }
+
+    @Test
+    void biomeSpecificResourcesAppearDeterministically() {
+        long seed = 1337L;
+
+        assertBiomeResourceAppears(seed, "voxel:pine_forest", Set.of(Blocks.PINE_LOG, Blocks.PINE_LEAVES));
+        assertBiomeResourceAppears(seed, "voxel:lakeside", Set.of(Blocks.CLAY, Blocks.CLAY_DEPOSIT));
+        assertBiomeResourceAppears(seed, "voxel:mushroom_grove", Set.of(Blocks.MUSHROOM_CLUSTER, Blocks.RED_MUSHROOM));
     }
 
     @Test
@@ -73,5 +84,44 @@ class OverworldContentTest {
         assertEquals(1, section.nonAirBlockCount());
         section.setBlockId(1, 2, 3, Blocks.AIR);
         assertTrue(section.isEmpty());
+    }
+
+    private static void assertBiomeResourceAppears(long seed, String biomeKey, Set<Short> resourceBlocks) {
+        OverworldGenerator generator = new OverworldGenerator(seed);
+        int matchingColumns = 0;
+        int radiusChunks = 36;
+        for (int chunkZ = -radiusChunks; chunkZ <= radiusChunks; chunkZ++) {
+            for (int chunkX = -radiusChunks; chunkX <= radiusChunks; chunkX++) {
+                ChunkPos pos = new ChunkPos(chunkX, chunkZ);
+                int centerX = chunkX * ChunkPos.SIZE + ChunkPos.SIZE / 2;
+                int centerZ = chunkZ * ChunkPos.SIZE + ChunkPos.SIZE / 2;
+                if (!generator.biomeAt(centerX, centerZ).key().equals(biomeKey)) {
+                    continue;
+                }
+                Chunk chunk = new Chunk(pos, DimensionSettings.OVERWORLD);
+                generator.generate(chunk);
+                for (int localZ = 0; localZ < ChunkPos.SIZE; localZ++) {
+                    for (int localX = 0; localX < ChunkPos.SIZE; localX++) {
+                        int worldX = chunkX * ChunkPos.SIZE + localX;
+                        int worldZ = chunkZ * ChunkPos.SIZE + localZ;
+                        BiomeType biome = generator.biomeAt(worldX, worldZ);
+                        if (!biome.key().equals(biomeKey)) {
+                            continue;
+                        }
+                        matchingColumns++;
+                        int height = generator.terrainHeight(worldX, worldZ, biome);
+                        int minY = Math.max(DimensionSettings.OVERWORLD.minY(), height - 4);
+                        int maxY = Math.min(DimensionSettings.OVERWORLD.maxYExclusive() - 1, height + 8);
+                        for (int y = minY; y <= maxY; y++) {
+                            if (resourceBlocks.contains(chunk.blockId(worldX, y, worldZ))) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertTrue(matchingColumns > 0, "Expected biome columns for " + biomeKey);
+        fail("Expected biome resource in " + biomeKey);
     }
 }

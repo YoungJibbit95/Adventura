@@ -3,12 +3,22 @@ package dev.voxelgame.client.audio;
 public enum AudioCue {
     STEP_GRASS,
     STEP_STONE,
+    STEP_WOOD,
     BLOCK_BREAK,
+    BREAK_WOOD,
+    BREAK_STONE,
     BLOCK_PLACE,
+    COLLECT_ITEM,
     CRAFT,
+    CRAFT_SUCCESS,
+    CRAFT_FAIL,
     INVENTORY_CLICK,
     EAT,
     CAMPFIRE,
+    CAMPFIRE_CRACKLE,
     DAY_AMBIENCE,
-    NIGHT_AMBIENCE
+    NIGHT_AMBIENCE,
+    MEADOW_BIRDS,
+    CAVE_DRIP,
+    WATER_SPLASH
 }

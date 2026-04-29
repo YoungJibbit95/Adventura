@@ -1,6 +1,11 @@
 package dev.voxelgame.client;
 
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.physics.PlayerInput;
+import dev.voxelgame.common.physics.PlayerPhysics;
+import dev.voxelgame.common.physics.PlayerPhysicsConfig;
+import dev.voxelgame.common.physics.PlayerState;
+import dev.voxelgame.common.physics.PlayerWaterState;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
@@ -19,9 +24,7 @@ import static org.lwjgl.glfw.GLFW.glfwGetCursorPos;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
 
 public final class Camera {
-    private static final float EYE_HEIGHT = 1.62f;
-    private static final float GRAVITY = 34.0f;
-    private static final float JUMP_SPEED = 9.2f;
+    private static final PlayerPhysicsConfig PHYSICS = PlayerPhysicsConfig.defaults();
 
     private final Vector3f position = new Vector3f(8.0f, 118.0f, 8.0f);
     private final Vector3f velocity = new Vector3f();
@@ -164,55 +167,62 @@ public final class Camera {
     }
 
     private void updateFlyingCollision(long window, float deltaSeconds, ClientWorld world) {
-        float speed = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ? 44.0f : 18.0f;
         Vector3f move = movementInput(window, true);
-        if (move.lengthSquared() > 0.0f) {
-            move.normalize().mul(speed * deltaSeconds);
-            moveWithCollision(world, move.x, move.y, move.z);
-        }
-        onGround = world.collidesPlayer(position.x, position.y - 0.08f, position.z);
+        PlayerState state = new PlayerState(
+                position.x,
+                position.y,
+                position.z,
+                velocity.x,
+                velocity.y,
+                velocity.z,
+                onGround,
+                world.playerWaterState(position).headUnderwater(),
+                0.0f
+        );
+        PlayerState next = PlayerPhysics.stepFlying(
+                state,
+                move.x,
+                move.y,
+                move.z,
+                glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS,
+                deltaSeconds,
+                PHYSICS,
+                world::collidesPlayer
+        );
+        position.set((float) next.x(), (float) next.y(), (float) next.z());
+        velocity.set(next.velocityX(), next.velocityY(), next.velocityZ());
+        onGround = next.onGround();
     }
 
     private void updateSurvivalPhysics(long window, float deltaSeconds, ClientWorld world, boolean sprintAllowed) {
-        boolean underwater = world.isUnderwater(position);
-        boolean sprinting = sprintAllowed && wantsSprint(window) && !underwater;
-        float speed = sprinting ? 8.0f : 5.2f;
-        if (underwater) {
-            speed *= 0.58f;
-        }
+        PlayerWaterState water = world.playerWaterState(position);
         Vector3f move = movementInput(window, false);
         if (move.lengthSquared() > 0.0f) {
-            move.normalize().mul(speed);
+            move.normalize();
         }
-        velocity.x = move.x;
-        velocity.z = move.z;
-        if (underwater && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            velocity.y = Math.max(velocity.y, 3.6f);
-        } else if (onGround && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-            velocity.y = JUMP_SPEED;
-            onGround = false;
-        }
-        if (underwater) {
-            velocity.y -= GRAVITY * 0.18f * deltaSeconds;
-            velocity.y *= 0.88f;
-            velocity.y = Math.max(velocity.y, -7.0f);
-        } else {
-            velocity.y -= GRAVITY * deltaSeconds;
-            velocity.y = Math.max(velocity.y, -42.0f);
-        }
-
-        moveWithCollision(world, velocity.x * deltaSeconds, 0.0f, 0.0f);
-        moveWithCollision(world, 0.0f, 0.0f, velocity.z * deltaSeconds);
-        boolean verticalCollision = moveWithCollision(world, 0.0f, velocity.y * deltaSeconds, 0.0f);
-        if (verticalCollision) {
-            if (velocity.y < -15.0f && !underwater) {
-                lastFallImpactSpeed = -velocity.y;
-            }
-            onGround = velocity.y < 0.0f;
-            velocity.y = 0.0f;
-        } else {
-            onGround = false;
-        }
+        PlayerInput input = new PlayerInput(
+                move.x,
+                move.z,
+                glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS,
+                false,
+                sprintAllowed && wantsSprint(window)
+        );
+        PlayerState state = new PlayerState(
+                position.x,
+                position.y,
+                position.z,
+                velocity.x,
+                velocity.y,
+                velocity.z,
+                onGround,
+                water.headUnderwater(),
+                0.0f
+        );
+        PlayerState next = PlayerPhysics.stepSurvival(state, input, water, deltaSeconds, PHYSICS, world::collidesPlayer);
+        position.set((float) next.x(), (float) next.y(), (float) next.z());
+        velocity.set(next.velocityX(), next.velocityY(), next.velocityZ());
+        onGround = next.onGround();
+        lastFallImpactSpeed = next.fallImpactSpeed();
         if (position.y < world.dimension().minY() - 16.0f) {
             Vector3f spawn = world.spawnPosition();
             setPosition(spawn.x, spawn.y, spawn.z);
@@ -251,17 +261,6 @@ public final class Camera {
             move.y -= 1.0f;
         }
         return move;
-    }
-
-    private boolean moveWithCollision(ClientWorld world, float dx, float dy, float dz) {
-        if (dx == 0.0f && dy == 0.0f && dz == 0.0f) {
-            return false;
-        }
-        if (!world.collidesPlayer(position.x + dx, position.y + dy, position.z + dz)) {
-            position.add(dx, dy, dz);
-            return false;
-        }
-        return true;
     }
 
     private Vector3f front() {

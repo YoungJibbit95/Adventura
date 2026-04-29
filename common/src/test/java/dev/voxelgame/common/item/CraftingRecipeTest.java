@@ -70,6 +70,27 @@ class CraftingRecipeTest {
     }
 
     @Test
+    void craftsSleepingMatForSleepIntent() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Inventory inventory = new Inventory(10);
+        short dryGrass = items.requireByKey("voxel:dry_grass").id();
+        short fiber = items.requireByKey("voxel:fiber").id();
+        short sleepingMat = items.requireByKey("voxel:sleeping_mat").id();
+        inventory.add(dryGrass, 3, items);
+        inventory.add(fiber, 2, items);
+        CraftingRecipe recipe = CraftingRecipes.createDefaultRecipes(items).stream()
+                .filter(candidate -> candidate.key().equals("voxel:sleeping_mat"))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(recipe.craft(inventory, items));
+
+        assertEquals(1, inventory.count(sleepingMat));
+        assertEquals(0, inventory.count(dryGrass));
+        assertEquals(0, inventory.count(fiber));
+    }
+
+    @Test
     void duplicateIngredientsConsumeTheRealTotal() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         short twig = items.requireByKey("voxel:twig").id();
@@ -84,5 +105,71 @@ class CraftingRecipeTest {
         );
 
         assertFalse(recipe.canCraft(inventory, items));
+    }
+
+    @Test
+    void craftsRequestedCountAtomically() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short pebble = items.requireByKey("voxel:pebble").id();
+        short twig = items.requireByKey("voxel:twig").id();
+        short fiber = items.requireByKey("voxel:fiber").id();
+        short pickaxe = items.requireByKey("voxel:stone_pickaxe").id();
+        Inventory inventory = new Inventory(10);
+        inventory.add(pebble, 4, items);
+        inventory.add(twig, 2, items);
+        inventory.add(fiber, 2, items);
+        CraftingRecipe recipe = CraftingRecipes.createDefaultRecipes(items).stream()
+                .filter(candidate -> candidate.key().equals("voxel:stone_pickaxe"))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(recipe.craft(inventory, items, CraftingStationType.INVENTORY, 2));
+        assertEquals(0, inventory.count(pebble));
+        assertEquals(0, inventory.count(twig));
+        assertEquals(0, inventory.count(fiber));
+        assertEquals(2, inventory.count(pickaxe));
+    }
+
+    @Test
+    void rejectsRequestedCountWhenOutputWouldNotFit() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short pebble = items.requireByKey("voxel:pebble").id();
+        short twig = items.requireByKey("voxel:twig").id();
+        short fiber = items.requireByKey("voxel:fiber").id();
+        short dirt = items.requireByKey("voxel:dirt").id();
+        Inventory inventory = new Inventory(4);
+        inventory.add(pebble, 8, items);
+        inventory.add(twig, 4, items);
+        inventory.add(fiber, 4, items);
+        inventory.add(dirt, 1, items);
+        CraftingRecipe recipe = CraftingRecipes.createDefaultRecipes(items).stream()
+                .filter(candidate -> candidate.key().equals("voxel:stone_pickaxe"))
+                .findFirst()
+                .orElseThrow();
+
+        assertFalse(recipe.craft(inventory, items, CraftingStationType.INVENTORY, 4));
+        assertEquals(8, inventory.count(pebble));
+        assertEquals(4, inventory.count(twig));
+        assertEquals(4, inventory.count(fiber));
+    }
+
+    @Test
+    void countCraftingCanUseFreedIngredientSlotsForOutput() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short pebble = items.requireByKey("voxel:pebble").id();
+        short twig = items.requireByKey("voxel:twig").id();
+        short fiber = items.requireByKey("voxel:fiber").id();
+        short pickaxe = items.requireByKey("voxel:stone_pickaxe").id();
+        Inventory inventory = new Inventory(3);
+        inventory.add(pebble, 4, items);
+        inventory.add(twig, 2, items);
+        inventory.add(fiber, 2, items);
+        CraftingRecipe recipe = CraftingRecipes.createDefaultRecipes(items).stream()
+                .filter(candidate -> candidate.key().equals("voxel:stone_pickaxe"))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(recipe.craft(inventory, items, CraftingStationType.INVENTORY, 2));
+        assertEquals(2, inventory.count(pickaxe));
     }
 }

@@ -2,6 +2,7 @@ package dev.voxelgame.client.net;
 
 import dev.voxelgame.client.Hotbar;
 import dev.voxelgame.client.ChatLog;
+import dev.voxelgame.client.PlayerStats;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.client.world.ClientWorld;
 import io.netty.bootstrap.Bootstrap;
@@ -21,17 +22,19 @@ public final class GameClientConnection implements AutoCloseable {
     private final String username;
     private final ClientWorld world;
     private final Hotbar hotbar;
+    private final PlayerStats playerStats;
     private final ChatLog chatLog;
     private final ClientNetworkStats stats = new ClientNetworkStats();
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private Channel channel;
 
-    public GameClientConnection(String host, int port, String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog) {
+    public GameClientConnection(String host, int port, String username, ClientWorld world, Hotbar hotbar, PlayerStats playerStats, ChatLog chatLog) {
         this.host = host;
         this.port = port;
         this.username = username;
         this.world = world;
         this.hotbar = hotbar;
+        this.playerStats = playerStats;
         this.chatLog = chatLog;
     }
 
@@ -49,7 +52,7 @@ public final class GameClientConnection implements AutoCloseable {
                                     .addLast(new LengthFieldPrepender(4))
                                     .addLast(new ClientPacketDecoder())
                                     .addLast(new ClientPacketEncoder())
-                                    .addLast(new ClientConnectionHandler(username, world, hotbar, chatLog, stats));
+                                    .addLast(new ClientConnectionHandler(username, world, hotbar, playerStats, chatLog, stats));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();

@@ -1,9 +1,12 @@
 package dev.voxelgame.client;
 
+import dev.voxelgame.common.gameplay.ComfortRules;
+
 public final class PlayerStats {
     private int health = 20;
     private int hunger = 20;
     private int armor;
+    private int comfort;
     private float breath = 20.0f;
     private float stamina = 20.0f;
     private float hungerDrain;
@@ -22,6 +25,10 @@ public final class PlayerStats {
         return armor;
     }
 
+    public int comfort() {
+        return comfort;
+    }
+
     public int stamina() {
         return Math.round(stamina);
     }
@@ -30,12 +37,24 @@ public final class PlayerStats {
         return Math.round(breath);
     }
 
+    public boolean dead() {
+        return health <= 0;
+    }
+
+    public void respawn() {
+        health = 20;
+        hunger = 20;
+        armor = 0;
+        breath = 20.0f;
+        stamina = 20.0f;
+        hungerDrain = 0.0f;
+        regenTimer = 0.0f;
+        starvationTimer = 0.0f;
+    }
+
     public void resetForMode(GameMode mode) {
         if (mode == GameMode.SPECTATOR) {
-            health = 20;
-            hunger = 20;
-            breath = 20.0f;
-            stamina = 20.0f;
+            respawn();
         }
     }
 
@@ -44,7 +63,7 @@ public final class PlayerStats {
     }
 
     public void tick(float deltaSeconds, GameMode mode, boolean underwater, boolean sprinting, boolean moving) {
-        if (mode == GameMode.SPECTATOR) {
+        if (mode == GameMode.SPECTATOR || dead()) {
             return;
         }
         if (underwater) {
@@ -53,15 +72,15 @@ public final class PlayerStats {
             breath = Math.min(20.0f, breath + deltaSeconds * 4.0f);
         }
         if (mode == GameMode.SURVIVAL) {
-            hungerDrain += deltaSeconds * 0.08f;
+            hungerDrain += deltaSeconds * 0.08f * comfortHungerMultiplier();
             if (sprinting && moving && stamina > 0.0f) {
                 stamina = Math.max(0.0f, stamina - deltaSeconds * 4.5f);
-                hungerDrain += deltaSeconds * 0.70f;
+                hungerDrain += deltaSeconds * 0.70f * comfortHungerMultiplier();
             } else {
-                float regenRate = hunger > 4 ? 3.0f : 1.25f;
+                float regenRate = (hunger > 4 ? 3.0f : 1.25f) * comfortStaminaMultiplier();
                 stamina = Math.min(20.0f, stamina + deltaSeconds * regenRate);
                 if (moving) {
-                    hungerDrain += deltaSeconds * 0.16f;
+                    hungerDrain += deltaSeconds * 0.16f * comfortHungerMultiplier();
                 }
             }
             while (hungerDrain >= 1.0f) {
@@ -95,14 +114,17 @@ public final class PlayerStats {
     }
 
     public boolean canSprint() {
-        return stamina > 1.5f && hunger > 0;
+        return !dead() && stamina > 1.5f && hunger > 0;
     }
 
     public boolean canUseFood(int foodValue, int healValue) {
-        return foodValue > 0 && hunger < 20 || healValue > 0 && health < 20;
+        return !dead() && (foodValue > 0 && hunger < 20 || healValue > 0 && health < 20);
     }
 
     public void eat(int foodValue, int healValue) {
+        if (dead()) {
+            return;
+        }
         hunger = Math.min(20, hunger + foodValue);
         health = Math.min(20, health + healValue);
         stamina = Math.min(20.0f, stamina + foodValue * 0.65f);
@@ -114,5 +136,30 @@ public final class PlayerStats {
             return;
         }
         health = Math.max(0, health - Math.max(1, amount - armor / 5));
+    }
+
+    public void applySnapshot(int health, int hunger, int stamina, int breath, int armor, int comfort) {
+        this.health = clamp(health, 0, 20);
+        this.hunger = clamp(hunger, 0, 20);
+        this.stamina = clamp(stamina, 0, 20);
+        this.breath = clamp(breath, 0, 20);
+        this.armor = clamp(armor, 0, 20);
+        applyComfort(comfort);
+    }
+
+    public void applyComfort(int comfort) {
+        this.comfort = clamp(comfort, 0, 40);
+    }
+
+    private float comfortHungerMultiplier() {
+        return ComfortRules.hungerDrainMultiplier(comfort);
+    }
+
+    private float comfortStaminaMultiplier() {
+        return ComfortRules.staminaRegenMultiplier(comfort);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

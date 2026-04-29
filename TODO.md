@@ -7,8 +7,62 @@ Implementation status:
 - Added first Campfire-gated cooking/smelting recipes, more cozy resources, copper tools, mushroom/clay/crystal world resources and server/client station checks.
 - Added Campfire Fuel V1: inactive, active and burned-out states, fuel validation, timed burn-out, server tick updates and active-fire-only cooking station checks.
 - Added Storage Crate V1: right-click open UI, local singleplayer crate storage, server-validated multiplayer transfer packets, inventory sync and in-memory crate contents.
+- Added Storage Transfer V1.5: source slot, optional target slot, count and transaction id packets with server-side stack validation.
+- Added Crafting Intent V1.5: recipe count, optional station position, server-side station reach/type validation and atomic count crafting.
+- Added BlockInteract server coverage for crate open, harvest cooldown/reach validation and campfire fuel consumption.
+- Added EntityInteract V1 packet and server validation for known reachable entities.
+- Added EntityInteract FEED V1: server consumes food and updates ambient entity health.
+- Added fed-animal follow response: FEED marks ambient entities as FOLLOW and moves them toward the feeding player.
+- Added Ambient Flee V1: timid ambient entities flee nearby players on the server tick while fed FOLLOW targets keep priority.
+- Added Ambient Entity Tick V1: `EntitySnapshot` state keys and server-tick movement broadcasts.
+- Added Comfort Sync V1: common comfort scan/cap rules, server-computed `PlayerStatsSnapshot` comfort and HUD display.
+- Added Server PlayerSurvivalState V1: server-owned health/hunger/stamina/breath snapshot state with comfort effects.
+- Added server comfort security coverage: throttled comfort scans and forged client stat snapshots are ignored.
+- Added StorageOpenRequest packet so crate opening is an explicit block-pos intent instead of only generic BlockInteract.
+- Added Sleep Intent V1: sleeping mat block/item/recipe, `SleepRequest` packet and server night/reach validation.
+- Added Sleep Safety V1: server sleep checks now require comfort, simple shelter, no nearby danger entity and all online same-world players ready before advancing time.
+- Added Cooking Intent V1: `CookRequest` station/input-slot packet, client send path, active-campfire validation and delayed server output.
+- Added Tool Mining Gate V1: item `toolLevel`/`toolSpeed`, ore `requiredToolLevel`, client/local hints and server-side low-tier harvest rejection.
+- Added Resin Harvest V1: Pine logs expose a server-validated `BlockInteract` resin harvest with cooldown coverage.
+- Added Biome Resource Distribution coverage for deterministic pine, lakeside clay and mushroom-grove resource identity.
+- Added packet roundtrip coverage for all currently implemented client intent packets.
 - Replaced the previous asset sheet wiring with the new `ui_hud_sheet.png`, `blocks_tiles_sheet.png`, `tools_weapons_sheet.png`, `nature_food_sheet.png` and `ores_materials_sheet.png` sheets.
 - Added UI asset pass V1: HUD half-icons, asset-backed slot frames, hand/item swing, block break progress overlay, pickup pop feedback, budgeted preview chunk generation, entity debug hitboxes, improved voxel entity/player models and a first shader bloom/glow toggle.
+- Added Crafting UI filters: category chips for All/Tools/Food/Building/Decor/Adventure plus a craftable-only toggle.
+- Added selected hotbar slot pulse polish.
+- Added inventory/storage slot hover hints for stack count, food/heal values and durability.
+- Added current biome label to the normal HUD.
+- Added Crafting UI search field with keyboard input, backspace, clear button and recipe/ingredient matching.
+- Added red missing-ingredient feedback in Crafting UI recipe rows and preview slots.
+- Added Crafting UI station requirement lines and locked-recipe presentation for unmet unlock metadata.
+- Added backpack sort button in the Crafting inventory panel.
+- Added right-click split-stack transfer for the storage screen.
+- Added tooltip category/description/placeable details to selected-item and slot hover text.
+- Added tooltip tool level, rarity and decor comfort values plus a local HUD day/time readout.
+- Added inventory shift-click quick move, polished durability bar state colors and a labeled comfort HUD meter.
+- Added Creative-only inventory trash mode plus biome-based HUD temperature readout.
+- Added gameplay audio hooks for footsteps, campfire crackle, ambience and craft-fail feedback.
+- Fixed Hotbar slot backgrounds by removing broken chest-mapped slot sprites and using stable code-drawn slot panels.
+- Added Entity Model Renderer V1: named model parts, rotations, entity culling stats and specific procedural models for bunny, snail, boar, crawler and grazers.
+- Added Particle System V1: CPU billboards, particle shader pass, block-break debris, harvest sparkle and F3 particle stats.
+- Added Campfire Particle V1: nearby active campfires emit budgeted smoke and sparks from client-side world state.
+- Added Firefly Particle V1: firefly swarm and mire wisp snapshots emit lightweight client-side glow particles.
+- Added Ambient Particle V1.5: cooking steam, leaf drift, water splash transitions and glow spores use capped client-side sources.
+- Added Feedback Log V1 and no-op audio cue coverage for collect, break, craft-success, inventory and water-splash hooks.
+- Added Feedback V1.5: far-target hints, required-tool hints, station recipe-unlock hints and local singleplayer comfort feedback.
+- Added UI Scale and Recipe Discovery Feedback V1: runtime HUD/chat/feedback scaling plus newly discovered ingredient recipe messages.
+- Added Generated Loot Crate V1: structure loot markers fill server crates deterministically once and persist after transfers or break/replace.
+- Fixed block face seam rendering by insetting atlas UVs and keeping closed cube faces opaque when source sprites contain transparent edge pixels.
+- Added data-driven block render material tables so terrain shader color, alpha, emissive glow, animated fluid and face-gap behavior no longer depend on hardcoded shader ID lists.
+- Added Client Entity Interpolation V1: client keeps previous/current snapshots with a short render delay, smooths position/yaw and keeps server authority unchanged.
+- Added Client Entity Interaction Targeting V1: right-click can aim at interpolated entities and send server-authoritative `EntityInteract(entityId, selectedSlot, action)` packets.
+- Added Chunk Render Layer Split V1: SOLID, CUTOUT and TRANSLUCENT chunk meshes now build, upload, render and report debug stats separately.
+- Reduced terrain shader UV uniform tables to the validated block shader range instead of uploading unused 256-entry tables.
+- Added Death/HUD UI Cleanup V1: survival death state with respawn plus cleaner asset-backed stat strips for health, hunger and energy.
+- Added Inventory Drag Stack V1: compact inventory drag/drop with safe stack merge, empty-slot move and swap behavior.
+- Added Survival Loop Test Coverage V1: inventory overflow, food effects, crafting fit/fail, comfort, tool damage and mining gates are covered by unit tests.
+- Fixed Local Drop Pickup and Minimal HUD V1: local block drops now use the pre-break block type, mining feedback is softer and survival meters no longer draw extra backplates.
+- Added Biome Resource Identity V1: biome-specific surface gatherables now cover meadows, forests, lakes, mire, mushroom groves, highlands, ruins, dunes and frost peaks with registry-backed drop coverage.
 - Java tests still need a local JDK/JAVA_HOME before they can be executed.
 
 Stand: Die Codebase hat bereits `common`, `client`, `server`, `launcher`, `tools`, zentrale Registries (`Items`, `Blocks`, `Biomes`), einfache `CraftingRecipe`s, Inventory, Hunger/Stamina/Breath, Tool-Durability, Drops, Worldgen, Biome, Structures, einfache Entity-Snapshots, UI/HUD, Netty-Pakete und erste Server-Validierung fuer `BlockAction` und `BlockInteract`.
@@ -20,6 +74,7 @@ Leitlinien:
 - Jede Gameplay-Aktion ist ein Intent vom Client und wird serverseitig validiert.
 - Neue Features werden in kleinen, testbaren PRs umgesetzt.
 - Singleplayer darf lokal laufen, soll aber moeglichst dieselben Common-Regeln wie Multiplayer nutzen.
+- Erledigte TODO-Punkte werden per Markdown-Strikethrough markiert, nicht still geloescht.
 
 ## 1. Core Gameplay Loop
 
@@ -266,7 +321,7 @@ Legende fuer Flags: P = placeable, F = food, T = tool. Code-Aenderungen sind bew
 | `voxel:flower_pot` | Flower Pot | Building | 64 | comfort, plant display | clay_pot + flower | Crafting | comfort +1 | P | existiert |
 | `voxel:woven_rug` | Woven Rug | Building | 64 | comfort floor | planks + fiber | Crafting/Loom | comfort +3 | P | existiert |
 | `voxel:bookshelf` | Bookshelf | Building | 64 | lore/comfort | planks + notes | Workbench | comfort +3 | P | neues Block/Item |
-| `voxel:sleeping_mat` | Sleeping Mat | Building | 16 | sleep/respawn | dry_grass + cloth | Crafting | core shelter | P | neues Block/Packet |
+| `voxel:sleeping_mat` | Sleeping Mat | Building | 16 | sleep/respawn | dry_grass + fiber now, cloth later | Crafting | core shelter | P | ~~basic block/item/packet exists~~, ~~shelter~~/respawn later |
 | `voxel:old_note` | Old Note | Adventure | 16 | Lore unlock | none | ruins/chests | collectable | - | Item + Journal |
 | `voxel:ancient_coin` | Ancient Coin | Adventure | 64 | trade/restoration | none | ruins/market | rare currency | - | Loot |
 | `voxel:ruin_key` | Ruin Key | Adventure | 1 | opens rare ruins | fragments + crystal | Workbench | progression | - | key validation |
@@ -300,7 +355,7 @@ Legende fuer Flags: P = placeable, F = food, T = tool. Code-Aenderungen sind bew
 | `voxel:small_table` | CUTOUT | yes | 0.8 | AXE | small_table | small_table | 2 | 0 | none | cabins | workstation later | prop |
 | `voxel:storage_crate` | SOLID | yes | 1.0 | AXE | storage_crate | storage_crate | 1 | 0 | none | camps, market | BlockEntity inventory | existing |
 | `voxel:bookshelf` | SOLID | yes | 1.0 | AXE | bookshelf | bookshelf | 3 | 0 | none | cabins/ruins | unlock lore nearby | new texture |
-| `voxel:sleeping_mat` | CUTOUT | no | 0.1 | NONE | sleeping_mat | sleeping_mat | 4 | 0 | none | campsites | sleep intent | flat sprite |
+| `voxel:sleeping_mat` | CUTOUT | no | 0.1 | NONE | sleeping_mat | sleeping_mat | 4 | 0 | none | campsites | ~~sleep intent~~ | flat sprite |
 | `voxel:campfire_active` | CUTOUT | no | 0.5 | AXE | campfire | campfire | 5 | 14 | none | campsites | BlockEntity state | animated fire |
 | `voxel:campfire_inactive` | CUTOUT | no | 0.5 | AXE | campfire | campfire | 2 | 0 | none | campsites | fuel interaction | no flame |
 | `voxel:garden_fence` | CUTOUT | yes | 0.9 | AXE | garden_fence | garden_fence | 1 | 0 | none | villages | collision thin later | existing |
@@ -370,7 +425,7 @@ Implementation order:
 2. Add `StationType`, `RecipeCategory`, `RecipeDefinition`.
 3. Add adapter from old recipes to new recipe definitions.
 4. Update UI to show station/category/locked state.
-5. Extend `CraftRequest` to include station position, recipe key, count.
+5. ~~Extend `CraftRequest` to include station position, recipe key, count.~~
 6. Server validates station block, reach, inventory, fuel/time.
 
 ## 5. Survival- und Comfort-System
@@ -400,23 +455,23 @@ Effects:
 - Stamina regen multiplier: `1.0 + min(0.40, comfort * 0.02)`.
 - Health regen interval reduced by up to 30 percent.
 - Night stress optional later: lower vignette/sound tension.
-- Sleep requires safe/comfortable area unless creative.
+- ~~Sleep requires safe/comfortable area unless creative.~~
 
 Technical plan:
 
-- Add `comfortValue` to `BlockType` or a separate `DecorComfortRegistry` first to avoid changing constructor too broadly.
-- Add `PlayerSurvivalState` server-side: health, hunger, stamina, breath, comfort, lastComfortScanTick.
-- Every 40 ticks, server scans radius 8 around player; limit checked blocks to a cube sample or Manhattan shell to protect performance.
-- Max comfort cap: 25 early, 40 later.
-- Client gets comfort through `PlayerStatsSnapshot` packet or temporary HUD sync packet.
-- UI: small comfort leaf/house meter near stamina.
+- ~~Add `comfortValue` to `BlockType` or a separate `DecorComfortRegistry` first to avoid changing constructor too broadly.~~
+- ~~Add `PlayerSurvivalState` server-side: health, hunger, stamina, breath, comfort, lastComfortScanTick.~~
+- ~~Every 40 ticks, server scans radius 8 around player; limit checked blocks to a cube sample or Manhattan shell to protect performance.~~
+- ~~Max comfort cap: 25 early, 40 later.~~
+- ~~Client gets comfort through `PlayerStatsSnapshot` packet or temporary HUD sync packet.~~
+- ~~UI: small comfort leaf/house meter near stamina.~~
 
 Tests:
 
-- Comfort values sum and cap.
-- Comfort scan ignores unloaded chunks.
-- Hunger drain reduces with comfort.
-- Multiplayer client cannot fake comfort.
+- ~~Comfort values sum and cap.~~
+- ~~Comfort scan ignores unloaded chunks.~~
+- ~~Hunger drain reduces with comfort.~~
+- ~~Multiplayer client cannot fake comfort.~~
 
 ## 6. Cooking- und Campfire-System
 
@@ -483,9 +538,9 @@ Tool tiers:
 
 New item properties:
 
-- `toolLevel`
-- `toolSpeed`
-- `durability`
+- ~~`toolLevel`~~
+- ~~`toolSpeed`~~
+- ~~`durability`~~
 - `effectiveAgainst`
 - `bonusDrops`
 - `repairMaterial`
@@ -493,33 +548,33 @@ New item properties:
 Block properties:
 
 - `requiredToolType`
-- `requiredToolLevel`
+- ~~`requiredToolLevel`~~
 - `hardness`
 - `dropTable`
 
 Gameplay:
 
-- Wrong tool is slow for soft blocks, blocked for ores above level.
-- Correct type speeds mining.
+- ~~Wrong tool is slow for soft blocks, blocked for ores above level.~~
+- ~~Correct type speeds mining.~~
 - Higher tier reduces durability loss by 25 to 50 percent.
 - Knife gives bonus for fiber, herbs, mushrooms, resin.
 - Axe gives bonus for bark/resin/logs.
-- Pickaxe unlocks ore tiers.
+- ~~Pickaxe unlocks ore tiers.~~
 
 Tests:
 
-- Wrong tool blocked where required.
-- Correct tool succeeds.
-- Tool breaks at durability.
+- ~~Wrong tool blocked where required.~~
+- ~~Correct tool succeeds.~~
+- ~~Tool breaks at durability.~~
 - Drop count and drop table remain correct.
-- Server rejects client attempting high-tier block with low-tier tool.
+- ~~Server rejects client attempting high-tier block with low-tier tool.~~
 
 ## 8. Biome-Feature-Plan
 
 | Biome | Terrain | Palette | Plants | Animals | Loot | Structures | Resources | Gameplay Reason | Code |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Cozy Meadow | rolling, safe, spawn | soft_grass, flower_grass | berry_bush, fiber_grass, flowers | sheep, bunny | common_nature | campsite, small cabin | twig, fiber, berries | tutorial biome | tune spawnPosition, resource distribution |
-| Pine Forest | dense, darker | pine_needles, pine_log | mushrooms, resin_tree | bunny, boar | campsite | campsite, abandoned cabin | resin, bark, mushrooms | mid materials | resin harvest |
+| Cozy Meadow | rolling, safe, spawn | soft_grass, flower_grass | berry_bush, fiber_grass, flowers | sheep, bunny | common_nature | campsite, small cabin | twig, fiber, berries | tutorial biome | ~~tune spawnPosition~~, resource distribution |
+| Pine Forest | dense, darker | pine_needles, pine_log | mushrooms, resin_tree | bunny, boar | campsite | campsite, abandoned cabin | resin, bark, mushrooms | mid materials | ~~resin harvest~~ |
 | Mushroom Grove | soft hills, glowing nights | mushroom_soil, glow blocks | mushroom_cluster, glow mushrooms | snail, fireflies | mushroom_grove | mushroom_circle | glow_crystal, rare herbs | magical exploration | particles/light nodes |
 | Lakeside | flat shores, water | clay_bank, shallow_water | reeds, herbs | frogs later, fireflies | common_nature | lakeside_shack, hidden_well | clay, water, herbs | pottery/cooking | shallow water, clay deposits |
 | Old Ruins | broken stone ridges | ruin bricks, mossy stone | vines, mushrooms | snails, rare danger later | ruin_common, ruin_rare | small_ruin, market, watchtower | ancient fragments, coins | progression/lore | loot persistence |
@@ -570,11 +625,11 @@ Server requirements:
 
 | Entity | Spawn | Time | Movement | Interaction | Drops | Animation | Server Snapshot | Client Rendering |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `cozy_sheep` | Cozy Meadow, Flower Fields | day | wander/graze | follows berries, shear later | cloth/wool later | idle, walk, graze | position, state, target | colored box now, sprite/model later |
-| `forest_bunny` | Meadow, Pine | day/dusk | idle, hop, flee | observe, maybe feed | none | hop bob | flee state | small model |
-| `moss_snail` | Mushroom Grove, Mire | all | very slow wander | inspect, rare moss drop | moss/slime optional | crawl | position/state | low model |
+| `cozy_sheep` | Cozy Meadow, Flower Fields | day | wander/graze | follows berries, shear later | cloth/wool later | idle, walk, graze | position, state, target | ~~colored box now~~, generic procedural model now, sprite/model assets later |
+| `forest_bunny` | Meadow, Pine | day/dusk | idle, hop, flee | observe, maybe feed | none | hop bob | flee state | ~~small model~~, procedural bunny model |
+| `moss_snail` | Mushroom Grove, Mire | all | very slow wander | inspect, rare moss drop | moss/slime optional | crawl | position/state | ~~low model~~, procedural snail model |
 | `firefly_swarm` | Lakeside, Grove, Meadow | night | float around anchors | ambience only | none | glow pulse | position/intensity | emissive particles |
-| `little_boar` | Pine Forest | day | wander, sniff | finds mushrooms, neutral | leather_strip optional | walk/sniff | neutral/flee state | medium model |
+| `little_boar` | Pine Forest | day | wander, sniff | finds mushrooms, neutral | leather_strip optional | walk/sniff | neutral/flee state | ~~medium model~~, procedural boar model |
 
 AI states V1:
 
@@ -586,115 +641,116 @@ AI states V1:
 
 Implementation:
 
-- Extend `EntitySnapshot` with state key later or add `EntityStateSnapshot`.
-- Server tick moves ambient entities slowly.
-- Client interpolates snapshots.
-- Entity interactions use `EntityInteractRequest(entityId, selectedSlot)`.
+- ~~Extend `EntitySnapshot` with state key later or add `EntityStateSnapshot`.~~
+- ~~Server tick moves ambient entities slowly.~~
+- ~~Client interpolates snapshots.~~
+- ~~Timid ambient entities flee nearby players on server tick.~~
+- ~~Entity interactions use `EntityInteractRequest(entityId, selectedSlot)`.~~
 
 ## 11. UI/UX-Feature-Plan
 
 Inventory:
 
-- Shift-click quick move.
-- Right-click split stack.
-- Drag stack.
-- Sort button.
-- Trash slot optional and disabled in survival by default.
+- ~~Shift-click quick move.~~
+- ~~Right-click split stack.~~
+- ~~Drag stack.~~
+- ~~Sort button.~~
+- ~~Trash slot optional and disabled in survival by default.~~
 
 Hotbar:
 
-- Durability bar already exists, polish colors.
-- Food value hint on hover.
-- Selected slot pulse animation.
+- ~~Durability bar already exists, polish colors.~~
+- ~~Food value hint on hover.~~
+- ~~Selected slot pulse animation.~~
 - Mouse wheel already supported.
 
 Tooltips:
 
-- Name.
-- Description.
-- Category.
-- Hunger/Heal.
-- Durability.
-- Tool type and level.
-- Places block.
-- Comfort value.
-- Rarity.
-- Station requirement for recipes.
+- ~~Name.~~
+- ~~Description.~~
+- ~~Category.~~
+- ~~Hunger/Heal.~~
+- ~~Durability.~~
+- ~~Tool type and level.~~
+- ~~Places block.~~
+- ~~Comfort value.~~
+- ~~Rarity.~~
+- ~~Station requirement for recipes.~~
 
 Crafting UI:
 
-- Categories: All, Tools, Food, Building, Decor, Adventure.
-- Search field.
-- Locked recipes greyed out.
-- Station requirement line.
-- Missing ingredients red.
-- Craftable filter.
+- ~~Categories: All, Tools, Food, Building, Decor, Adventure.~~
+- ~~Search field.~~
+- ~~Locked recipes greyed out.~~
+- ~~Station requirement line.~~
+- ~~Missing ingredients red.~~
+- ~~Craftable filter.~~
 
 HUD:
 
-- Health.
-- Hunger.
-- Stamina.
-- Comfort.
-- Breath underwater.
-- Temperature optional.
-- Current biome small text or compass UI.
-- Day time indicator.
+- ~~Health.~~
+- ~~Hunger.~~
+- ~~Stamina.~~
+- ~~Comfort.~~
+- ~~Breath underwater.~~
+- ~~Temperature optional.~~
+- ~~Current biome small text or compass UI.~~
+- ~~Day time indicator.~~
 
 Settings:
 
-- Render distance.
-- Preview radius.
-- FOV.
-- Sensitivity.
-- Water.
-- AO.
-- Shadows.
-- VSync.
-- UI scale.
+- ~~Render distance.~~
+- ~~Preview radius.~~
+- ~~FOV.~~
+- ~~Sensitivity.~~
+- ~~Water.~~
+- ~~AO.~~
+- ~~Shadows.~~
+- ~~VSync.~~
+- ~~UI scale.~~
 
 ## 12. Audio, Partikel und Feedback
 
 Sound hooks:
 
-- `step_grass`, `step_stone`, `step_wood`
-- `break_wood`, `break_stone`
-- `collect_item`
-- `craft_success`, `craft_fail`
-- `inventory_click`
-- `campfire_crackle`
-- `night_ambience`, `meadow_birds`
-- `cave_drip`
-- `water_splash`
+- ~~`step_grass`, `step_stone`, `step_wood`~~
+- ~~`break_wood`, `break_stone`~~
+- ~~`collect_item`~~
+- ~~`craft_success`~~, ~~`craft_fail`~~
+- ~~`inventory_click`~~
+- ~~`campfire_crackle`~~
+- ~~`night_ambience`, `meadow_birds`~~
+- ~~`cave_drip`~~
+- ~~`water_splash`~~
 
 Particles:
 
-- block break particles.
-- harvest sparkle.
-- campfire smoke.
-- fire sparks.
-- fireflies.
-- cooking steam.
-- leaf particles.
-- water splash.
-- glow mushroom spores.
+- ~~block break particles.~~
+- ~~harvest sparkle.~~
+- ~~campfire smoke.~~
+- ~~fire sparks.~~
+- ~~fireflies.~~
+- ~~cooking steam.~~
+- ~~leaf particles.~~
+- ~~water splash.~~
+- ~~glow mushroom spores.~~
 
 Feedback messages:
 
-- `New recipe unlocked`
-- `Too far away`
-- `Need a pickaxe`
-- `Inventory full`
-- `Campfire needs fuel`
-- `You feel cozy`
-- `No matching recipe`
-- `This needs a workbench`
+- ~~`New recipe unlocked`~~
+- ~~`Too far away`~~
+- ~~`Need a pickaxe`~~
+- ~~`Inventory full`~~
+- ~~`Campfire needs fuel`~~
+- ~~`You feel cozy`~~
+- ~~`No matching recipe`~~
+- ~~`This needs a workbench`~~
 
 Implementation:
 
-- Keep `GameAudio` no-op hook until backend exists.
-- Add `FeedbackLog` or reuse `statusMessage`/chat for short non-chat messages.
-- Add `ParticleSystem` client-only with simple CPU billboard sprites.
+- ~~Keep `GameAudio` no-op hook until backend exists.~~
+- ~~Add `FeedbackLog` or reuse `statusMessage`/chat for short non-chat messages.~~
+- ~~Add `ParticleSystem` client-only with simple CPU billboard sprites.~~
 
 ## 13. Multiplayer-Sicherheit
 
@@ -707,72 +763,79 @@ General rules:
 
 Crafting intent:
 
-- Packet: recipe key, count, station position optional.
-- Validate known recipe, unlock, ingredients, output space, station reach/type.
-- Consume and produce server-side only.
+- ~~Packet: recipe key, count, station position optional.~~
+- ~~Validate known recipe, ingredients, output space, station reach/type.~~
+- Validate recipe unlock/progression once non-ALWAYS unlocks exist.
+- ~~Consume and produce server-side only.~~
 
 Cooking intent:
 
-- Packet: station pos, recipe key, input slots.
-- Validate campfire/cooking pot BlockEntity, fuel, recipe, reach.
-- Output only after cook time.
+- ~~Packet: station pos, recipe key, input slots.~~
+- ~~Validate active campfire, recipe, reach and input slots.~~ Cooking pot BlockEntity and richer fuel UI later.
+- ~~Output only after cook time.~~
+- ~~Reject legacy instant `CraftRequest` path for timed campfire recipes.~~
 
 Block interaction intent:
 
-- Packet exists: selected slot + target pos.
-- Extend result handling for campfire, crates, berry bush, herb patch.
-- Validate reach and cooldown.
+- ~~Packet exists: selected slot + target pos.~~
+- ~~Extend result handling for campfire, crates, berry bush, herb patch.~~
+- ~~Validate reach and cooldown.~~
 
 Chest open/move intent:
 
-- Open packet: block pos.
-- Move packet: source slot, target slot, count, transaction id.
-- Validate chest exists, player reach, stack rules.
-- Persist chest inventory.
+- ~~Open packet: block pos.~~
+- ~~Move packet: source slot, target slot, count, transaction id.~~
+- ~~Validate chest exists, player reach, stack rules.~~
+- ~~Persist chest inventory.~~
 
 Entity interact intent:
 
-- Packet: entity id, selected slot, action type.
-- Validate entity exists, range, item, cooldown.
-- Server decides follow/flee/drop.
+- ~~Packet: entity id, selected slot, action type.~~
+- ~~Validate entity exists, range, selected slot, cooldown.~~
+- ~~Server decides feed response.~~
+- ~~Follow response for fed animals.~~
+- ~~Flee response for timid ambient animals.~~ Drop AI decisions remain.
 
 Sleep intent:
 
-- Packet: bed/sleeping mat pos.
-- Validate night/time, comfort/shelter, no danger nearby.
-- Server advances time only when rules allow multiplayer sleep.
+- ~~Packet: bed/sleeping mat pos.~~
+- ~~Validate sleeping mat, reach and night/time.~~
+- ~~Validate comfort, simple shelter and no danger nearby.~~
+- ~~Server advances time only when rules allow sleep.~~
+- ~~Multiplayer all-sleep policy for online players in the same world.~~
 
 Comfort sync:
 
-- Server computes comfort.
-- Client only displays.
-- Sync via PlayerState packet every 1 to 2 seconds or on change.
+- ~~Server computes comfort.~~
+- ~~Server-authoritative hunger/stamina effects move to `PlayerSurvivalState` later.~~
+- ~~Sync via PlayerState packet every 1 to 2 seconds or on change.~~
 
 ## 14. Tests
 
 Unit tests:
 
-- Inventory add/remove and full inventory.
-- Tool damage and breakage.
-- Crafting success/fail.
-- Crafting full inventory.
-- Food effects.
-- Comfort calculation.
-- Loot table deterministic.
-- Biome resource distribution.
-- Tool mining rules.
-- Packet roundtrips for every intent.
+- ~~Inventory add/remove and full inventory.~~
+- ~~Tool damage and breakage.~~
+- ~~Crafting success/fail.~~
+- ~~Crafting full inventory.~~
+- ~~Food effects.~~
+- ~~Comfort calculation.~~
+- ~~Loot table deterministic.~~
+- ~~Biome resource distribution.~~
+- ~~Tool mining rules.~~
+- ~~Packet roundtrips for every implemented intent.~~
+- Add roundtrips for future new intent packets when those intents exist.
 
 Integration tests:
 
 - Singleplayer crafting through common rules.
 - Multiplayer crafting through server handler or fake channel.
 - Server rejects invalid distance.
-- Chest opens once and persists.
-- Loot persists after chunk unload/reload.
+- ~~Chest opens once and persists.~~
+- ~~Loot persists after chest reopen/transfer.~~ Chunk unload/reload save later.
 - Cooking consumes fuel and produces output after time.
 - Entity interaction sync.
-- Block drops match registry.
+- ~~Block drops match registry.~~
 
 Manual checklist:
 
@@ -855,7 +918,7 @@ Akzeptanz: Copper pickaxe unlocks iron; stone cannot mine late nodes.
 Files/classes:
 
 - `AmbientEntitySpawner`, `ServerEntityTracker`, `EntitySnapshot`
-- `EntityRenderer`, new ParticleSystem, `GameAudio`
+- ~~`EntityRenderer` model pass~~, ~~new ParticleSystem~~, `GameAudio`
 - `GameClient` UI
 
 Risk: medium.
@@ -886,7 +949,7 @@ Akzeptanz: Crafting UI kann nach Kategorie filtern.
 
 Ziel: Campfire kann `cooked_berries`, `roasted_mushroom`, `herb_soup` herstellen.
 Dateien: `GamePacket`, `PacketCodec`, `ServerConnectionHandler`, `InteractionRules`, `CraftingRecipes`.
-Schritte: `CookRequest`, station validation, simple instant output V1.
+Schritte: `CookRequest`, station validation, delayed output V1.
 Tests: server rejects no station, consumes ingredients, inventory full.
 Akzeptanz: Rechtsklick Campfire + valid ingredients gibt cooked food.
 
@@ -926,22 +989,22 @@ Akzeptanz: Ruin chest gibt einmal Loot und bleibt danach persistent.
 
 Ziel: Stone/Copper/Iron/Crystal Progression.
 Dateien: `ItemType`, `BlockType`, `Items`, `Blocks`, `InteractionRules`.
-Schritte: toolLevel/toolSpeed, requiredToolLevel, server validation.
-Tests: wrong tool blocked, correct tool accepted, durability.
-Akzeptanz: Copper unlocks iron, iron unlocks crystal.
+Schritte: ~~toolLevel/toolSpeed~~, ~~requiredToolLevel~~, ~~server validation~~.
+Tests: ~~wrong tool blocked~~, ~~correct tool accepted~~, ~~durability~~.
+Akzeptanz: ~~Copper unlocks iron~~; iron unlocks crystal once iron tool items exist.
 
 ### PR 9: Biome resource identity pass
 
 Ziel: Jedes Zielbiom hat eigene Ressourcen.
 Dateien: `Biomes`, `OverworldGenerator`, `Blocks`, `Items`, `AmbientEntitySpawner`.
-Schritte: resin trees, clay banks, mushroom clusters, crystal nodes.
-Tests: deterministic distribution, biome resource checks.
+Schritte: ~~resin trees~~, clay banks, mushroom clusters, crystal nodes.
+Tests: ~~deterministic distribution, biome resource checks.~~
 Akzeptanz: Spieler erkennt Biome an Ressourcen und Gameplay-Grund.
 
 ### PR 10: Entity AI V1
 
 Ziel: Friedliche Entities wandern/fliehen/folgen rudimentaer.
 Dateien: `ServerEntityTracker`, `EntitySnapshot`, `AmbientEntitySpawner`, `EntityRenderer`, `GamePacket`.
-Schritte: state, velocity/target, periodic server tick, client interpolation.
-Tests: snapshot contains state, movement deterministic enough, range sync.
-Akzeptanz: Bunnies flee, sheep wander/follow berries, fireflies pulse at night.
+Schritte: ~~state, velocity/target, periodic server tick~~, client interpolation.
+Tests: ~~snapshot contains state, movement deterministic enough~~, range sync.
+Akzeptanz: ~~Bunnies flee~~, sheep wander/follow berries, fireflies pulse at night.

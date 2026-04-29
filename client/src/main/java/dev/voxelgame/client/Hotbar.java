@@ -13,11 +13,15 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.item.StarterInventory;
 import dev.voxelgame.common.registry.Registry;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_1;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_2;
@@ -51,6 +55,7 @@ public final class Hotbar {
     private final Inventory inventory = new Inventory(36);
     private final List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
     private final Map<StoragePos, Inventory> storageInventories = new HashMap<>();
+    private final Set<Short> discoveredItems = new HashSet<>();
     private StoragePos openStoragePos;
     private Inventory openStorageInventory;
     private int selectedIndex;
@@ -61,6 +66,8 @@ public final class Hotbar {
         openStoragePos = null;
         openStorageInventory = null;
         selectedIndex = 0;
+        discoveredItems.clear();
+        refreshDiscoveredItems();
     }
 
     public synchronized boolean updateSelection(long window) {
@@ -87,6 +94,7 @@ public final class Hotbar {
 
     public synchronized void applySnapshot(List<ItemStack> slots) {
         inventory.replaceSlots(slots);
+        refreshDiscoveredItems();
     }
 
     public synchronized void openStorage(int x, int y, int z) {
@@ -137,24 +145,33 @@ public final class Hotbar {
     }
 
     public synchronized boolean transferStorage(boolean fromStorage, int slot) {
+        return transferStorage(fromStorage, slot, Integer.MAX_VALUE);
+    }
+
+    public synchronized boolean transferStorage(boolean fromStorage, int slot, int count) {
         if (openStorageInventory == null) {
             return false;
         }
         Inventory source = fromStorage ? openStorageInventory : inventory;
         Inventory target = fromStorage ? inventory : openStorageInventory;
-        if (slot < 0 || slot >= source.size()) {
+        if (slot < 0 || slot >= source.size() || count < 1) {
             return false;
         }
         ItemStack stack = source.slot(slot);
         if (stack.isEmpty()) {
             return false;
         }
-        int remaining = target.addStack(stack, items);
-        int moved = stack.count() - remaining;
+        int requested = Math.min(count, stack.count());
+        int remaining = target.addStack(new ItemStack(stack.itemId(), requested, stack.damage()), items);
+        int moved = requested - remaining;
         if (moved <= 0) {
             return false;
         }
-        source.setSlot(slot, remaining == 0 ? ItemStack.EMPTY : new ItemStack(stack.itemId(), remaining, stack.damage()));
+        int left = stack.count() - moved;
+        source.setSlot(slot, left == 0 ? ItemStack.EMPTY : new ItemStack(stack.itemId(), left, stack.damage()));
+        if (fromStorage) {
+            discoveredItems.add(stack.itemId());
+        }
         return true;
     }
 
@@ -188,8 +205,20 @@ public final class Hotbar {
         return true;
     }
 
+    public synchronized boolean selectedItemIsFood() {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        return items.requireById(stack.itemId()).isFood();
+    }
+
     public synchronized float selectedBreakMultiplier(BlockType target) {
         return InteractionRules.breakMultiplier(inventory.slot(selectedIndex), items, target);
+    }
+
+    public synchronized boolean canHarvestSelected(BlockType target) {
+        return InteractionRules.canHarvest(inventory.slot(selectedIndex), items, target);
     }
 
     public synchronized void damageSelectedTool(BlockType target) {
@@ -199,16 +228,30 @@ public final class Hotbar {
 
     public synchronized boolean addItem(String itemKey, int count) {
         return items.findByKey(itemKey)
-                .map(item -> inventory.add(item.id(), count, items) == 0)
+                .map(item -> {
+                    int remaining = inventory.add(item.id(), count, items);
+                    if (remaining < count) {
+                        discoveredItems.add(item.id());
+                    }
+                    return remaining == 0;
+                })
                 .orElse(false);
     }
 
     public synchronized boolean craft(CraftingRecipe recipe) {
-        return recipe.craft(inventory, items);
+        boolean crafted = recipe.craft(inventory, items);
+        if (crafted) {
+            discoveredItems.add(recipe.result().itemId());
+        }
+        return crafted;
     }
 
     public synchronized boolean craft(CraftingRecipe recipe, CraftingStationType stationType) {
-        return recipe.craft(inventory, items, stationType);
+        boolean crafted = recipe.craft(inventory, items, stationType);
+        if (crafted) {
+            discoveredItems.add(recipe.result().itemId());
+        }
+        return crafted;
     }
 
     public synchronized boolean canCraft(CraftingRecipe recipe) {
@@ -219,8 +262,170 @@ public final class Hotbar {
         return recipe.canCraft(inventory, items, stationType);
     }
 
+    public synchronized Optional<List<Integer>> inputSlotsFor(CraftingRecipe recipe) {
+        Inventory simulated = inventory.copy();
+        List<Integer> inputSlots = new ArrayList<>();
+        for (CraftingRecipe.Ingredient ingredient : recipe.ingredients()) {
+            int remaining = ingredient.count();
+            for (int slot = 0; slot < simulated.size() && remaining > 0; slot++) {
+                ItemStack stack = simulated.slot(slot);
+                if (stack.itemId() != ingredient.itemId()) {
+                    continue;
+                }
+                int removed = Math.min(remaining, stack.count());
+                if (removed > 0 && simulated.removeFromSlot(slot, removed)) {
+                    if (!inputSlots.contains(slot)) {
+                        inputSlots.add(slot);
+                    }
+                    remaining -= removed;
+                }
+            }
+            if (remaining > 0) {
+                return Optional.empty();
+            }
+        }
+        return Optional.of(List.copyOf(inputSlots));
+    }
+
+    public synchronized int itemCount(short itemId) {
+        return inventory.count(itemId);
+    }
+
+    public synchronized boolean sortBackpack() {
+        List<ItemStack> before = backpackSlots();
+        List<ItemStack> sorted = before.stream()
+                .filter(stack -> !stack.isEmpty())
+                .sorted(Comparator
+                        .comparing((ItemStack stack) -> items.requireById(stack.itemId()).key())
+                        .thenComparingInt(ItemStack::damage)
+                        .thenComparing(Comparator.comparingInt(ItemStack::count).reversed()))
+                .toList();
+        int slot = HOTBAR_SLOTS;
+        for (ItemStack stack : sorted) {
+            inventory.setSlot(slot, stack);
+            slot++;
+        }
+        while (slot < inventory.size()) {
+            inventory.setSlot(slot, ItemStack.EMPTY);
+            slot++;
+        }
+        return !before.equals(backpackSlots());
+    }
+
+    public synchronized boolean quickMoveInventorySlot(int sourceSlot) {
+        if (sourceSlot < 0 || sourceSlot >= inventory.size()) {
+            return false;
+        }
+        ItemStack stack = inventory.slot(sourceSlot);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        int targetStart = sourceSlot < HOTBAR_SLOTS ? HOTBAR_SLOTS : 0;
+        int targetEnd = sourceSlot < HOTBAR_SLOTS ? inventory.size() : HOTBAR_SLOTS;
+        return moveSlotToRange(sourceSlot, targetStart, targetEnd);
+    }
+
+    public synchronized boolean moveInventorySlot(int sourceSlot, int targetSlot) {
+        if (sourceSlot < 0 || sourceSlot >= inventory.size() || targetSlot < 0 || targetSlot >= inventory.size() || sourceSlot == targetSlot) {
+            return false;
+        }
+        ItemStack source = inventory.slot(sourceSlot);
+        if (source.isEmpty()) {
+            return false;
+        }
+        ItemStack target = inventory.slot(targetSlot);
+        if (target.isEmpty()) {
+            inventory.setSlot(targetSlot, source);
+            inventory.setSlot(sourceSlot, ItemStack.EMPTY);
+            return true;
+        }
+        if (target.itemId() == source.itemId() && target.damage() == source.damage() && source.damage() == 0) {
+            ItemType type = items.requireById(source.itemId());
+            int capacity = type.maxStackSize() - target.count();
+            if (capacity > 0) {
+                int moved = Math.min(capacity, source.count());
+                inventory.setSlot(targetSlot, new ItemStack(target.itemId(), target.count() + moved, target.damage()));
+                int remaining = source.count() - moved;
+                inventory.setSlot(sourceSlot, remaining <= 0 ? ItemStack.EMPTY : new ItemStack(source.itemId(), remaining, source.damage()));
+                return true;
+            }
+        }
+        inventory.setSlot(sourceSlot, target);
+        inventory.setSlot(targetSlot, source);
+        return true;
+    }
+
+    public synchronized boolean trashInventorySlot(int slot) {
+        if (slot < 0 || slot >= inventory.size() || inventory.slot(slot).isEmpty()) {
+            return false;
+        }
+        inventory.setSlot(slot, ItemStack.EMPTY);
+        return true;
+    }
+
+    private boolean moveSlotToRange(int sourceSlot, int targetStart, int targetEnd) {
+        ItemStack source = inventory.slot(sourceSlot);
+        ItemType type = items.requireById(source.itemId());
+        int remaining = source.count();
+        if (source.damage() == 0) {
+            for (int i = targetStart; i < targetEnd && remaining > 0; i++) {
+                ItemStack target = inventory.slot(i);
+                if (target.itemId() == source.itemId() && target.damage() == 0 && target.count() < type.maxStackSize()) {
+                    int moved = Math.min(remaining, type.maxStackSize() - target.count());
+                    inventory.setSlot(i, new ItemStack(source.itemId(), target.count() + moved, source.damage()));
+                    remaining -= moved;
+                }
+            }
+        }
+        for (int i = targetStart; i < targetEnd && remaining > 0; i++) {
+            if (inventory.slot(i).isEmpty()) {
+                int moved = Math.min(remaining, type.maxStackSize());
+                inventory.setSlot(i, new ItemStack(source.itemId(), moved, source.damage()));
+                remaining -= moved;
+            }
+        }
+        int moved = source.count() - remaining;
+        if (moved <= 0) {
+            return false;
+        }
+        inventory.setSlot(sourceSlot, remaining == 0 ? ItemStack.EMPTY : new ItemStack(source.itemId(), remaining, source.damage()));
+        return true;
+    }
+
+    private List<ItemStack> backpackSlots() {
+        List<ItemStack> slots = new ArrayList<>();
+        for (int i = HOTBAR_SLOTS; i < inventory.size(); i++) {
+            slots.add(inventory.slot(i));
+        }
+        return slots;
+    }
+
+    private void refreshDiscoveredItems() {
+        for (int i = 0; i < inventory.size(); i++) {
+            ItemStack stack = inventory.slot(i);
+            if (!stack.isEmpty()) {
+                discoveredItems.add(stack.itemId());
+            }
+        }
+    }
+
+    private boolean ingredientsDiscovered(CraftingRecipe recipe) {
+        for (CraftingRecipe.Ingredient ingredient : recipe.ingredients()) {
+            if (!discoveredItems.contains(ingredient.itemId())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public List<CraftingRecipe> recipes() {
         return recipes;
+    }
+
+    public synchronized List<CraftingRecipe> discoveredRecipes() {
+        return recipes.stream()
+                .filter(this::ingredientsDiscovered)
+                .toList();
     }
 
     public synchronized String selectedLabel() {
@@ -257,7 +462,22 @@ public final class Hotbar {
         }
         ItemType item = items.requireById(stack.itemId());
         int durability = item.durability() <= 0 ? 0 : Math.max(0, item.durability() - stack.damage());
-        return new SlotView(item.key(), label(item.key()), stack.count(), durability, item.durability(), item.foodValue(), item.healValue());
+        return new SlotView(
+                item.key(),
+                label(item.key()),
+                itemCategory(item),
+                itemDescription(item),
+                itemRarity(item),
+                stack.count(),
+                durability,
+                item.durability(),
+                toolTypeLabel(item),
+                toolLevel(item),
+                item.foodValue(),
+                item.healValue(),
+                comfortValue(item),
+                item.placesBlockKey() != null
+        );
     }
 
     public synchronized int inventorySlotCount() {
@@ -306,8 +526,11 @@ public final class Hotbar {
         }
         ItemType item = items.requireById(stack.itemId());
         StringBuilder tooltip = new StringBuilder(label(item.key()));
+        tooltip.append(" | ").append(itemCategory(item));
+        tooltip.append(" | ").append(itemRarity(item));
+        tooltip.append(" | ").append(itemDescription(item));
         if (item.isTool()) {
-            tooltip.append(" | ").append(label(item.toolType().name().toLowerCase(Locale.ROOT))).append(" ");
+            tooltip.append(" | ").append(toolTypeLabel(item)).append(" Level ").append(toolLevel(item)).append(" ");
             tooltip.append(Math.max(0, item.durability() - stack.damage())).append("/").append(item.durability());
         }
         if (item.isFood()) {
@@ -316,10 +539,77 @@ public final class Hotbar {
                 tooltip.append(" Heal +").append(item.healValue());
             }
         }
+        int comfort = comfortValue(item);
+        if (comfort > 0) {
+            tooltip.append(" | Comfort +").append(comfort);
+        }
         if (item.placesBlockKey() != null) {
             tooltip.append(" | Placeable");
         }
         return tooltip.toString();
+    }
+
+    private static String itemCategory(ItemType item) {
+        if (item.isFood()) {
+            return "Food";
+        }
+        if (item.isTool()) {
+            return "Tool";
+        }
+        if (item.placesBlockKey() != null) {
+            return "Placeable";
+        }
+        return "Material";
+    }
+
+    private static String itemDescription(ItemType item) {
+        if (item.isFood()) {
+            return "Restores hunger" + (item.healValue() > 0 ? " and health" : "");
+        }
+        if (item.isTool()) {
+            return "Useful for " + label(item.toolType().name().toLowerCase(Locale.ROOT)) + " work";
+        }
+        if (item.placesBlockKey() != null) {
+            return "Can be placed in the world";
+        }
+        return "Crafting material";
+    }
+
+    private static String itemRarity(ItemType item) {
+        String key = item.key();
+        if (key.contains("ancient") || key.contains("lost") || key.contains("ruin")) {
+            return "Legendary";
+        }
+        if (key.contains("glow") || key.contains("crystal")) {
+            return "Rare";
+        }
+        if (key.contains("copper") || key.contains("iron") || key.contains("lantern") || key.contains("stew") || key.contains("soup")) {
+            return "Uncommon";
+        }
+        return "Common";
+    }
+
+    private static String toolTypeLabel(ItemType item) {
+        if (!item.isTool()) {
+            return "";
+        }
+        return label(item.toolType().name().toLowerCase(Locale.ROOT));
+    }
+
+    private static int toolLevel(ItemType item) {
+        return InteractionRules.toolLevel(item);
+    }
+
+    private static int comfortValue(ItemType item) {
+        if (item.placesBlockKey() == null) {
+            return 0;
+        }
+        return switch (item.placesBlockKey()) {
+            case "voxel:lantern", "voxel:woven_rug" -> 3;
+            case "voxel:campfire", "voxel:wooden_chair", "voxel:small_table" -> 2;
+            case "voxel:flower_pot", "voxel:herb_planter", "voxel:berry_bush" -> 1;
+            default -> 0;
+        };
     }
 
     private static String label(String key) {
@@ -340,9 +630,9 @@ public final class Hotbar {
     private record StoragePos(int x, int y, int z) {
     }
 
-    public record SlotView(String itemKey, String label, int count, int durabilityLeft, int maxDurability, int foodValue, int healValue) {
+    public record SlotView(String itemKey, String label, String category, String description, String rarity, int count, int durabilityLeft, int maxDurability, String toolTypeLabel, int toolLevel, int foodValue, int healValue, int comfortValue, boolean placeable) {
         private static SlotView empty() {
-            return new SlotView("", "Empty", 0, 0, 0, 0, 0);
+            return new SlotView("", "Empty", "", "", "", 0, 0, 0, "", 0, 0, 0, 0, false);
         }
 
         public boolean isEmpty() {

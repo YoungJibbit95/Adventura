@@ -40,12 +40,34 @@ public final class InteractionRules {
                 case KNIFE -> 3.4f;
                 case NONE -> 1.0f;
             };
-            return base * toolTierMultiplier(item);
+            return base * item.toolSpeed();
         }
         if (target.preferredTool() == ToolType.NONE) {
             return item.toolType() == ToolType.KNIFE ? 1.4f : 1.0f;
         }
         return item.isTool() ? 0.85f : 0.55f;
+    }
+
+    public static boolean canHarvest(ItemStack selectedStack, Registry<ItemType> items, BlockType target) {
+        int requiredLevel = requiredToolLevel(target);
+        if (requiredLevel <= 0) {
+            return true;
+        }
+        if (selectedStack.isEmpty()) {
+            return false;
+        }
+        ItemType item = items.requireById(selectedStack.itemId());
+        return item.isTool()
+                && item.toolType() == target.preferredTool()
+                && item.toolLevel() >= requiredLevel;
+    }
+
+    public static int toolLevel(ItemType item) {
+        return item.toolLevel();
+    }
+
+    public static int requiredToolLevel(BlockType target) {
+        return target.requiredToolLevel();
     }
 
     public static int toolDamage(ItemStack selectedStack, Registry<ItemType> items, BlockType target) {
@@ -75,21 +97,9 @@ public final class InteractionRules {
         return switch (target.id()) {
             case Blocks.BERRY_BUSH -> Optional.of(new BlockInteraction("voxel:berries", 2, 0.35, "Harvested berries"));
             case Blocks.HERB_PLANTER -> Optional.of(new BlockInteraction("voxel:wild_herbs", 1, 0.35, "Picked wild herbs"));
+            case Blocks.PINE_LOG -> Optional.of(new BlockInteraction("voxel:resin", 1, 0.45, "Collected resin"));
             default -> Optional.empty();
         };
-    }
-
-    private static float toolTierMultiplier(ItemType item) {
-        if (item.key().contains("crystal_")) {
-            return 1.75f;
-        }
-        if (item.key().contains("iron_")) {
-            return 1.45f;
-        }
-        if (item.key().contains("copper_")) {
-            return 1.25f;
-        }
-        return 1.0f;
     }
 
     public record BlockInteraction(String itemKey, int count, double cooldownSeconds, String message) {

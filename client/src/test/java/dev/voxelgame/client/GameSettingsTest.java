@@ -16,11 +16,17 @@ class GameSettingsTest {
 
         settings.adjustFieldOfView(1000);
         settings.adjustMouseSensitivity(-1000);
+        settings.adjustUiScale(1000);
         settings.setMeshBuildBudgetChunks(99);
 
         assertEquals(100, settings.fieldOfViewDegrees());
         assertEquals(40, settings.mouseSensitivityPercent());
+        assertEquals(150, settings.uiScalePercent());
         assertEquals(12, settings.meshBuildBudgetChunks());
+
+        settings.adjustUiScale(-1000);
+
+        assertEquals(80, settings.uiScalePercent());
     }
 
     @Test
