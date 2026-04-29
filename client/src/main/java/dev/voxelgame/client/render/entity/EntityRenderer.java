@@ -103,6 +103,11 @@ public final class EntityRenderer implements AutoCloseable {
 
     private static float entityScale(String typeKey) {
         return switch (typeKey) {
+            case "voxel:cozy_sheep" -> 0.72f;
+            case "voxel:forest_bunny" -> 0.38f;
+            case "voxel:moss_snail" -> 0.34f;
+            case "voxel:firefly_swarm" -> 0.18f;
+            case "voxel:little_boar" -> 0.62f;
             case "voxel:snow_hare" -> 0.45f;
             case "voxel:mire_wisp" -> 0.62f;
             case "voxel:dune_crawler" -> 0.70f;
@@ -113,6 +118,11 @@ public final class EntityRenderer implements AutoCloseable {
 
     private static Vector3f baseColor(String typeKey) {
         return switch (typeKey) {
+            case "voxel:cozy_sheep" -> new Vector3f(0.82f, 0.78f, 0.66f);
+            case "voxel:forest_bunny" -> new Vector3f(0.45f, 0.34f, 0.26f);
+            case "voxel:moss_snail" -> new Vector3f(0.20f, 0.38f, 0.22f);
+            case "voxel:firefly_swarm" -> new Vector3f(0.80f, 0.76f, 0.18f);
+            case "voxel:little_boar" -> new Vector3f(0.42f, 0.26f, 0.18f);
             case "voxel:snow_hare" -> new Vector3f(0.62f, 0.68f, 0.70f);
             case "voxel:mire_wisp" -> new Vector3f(0.10f, 0.36f, 0.32f);
             case "voxel:dune_crawler" -> new Vector3f(0.54f, 0.38f, 0.18f);
@@ -124,6 +134,11 @@ public final class EntityRenderer implements AutoCloseable {
 
     private static Vector3f headColor(String typeKey) {
         return switch (typeKey) {
+            case "voxel:cozy_sheep" -> new Vector3f(0.96f, 0.92f, 0.78f);
+            case "voxel:forest_bunny" -> new Vector3f(0.72f, 0.58f, 0.42f);
+            case "voxel:moss_snail" -> new Vector3f(0.46f, 0.64f, 0.34f);
+            case "voxel:firefly_swarm" -> new Vector3f(1.0f, 0.94f, 0.34f);
+            case "voxel:little_boar" -> new Vector3f(0.62f, 0.42f, 0.30f);
             case "voxel:snow_hare" -> new Vector3f(0.92f, 0.96f, 0.94f);
             case "voxel:mire_wisp" -> new Vector3f(0.28f, 0.92f, 0.70f);
             case "voxel:dune_crawler" -> new Vector3f(0.82f, 0.62f, 0.28f);

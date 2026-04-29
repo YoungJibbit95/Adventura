@@ -27,6 +27,19 @@ public final class Blocks {
     public static final short PINE_LEAVES = 21;
     public static final short RED_MUSHROOM = 22;
     public static final short SKYROOT_PLANKS = 23;
+    public static final short FLOWER_POT = 24;
+    public static final short LANTERN = 25;
+    public static final short WOVEN_RUG = 26;
+    public static final short SMALL_TABLE = 27;
+    public static final short WOODEN_CHAIR = 28;
+    public static final short STORAGE_CRATE = 29;
+    public static final short MOSSY_PATH = 30;
+    public static final short GARDEN_FENCE = 31;
+    public static final short BERRY_BUSH = 32;
+    public static final short HERB_PLANTER = 33;
+    public static final short CAMPFIRE = 34;
+    public static final short SMALL_STONE = 35;
+    public static final short TREE_STUMP = 36;
 
     private Blocks() {
     }
@@ -43,8 +56,8 @@ public final class Blocks {
         register(registry, SKYROOT_LEAVES, "voxel:skyroot_leaves", 0.2f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:skyroot_leaves");
         register(registry, COAL_ORE, "voxel:coal_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:coal");
         register(registry, TORCH, "voxel:torch", 0.0f, ToolType.NONE, false, false, false, 14, BlockRenderLayer.CUTOUT, "voxel:torch");
-        register(registry, WILD_GRASS, "voxel:wild_grass", 0.0f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:wild_grass");
-        register(registry, SUN_BLOOM, "voxel:sun_bloom", 0.0f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:sun_bloom");
+        register(registry, WILD_GRASS, "voxel:wild_grass", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:fiber");
+        register(registry, SUN_BLOOM, "voxel:sun_bloom", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:wild_herbs");
         register(registry, IRON_ORE, "voxel:iron_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_iron");
         register(registry, COPPER_ORE, "voxel:copper_ore", 3.0f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:raw_copper");
         register(registry, CLAY, "voxel:clay", 0.6f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:clay");
@@ -55,8 +68,21 @@ public final class Blocks {
         register(registry, ICE, "voxel:ice", 0.5f, ToolType.PICKAXE, true, false, true, 0, BlockRenderLayer.TRANSLUCENT, "voxel:ice");
         register(registry, PINE_LOG, "voxel:pine_log", 2.0f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:pine_log");
         register(registry, PINE_LEAVES, "voxel:pine_leaves", 0.2f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:pine_leaves");
-        register(registry, RED_MUSHROOM, "voxel:red_mushroom", 0.0f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:red_mushroom");
+        register(registry, RED_MUSHROOM, "voxel:red_mushroom", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:red_mushroom");
         register(registry, SKYROOT_PLANKS, "voxel:skyroot_planks", 1.4f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:skyroot_planks");
+        register(registry, FLOWER_POT, "voxel:flower_pot", 0.2f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:flower_pot");
+        register(registry, LANTERN, "voxel:lantern", 0.2f, ToolType.NONE, false, false, false, 13, BlockRenderLayer.CUTOUT, "voxel:lantern");
+        register(registry, WOVEN_RUG, "voxel:woven_rug", 0.1f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:woven_rug");
+        register(registry, SMALL_TABLE, "voxel:small_table", 0.8f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:small_table");
+        register(registry, WOODEN_CHAIR, "voxel:wooden_chair", 0.7f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:wooden_chair");
+        register(registry, STORAGE_CRATE, "voxel:storage_crate", 1.0f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:storage_crate");
+        register(registry, MOSSY_PATH, "voxel:mossy_path", 0.4f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:mossy_path");
+        register(registry, GARDEN_FENCE, "voxel:garden_fence", 0.9f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:garden_fence");
+        register(registry, BERRY_BUSH, "voxel:berry_bush", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:berries");
+        register(registry, HERB_PLANTER, "voxel:herb_planter", 0.2f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:wild_herbs");
+        register(registry, CAMPFIRE, "voxel:campfire", 0.5f, ToolType.AXE, false, false, false, 14, BlockRenderLayer.CUTOUT, "voxel:campfire");
+        register(registry, SMALL_STONE, "voxel:small_stone", 0.1f, ToolType.PICKAXE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:pebble");
+        register(registry, TREE_STUMP, "voxel:tree_stump", 1.0f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:skyroot_log");
         return registry;
     }
 

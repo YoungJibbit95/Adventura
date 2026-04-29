@@ -58,6 +58,61 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:fiber", nature.sprite(59, 33, 36, 35));
         sprites.item("voxel:torch_wall", decor.sprite(535, 11, 21, 36));
 
+        sprites.optionalSheet("assets/game/generated_item_icons_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER).ifPresent(sheet -> {
+            sprites.item("voxel:stone", sheet.sprite(35, 156, 109, 120));
+            sprites.item("voxel:dirt", sheet.sprite(175, 157, 110, 119));
+            sprites.item("voxel:grass_block", sheet.sprite(315, 157, 112, 119));
+            sprites.item("voxel:skyroot_planks", sheet.sprite(595, 158, 109, 119));
+            sprites.item("voxel:stick", sheet.sprite(737, 165, 101, 104));
+            sprites.item("voxel:coal", sheet.sprite(860, 170, 99, 99));
+            sprites.item("voxel:torch", sheet.sprite(1133, 164, 36, 105));
+            sprites.item("voxel:raw_iron", sheet.sprite(168, 347, 112, 93));
+            sprites.item("voxel:raw_copper", sheet.sprite(569, 341, 106, 92));
+            sprites.item("voxel:red_mushroom", sheet.sprite(35, 674, 100, 95));
+            sprites.item("voxel:cactus", sheet.sprite(171, 656, 97, 114));
+            sprites.item("voxel:apple", sheet.sprite(573, 660, 87, 109));
+            sprites.item("voxel:berries", sheet.sprite(948, 667, 99, 96));
+            sprites.item("voxel:twig", sheet.sprite(737, 165, 101, 104));
+            sprites.item("voxel:pebble", sheet.sprite(35, 156, 109, 120));
+            sprites.item("voxel:resin", sheet.sprite(1322, 341, 88, 95));
+            sprites.item("voxel:feathers", sheet.sprite(1072, 660, 98, 109));
+            sprites.item("voxel:wild_herbs", sheet.sprite(1072, 660, 98, 109));
+            sprites.item("voxel:simple_rope", sheet.sprite(737, 165, 101, 104));
+            sprites.item("voxel:healing_snack", sheet.sprite(948, 667, 99, 96));
+            sprites.item("voxel:small_stone", sheet.sprite(35, 156, 109, 120));
+        });
+
+        sprites.optionalSheet("assets/game/generated_tools_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER).ifPresent(sheet -> {
+            sprites.item("voxel:stone_pickaxe", sheet.sprite(57, 152, 160, 165));
+            sprites.item("voxel:stone_axe", sheet.sprite(684, 147, 150, 176));
+            sprites.item("voxel:stone_shovel", sheet.sprite(1066, 155, 162, 168));
+            sprites.item("voxel:stone_sword", sheet.sprite(36, 425, 187, 192));
+            sprites.item("voxel:stone_knife", sheet.sprite(296, 700, 197, 206));
+            sprites.item("voxel:torch", sheet.sprite(1100, 426, 85, 191));
+        });
+
+        sprites.optionalSheet("assets/game/generated_plants_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER).ifPresent(sheet -> {
+            sprites.item("voxel:wild_grass", sheet.sprite(50, 137, 131, 108));
+            sprites.item("voxel:fiber", sheet.sprite(213, 121, 129, 124));
+            sprites.item("voxel:sun_bloom", sheet.sprite(872, 118, 93, 127));
+            sprites.item("voxel:berry_bush", sheet.sprite(710, 126, 122, 119));
+            sprites.item("voxel:herb_planter", sheet.sprite(1150, 131, 95, 114));
+            sprites.item("voxel:tree_stump", sheet.sprite(551, 132, 120, 113));
+        });
+
+        sprites.optionalSheet("assets/game/generated_decor_props_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER).ifPresent(sheet -> {
+            sprites.item("voxel:torch_wall", sheet.sprite(1308, 119, 68, 178));
+            sprites.item("voxel:flower_pot", sheet.sprite(585, 127, 118, 166));
+            sprites.item("voxel:lantern", sheet.sprite(765, 140, 102, 153));
+            sprites.item("voxel:campfire", sheet.sprite(921, 136, 159, 165));
+            sprites.item("voxel:storage_crate", sheet.sprite(45, 130, 153, 167));
+            sprites.item("voxel:small_table", sheet.sprite(1086, 351, 139, 164));
+            sprites.item("voxel:wooden_chair", sheet.sprite(556, 360, 161, 145));
+            sprites.item("voxel:woven_rug", sheet.sprite(742, 365, 150, 143));
+            sprites.item("voxel:garden_fence", sheet.sprite(55, 352, 125, 163));
+            sprites.item("voxel:mossy_path", sheet.sprite(556, 360, 161, 145));
+        });
+
         return sprites;
     }
 
@@ -77,7 +132,19 @@ public final class GameSprites implements AutoCloseable {
     }
 
     private UiSpriteSheet sheet(String resourcePath, boolean keyBlackTransparent) {
-        UiSpriteSheet sheet = UiSpriteSheet.load(resourcePath, keyBlackTransparent);
+        return sheet(resourcePath, keyBlackTransparent ? UiSpriteSheet.BackgroundMode.KEY_BLACK : UiSpriteSheet.BackgroundMode.OPAQUE);
+    }
+
+    private Optional<UiSpriteSheet> optionalSheet(String resourcePath, UiSpriteSheet.BackgroundMode backgroundMode) {
+        try {
+            return Optional.of(sheet(resourcePath, backgroundMode));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    private UiSpriteSheet sheet(String resourcePath, UiSpriteSheet.BackgroundMode backgroundMode) {
+        UiSpriteSheet sheet = UiSpriteSheet.load(resourcePath, backgroundMode);
         sheets.add(sheet);
         return sheet;
     }

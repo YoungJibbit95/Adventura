@@ -24,7 +24,8 @@ public final class Structures {
                 blocks.add(new BlockPlacement(2, y, 2, Blocks.MOSSY_STONE));
             }
         }
-        blocks.add(new BlockPlacement(0, 1, 0, Blocks.TORCH));
+        blocks.add(new BlockPlacement(0, 1, 0, Blocks.STORAGE_CRATE));
+        blocks.add(new BlockPlacement(1, 1, 0, Blocks.LANTERN));
         return new StructureTemplate("voxel:small_ruin", blocks);
     }
 
@@ -54,6 +55,10 @@ public final class Structures {
             }
         }
         blocks.add(new BlockPlacement(0, 2, 2, Blocks.TORCH));
+        blocks.add(new BlockPlacement(-1, 1, 1, Blocks.SMALL_TABLE));
+        blocks.add(new BlockPlacement(1, 1, 1, Blocks.WOODEN_CHAIR));
+        blocks.add(new BlockPlacement(2, 1, -1, Blocks.FLOWER_POT));
+        blocks.add(new BlockPlacement(0, 1, 0, Blocks.WOVEN_RUG));
         return new StructureTemplate("voxel:simple_house", blocks);
     }
 
@@ -120,33 +125,35 @@ public final class Structures {
                 }
             }
         }
-        blocks.add(new BlockPlacement(0, 0, 0, Blocks.MOSSY_STONE));
-        blocks.add(new BlockPlacement(0, 1, 0, Blocks.TORCH));
+        blocks.add(new BlockPlacement(0, 0, 0, Blocks.MOSSY_PATH));
+        blocks.add(new BlockPlacement(0, 1, 0, Blocks.CAMPFIRE));
+        blocks.add(new BlockPlacement(1, 1, 0, Blocks.LANTERN));
         blocks.add(new BlockPlacement(-2, 1, -1, Blocks.SKYROOT_LOG));
         blocks.add(new BlockPlacement(-2, 1, 0, Blocks.SKYROOT_LOG));
         blocks.add(new BlockPlacement(2, 1, 1, Blocks.PINE_LOG));
         blocks.add(new BlockPlacement(2, 1, 0, Blocks.PINE_LOG));
+        blocks.add(new BlockPlacement(0, 1, 2, Blocks.STORAGE_CRATE));
         return new StructureTemplate("voxel:campsite", blocks);
     }
 
     public static StructureTemplate compactVillage() {
         List<BlockPlacement> blocks = new ArrayList<>();
         for (int z = -7; z <= 7; z++) {
-            blocks.add(new BlockPlacement(0, 0, z, Blocks.GRAVEL));
+            blocks.add(new BlockPlacement(0, 0, z, Blocks.MOSSY_PATH));
             if (z % 3 == 0) {
-                blocks.add(new BlockPlacement(-1, 0, z, Blocks.GRAVEL));
-                blocks.add(new BlockPlacement(1, 0, z, Blocks.GRAVEL));
+                blocks.add(new BlockPlacement(-1, 0, z, Blocks.MOSSY_PATH));
+                blocks.add(new BlockPlacement(1, 0, z, Blocks.MOSSY_PATH));
             }
         }
         for (int x = -7; x <= 7; x++) {
-            blocks.add(new BlockPlacement(x, 0, 0, Blocks.GRAVEL));
+            blocks.add(new BlockPlacement(x, 0, 0, Blocks.MOSSY_PATH));
         }
         addTinyHouse(blocks, -5, 1, -5);
         addTinyHouse(blocks, 5, 1, -5);
         addTinyHouse(blocks, -5, 1, 5);
         addMarketStall(blocks, 5, 1, 5);
         blocks.add(new BlockPlacement(5, 1, 5, Blocks.SKYROOT_LOG));
-        blocks.add(new BlockPlacement(5, 2, 5, Blocks.TORCH));
+        blocks.add(new BlockPlacement(5, 2, 5, Blocks.LANTERN));
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.WATER));
         for (int z = -1; z <= 1; z++) {
             for (int x = -1; x <= 1; x++) {
@@ -155,6 +162,8 @@ public final class Structures {
                 }
             }
         }
+        blocks.add(new BlockPlacement(-2, 1, 2, Blocks.BERRY_BUSH));
+        blocks.add(new BlockPlacement(2, 1, -2, Blocks.HERB_PLANTER));
         return new StructureTemplate("voxel:compact_village", blocks);
     }
 
@@ -183,6 +192,8 @@ public final class Structures {
             }
         }
         blocks.add(new BlockPlacement(originX, originY + 1, originZ, Blocks.TORCH));
+        blocks.add(new BlockPlacement(originX - 1, originY, originZ, Blocks.WOVEN_RUG));
+        blocks.add(new BlockPlacement(originX + 1, originY, originZ - 1, Blocks.STORAGE_CRATE));
     }
 
     private static void addMarketStall(List<BlockPlacement> blocks, int originX, int originY, int originZ) {
@@ -200,6 +211,8 @@ public final class Structures {
                 }
             }
         }
+        blocks.add(new BlockPlacement(originX, originY + 1, originZ, Blocks.SMALL_TABLE));
+        blocks.add(new BlockPlacement(originX - 1, originY + 1, originZ, Blocks.FLOWER_POT));
     }
 
     private static boolean corner(int x, int z) {

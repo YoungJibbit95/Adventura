@@ -12,6 +12,9 @@ public final class StarterInventory {
         add(inventory, items, "voxel:torch", 8);
         add(inventory, items, "voxel:skyroot_log", 6);
         add(inventory, items, "voxel:stick", 4);
+        add(inventory, items, "voxel:twig", 6);
+        add(inventory, items, "voxel:fiber", 4);
+        add(inventory, items, "voxel:pebble", 4);
         add(inventory, items, "voxel:apple", 3);
         add(inventory, items, "voxel:stone_pickaxe", 1);
     }

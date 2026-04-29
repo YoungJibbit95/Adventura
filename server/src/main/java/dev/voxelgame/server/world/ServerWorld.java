@@ -63,7 +63,7 @@ public final class ServerWorld {
         }
         getOrGenerateChunk(ChunkPos.fromBlock(x, z));
         BlockType target = world.blockType(world.blockId(x, y, z));
-        if (!target.collidable() || target.dropItemKey() == null) {
+        if (target.id() == Blocks.AIR || target.id() == Blocks.WATER || target.dropItemKey() == null) {
             return Optional.empty();
         }
         return Optional.of(target.dropItemKey());
@@ -79,7 +79,7 @@ public final class ServerWorld {
         }
         getOrGenerateChunk(ChunkPos.fromBlock(action.targetX(), action.targetZ()));
         BlockType target = world.blockType(world.blockId(action.targetX(), action.targetY(), action.targetZ()));
-        if (!target.collidable()) {
+        if (target.id() == Blocks.AIR || target.id() == Blocks.WATER) {
             return Optional.empty();
         }
         setBlock(action.targetX(), action.targetY(), action.targetZ(), Blocks.AIR);
@@ -94,12 +94,12 @@ public final class ServerWorld {
             return Optional.empty();
         }
         Optional<BlockType> placed = world.blocks().findById(action.blockId());
-        if (placed.isEmpty() || action.blockId() == Blocks.AIR || !placed.get().collidable()) {
+        if (placed.isEmpty() || action.blockId() == Blocks.AIR || action.blockId() == Blocks.WATER) {
             return Optional.empty();
         }
         getOrGenerateChunk(ChunkPos.fromBlock(action.placeX(), action.placeZ()));
         BlockType current = world.blockType(world.blockId(action.placeX(), action.placeY(), action.placeZ()));
-        if (current.collidable()) {
+        if (current.id() != Blocks.AIR && current.id() != Blocks.WATER) {
             return Optional.empty();
         }
         setBlock(action.placeX(), action.placeY(), action.placeZ(), action.blockId());

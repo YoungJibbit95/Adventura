@@ -2,6 +2,7 @@ package dev.voxelgame.client;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.ToolType;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.Inventory;
@@ -83,6 +84,54 @@ public final class Hotbar {
         return inventory.removeFromSlot(selectedIndex, 1);
     }
 
+    public synchronized boolean useSelectedFood(PlayerStats stats) {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return false;
+        }
+        ItemType item = items.requireById(stack.itemId());
+        if (!item.isFood() || !stats.canUseFood(item.foodValue(), item.healValue())) {
+            return false;
+        }
+        stats.eat(item.foodValue(), item.healValue());
+        inventory.removeFromSlot(selectedIndex, 1);
+        return true;
+    }
+
+    public synchronized float selectedBreakMultiplier(BlockType target) {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return target.preferredTool() == ToolType.NONE ? 1.0f : 0.65f;
+        }
+        ItemType item = items.requireById(stack.itemId());
+        if (item.toolType() == target.preferredTool() && item.isTool()) {
+            return switch (item.toolType()) {
+                case PICKAXE -> 3.0f;
+                case SHOVEL -> 2.6f;
+                case AXE -> 2.8f;
+                case KNIFE -> 3.4f;
+                case NONE -> 1.0f;
+            };
+        }
+        if (target.preferredTool() == ToolType.NONE) {
+            return item.toolType() == ToolType.KNIFE ? 1.4f : 1.0f;
+        }
+        return item.isTool() ? 0.85f : 0.55f;
+    }
+
+    public synchronized void damageSelectedTool(BlockType target) {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return;
+        }
+        ItemType item = items.requireById(stack.itemId());
+        if (!item.isTool()) {
+            return;
+        }
+        int amount = item.toolType() == target.preferredTool() ? 1 : 2;
+        inventory.damageSlot(selectedIndex, amount, items);
+    }
+
     public synchronized boolean addItem(String itemKey, int count) {
         return items.findByKey(itemKey)
                 .map(item -> inventory.add(item.id(), count, items) == 0)
@@ -123,7 +172,8 @@ public final class Hotbar {
             return SlotView.empty();
         }
         ItemType item = items.requireById(stack.itemId());
-        return new SlotView(item.key(), label(item.key()), stack.count());
+        int durability = item.durability() <= 0 ? 0 : Math.max(0, item.durability() - stack.damage());
+        return new SlotView(item.key(), label(item.key()), stack.count(), durability, item.durability(), item.foodValue(), item.healValue());
     }
 
     public synchronized int inventorySlotCount() {
@@ -158,18 +208,45 @@ public final class Hotbar {
         return builder.toString();
     }
 
+    public synchronized String selectedTooltip() {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return "Empty hand";
+        }
+        ItemType item = items.requireById(stack.itemId());
+        StringBuilder tooltip = new StringBuilder(label(item.key()));
+        if (item.isTool()) {
+            tooltip.append(" | ").append(label(item.toolType().name().toLowerCase(Locale.ROOT))).append(" ");
+            tooltip.append(Math.max(0, item.durability() - stack.damage())).append("/").append(item.durability());
+        }
+        if (item.isFood()) {
+            tooltip.append(" | Food +").append(item.foodValue());
+            if (item.healValue() > 0) {
+                tooltip.append(" Heal +").append(item.healValue());
+            }
+        }
+        if (item.placesBlockKey() != null) {
+            tooltip.append(" | Placeable");
+        }
+        return tooltip.toString();
+    }
+
     private static String label(String key) {
         String value = key.substring(key.indexOf(':') + 1).replace('_', ' ');
         return value.substring(0, 1).toUpperCase(Locale.ROOT) + value.substring(1);
     }
 
-    public record SlotView(String itemKey, String label, int count) {
+    public record SlotView(String itemKey, String label, int count, int durabilityLeft, int maxDurability, int foodValue, int healValue) {
         private static SlotView empty() {
-            return new SlotView("", "Empty", 0);
+            return new SlotView("", "Empty", 0, 0, 0, 0, 0);
         }
 
         public boolean isEmpty() {
             return count <= 0 || itemKey.isBlank();
+        }
+
+        public boolean hasDurability() {
+            return maxDurability > 0;
         }
     }
 }

@@ -262,7 +262,14 @@ public final class BlockTextureAtlas implements AutoCloseable {
             if (sheet == null) {
                 throw new IllegalArgumentException("Unsupported sprite sheet: " + sheetPath);
             }
-            return sheet.getSubimage(x, y, width, height);
+            BufferedImage slice = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = slice.createGraphics();
+            graphics.drawImage(sheet, 0, 0, width, height, x, y, x + width, y + height, null);
+            graphics.dispose();
+            if (sheetPath.contains("generated_")) {
+                removeEdgeCheckerBackground(slice);
+            }
+            return slice;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read sheet slice: " + key, e);
         }
@@ -278,6 +285,32 @@ public final class BlockTextureAtlas implements AutoCloseable {
         String nature = "assets/game/natursachen_nature.png";
         String decor = "assets/game/deko_decor.png";
         String misc = "assets/game/misc_wasser_ui_paletten.png";
+        String generatedBlocks = "assets/game/generated_blocks_sheet.png";
+        String generatedDecor = "assets/game/generated_decor_props_sheet.png";
+        String generatedPlants = "assets/game/generated_plants_sheet.png";
+
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, generatedBlocks, "generated_stone", 35, 98, 124, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, generatedBlocks, "generated_dirt", 594, 97, 124, 130);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAND, generatedBlocks, "generated_sand", 1012, 97, 126, 131);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_STONE, generatedBlocks, "generated_mossy_stone", 455, 97, 124, 130);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GRAVEL, generatedBlocks, "generated_gravel", 1291, 98, 124, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COAL_ORE, generatedBlocks, "generated_coal_ore", 35, 566, 124, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.IRON_ORE, generatedBlocks, "generated_iron_ore", 174, 566, 125, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COPPER_ORE, generatedBlocks, "generated_copper_ore", 315, 566, 126, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, generatedBlocks, "generated_planks", 594, 722, 124, 130);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FLOWER_POT, generatedDecor, "flower_pot", 585, 127, 118, 166);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.LANTERN, generatedDecor, "lantern", 765, 140, 102, 153);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CAMPFIRE, generatedDecor, "campfire", 921, 136, 159, 165);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STORAGE_CRATE, generatedDecor, "crate", 45, 130, 153, 167);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SMALL_TABLE, generatedDecor, "small_table", 1086, 351, 139, 164);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOODEN_CHAIR, generatedDecor, "wooden_chair", 556, 360, 161, 145);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WOVEN_RUG, generatedDecor, "woven_rug", 742, 365, 150, 143);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GARDEN_FENCE, generatedDecor, "garden_fence", 55, 352, 125, 163);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_PATH, generatedBlocks, "generated_mossy_path", 455, 97, 124, 130);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.BERRY_BUSH, generatedPlants, "berry_bush", 710, 126, 122, 119);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.HERB_PLANTER, generatedPlants, "herbs", 1150, 131, 95, 114);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SMALL_STONE, generatedBlocks, "small_stone", 35, 98, 124, 129);
+        putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TREE_STUMP, generatedPlants, "tree_stump", 551, 132, 120, 113);
 
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 19, 29, 58, 56);
         putAllFaces(imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, blocks, "dirt", 362, 29, 57, 55);
@@ -386,6 +419,67 @@ public final class BlockTextureAtlas implements AutoCloseable {
         }
         buffer.flip();
         return buffer;
+    }
+
+    private static void removeEdgeCheckerBackground(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        boolean[] background = new boolean[width * height];
+        int[] queue = new int[width * height];
+        int head = 0;
+        int tail = 0;
+        for (int x = 0; x < width; x++) {
+            tail = enqueueNeutral(image, background, queue, tail, x, 0);
+            tail = enqueueNeutral(image, background, queue, tail, x, height - 1);
+        }
+        for (int y = 1; y < height - 1; y++) {
+            tail = enqueueNeutral(image, background, queue, tail, 0, y);
+            tail = enqueueNeutral(image, background, queue, tail, width - 1, y);
+        }
+        while (head < tail) {
+            int index = queue[head++];
+            int x = index % width;
+            int y = index / width;
+            if (x > 0) {
+                tail = enqueueNeutral(image, background, queue, tail, x - 1, y);
+            }
+            if (x + 1 < width) {
+                tail = enqueueNeutral(image, background, queue, tail, x + 1, y);
+            }
+            if (y > 0) {
+                tail = enqueueNeutral(image, background, queue, tail, x, y - 1);
+            }
+            if (y + 1 < height) {
+                tail = enqueueNeutral(image, background, queue, tail, x, y + 1);
+            }
+        }
+        for (int i = 0; i < background.length; i++) {
+            if (background[i]) {
+                int x = i % width;
+                int y = i / width;
+                image.setRGB(x, y, image.getRGB(x, y) & 0x00FFFFFF);
+            }
+        }
+    }
+
+    private static int enqueueNeutral(BufferedImage image, boolean[] background, int[] queue, int tail, int x, int y) {
+        int index = y * image.getWidth() + x;
+        if (background[index] || !isNeutralBackground(image.getRGB(x, y))) {
+            return tail;
+        }
+        background[index] = true;
+        queue[tail] = index;
+        return tail + 1;
+    }
+
+    private static boolean isNeutralBackground(int argb) {
+        int a = (argb >> 24) & 0xFF;
+        int r = (argb >> 16) & 0xFF;
+        int g = (argb >> 8) & 0xFF;
+        int b = argb & 0xFF;
+        int max = Math.max(r, Math.max(g, b));
+        int min = Math.min(r, Math.min(g, b));
+        return a <= 8 || min >= 190 && max - min <= 20;
     }
 
     public enum TextureFace {

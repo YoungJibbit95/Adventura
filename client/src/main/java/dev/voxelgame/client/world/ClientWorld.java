@@ -105,11 +105,19 @@ public final class ClientWorld {
             return false;
         }
         BlockType target = world.blockType(world.blockId(hit.x(), hit.y(), hit.z()));
-        if (!target.collidable()) {
+        if (target.id() == Blocks.AIR || target.id() == Blocks.WATER) {
             return false;
         }
         applyBlock(new GamePacket.BlockUpdate(hit.x(), hit.y(), hit.z(), Blocks.AIR));
         return true;
+    }
+
+    public synchronized Optional<BlockType> targetBlock(Raycast.Hit hit) {
+        if (!world.dimension().containsY(hit.y())) {
+            return Optional.empty();
+        }
+        BlockType target = world.blockType(world.blockId(hit.x(), hit.y(), hit.z()));
+        return target.id() == Blocks.AIR ? Optional.empty() : Optional.of(target);
     }
 
     public synchronized Optional<String> dropFor(Raycast.Hit hit) {
@@ -125,11 +133,11 @@ public final class ClientWorld {
             return false;
         }
         Optional<BlockType> placed = world.blocks().findById(blockId);
-        if (placed.isEmpty() || blockId == Blocks.AIR || !placed.get().collidable()) {
+        if (placed.isEmpty() || blockId == Blocks.AIR || blockId == Blocks.WATER) {
             return false;
         }
         BlockType current = world.blockType(world.blockId(hit.placeX(), hit.placeY(), hit.placeZ()));
-        if (current.collidable()) {
+        if (current.id() != Blocks.AIR && current.id() != Blocks.WATER) {
             return false;
         }
         applyBlock(new GamePacket.BlockUpdate(hit.placeX(), hit.placeY(), hit.placeZ(), blockId));

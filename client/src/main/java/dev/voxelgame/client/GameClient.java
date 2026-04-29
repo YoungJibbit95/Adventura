@@ -1,5 +1,7 @@
 package dev.voxelgame.client;
 
+import dev.voxelgame.client.audio.AudioCue;
+import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.net.GameClientConnection;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.WorldRenderer;
@@ -10,6 +12,7 @@ import dev.voxelgame.client.ui.UiColor;
 import dev.voxelgame.client.ui.UiRenderer;
 import dev.voxelgame.client.ui.UiSpriteRenderer;
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.net.GamePacket;
@@ -81,6 +84,7 @@ public final class GameClient {
     private final Hotbar hotbar = new Hotbar();
     private final ChatLog chatLog = new ChatLog();
     private final PlayerStats playerStats = new PlayerStats();
+    private final GameAudio audio = new GameAudio();
     private final StringBuilder chatDraft = new StringBuilder();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
@@ -115,6 +119,7 @@ public final class GameClient {
     private WorldRenderer.RenderStats lastRenderStats = new WorldRenderer.RenderStats(0, 0);
     private String statusMessage = "Ready";
     private GameState settingsReturnState = GameState.MAIN_MENU;
+    private double nextBlockActionTime;
 
     public GameClient(ConnectionOptions connectionOptions) {
         this.connectionOptions = connectionOptions;
@@ -188,17 +193,24 @@ public final class GameClient {
             handleGlobalKeys();
 
             if (gameState == GameState.PLAYING) {
-                camera.update(window, deltaSeconds, settings.mouseSensitivity(), world, gameMode);
-                playerStats.tick(deltaSeconds, gameMode, world != null && world.isUnderwater(camera.position()));
+                boolean moving = camera.hasMovementInput(window);
+                boolean sprinting = camera.wantsSprint(window) && moving && playerStats.canSprint();
+                camera.update(window, deltaSeconds, settings.mouseSensitivity(), world, gameMode, playerStats.canSprint());
+                float fallImpact = camera.consumeFallImpactSpeed();
+                if (gameMode == GameMode.SURVIVAL && fallImpact > 18.0f) {
+                    playerStats.hurt(Math.round((fallImpact - 16.0f) * 0.45f));
+                }
+                playerStats.tick(deltaSeconds, gameMode, world != null && world.isUnderwater(camera.position()), sprinting, moving);
                 if (!onlineMode) {
                     world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks());
                 } else {
                     sendMovementIfDue(now);
                 }
                 if (hotbar.updateSelection(window)) {
+                    audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
-                handleBlockInteraction(leftClicked, rightClicked);
+                handleBlockInteraction(leftClicked, rightClicked, now);
             } else if (gameState == GameState.CHAT) {
                 handleChatInput();
             }
@@ -264,7 +276,10 @@ public final class GameClient {
         glfwTerminate();
     }
 
-    private void handleBlockInteraction(boolean leftClicked, boolean rightClicked) {
+    private void handleBlockInteraction(boolean leftClicked, boolean rightClicked, double now) {
+        if (now < nextBlockActionTime) {
+            return;
+        }
         if (leftClicked) {
             world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
                 if (onlineMode) {
@@ -278,13 +293,29 @@ public final class GameClient {
                             hit.placeZ(),
                             Blocks.AIR
                     ));
+                    nextBlockActionTime = now + 0.18;
                 } else {
-                    world.dropFor(hit).ifPresent(drop -> hotbar.addItem(drop, 1));
-                    world.breakBlock(hit);
+                    world.targetBlock(hit).ifPresent(target -> {
+                        float multiplier = hotbar.selectedBreakMultiplier(target);
+                        if (world.breakBlock(hit)) {
+                            collectDrops(target, hit, multiplier);
+                            hotbar.damageSelectedTool(target);
+                            nextBlockActionTime = now + breakDelay(target, multiplier);
+                            statusMessage = "Gathered " + cozyName(target.dropItemKey());
+                            audio.play(AudioCue.BLOCK_BREAK);
+                        }
+                    });
                 }
             });
         }
         if (rightClicked) {
+            String foodLabel = hotbar.selectedLabel();
+            if (hotbar.useSelectedFood(playerStats)) {
+                statusMessage = "Ate " + foodLabel;
+                nextBlockActionTime = now + 0.22;
+                audio.play(AudioCue.EAT);
+                return;
+            }
             hotbar.selectedPlaceBlockId().ifPresent(blockId -> world.pick(camera.position(), camera.forward(), 7.0).ifPresent(hit -> {
                 if (onlineMode) {
                     connection.send(new GamePacket.BlockAction(
@@ -297,13 +328,34 @@ public final class GameClient {
                             hit.placeZ(),
                             blockId
                     ));
+                    nextBlockActionTime = now + 0.15;
                 } else {
                     if (world.placeBlock(hit, blockId)) {
                         hotbar.consumeSelectedOne();
+                        nextBlockActionTime = now + 0.12;
+                        audio.play(AudioCue.BLOCK_PLACE);
                     }
                 }
             }));
         }
+    }
+
+    private void collectDrops(BlockType target, dev.voxelgame.common.math.Raycast.Hit hit, float multiplier) {
+        world.dropFor(hit).ifPresent(drop -> {
+            int count = 1;
+            if (target.preferredTool().name().equals("KNIFE") && multiplier > 2.0f) {
+                count++;
+            }
+            hotbar.addItem(drop, count);
+        });
+    }
+
+    private static double breakDelay(BlockType target, float multiplier) {
+        if (target.hardness() <= 0.0f) {
+            return 0.08;
+        }
+        double delay = target.hardness() * 0.34 / Math.max(0.35f, multiplier);
+        return Math.max(0.08, Math.min(0.85, delay));
     }
 
     private void handleGlobalKeys() {
@@ -552,6 +604,15 @@ public final class GameClient {
         return "[" + "#".repeat(filled) + "-".repeat(10 - filled) + "]";
     }
 
+    private static String cozyName(String key) {
+        if (key == null || key.isBlank()) {
+            return "something";
+        }
+        int colon = key.indexOf(':');
+        String value = colon >= 0 ? key.substring(colon + 1) : key;
+        return value.replace('_', ' ');
+    }
+
     private void sendMovementIfDue(double now) {
         if (connection == null || now < nextMoveSendTime) {
             return;
@@ -649,8 +710,21 @@ public final class GameClient {
         float contentWidth = Math.min(920.0f, framebufferWidth - 80.0f);
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
         float y = 160.0f;
+        renderInventoryTabs(x, y - 52.0f, contentWidth);
         renderCraftingMenu(mouse, clicked, x, y);
         renderInventoryGrid(x + Math.min(440.0f, contentWidth * 0.48f) + 42.0f, y);
+    }
+
+    private void renderInventoryTabs(float x, float y, float width) {
+        float tabWidth = Math.min(170.0f, width / 3.0f - 8.0f);
+        String[] labels = {"CRAFT", "PACK", "COZY LOG"};
+        for (int i = 0; i < labels.length; i++) {
+            float tx = x + i * (tabWidth + 8.0f);
+            uiRenderer.rect(tx, y, tabWidth, 32.0f, i == 0 ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            uiRenderer.rect(tx, y + 30.0f, tabWidth, 2.0f, i == 0 ? UiColor.ACCENT : UiColor.BUTTON);
+            uiRenderer.centeredText(labels[i], tx + tabWidth * 0.5f, y + 9.0f, 1.45f, i == 0 ? UiColor.WHITE : UiColor.MUTED);
+        }
+        uiRenderer.text("Selected: " + clampText(hotbar.selectedTooltip(), 42), x + Math.min(width - 360.0f, 540.0f), y + 9.0f, 1.35f, UiColor.MUTED);
     }
 
     private void renderSettingsMenu(MousePosition mouse, boolean clicked) {
@@ -737,6 +811,7 @@ public final class GameClient {
                     updateWindowTitle();
                 } else if (hotbar.craft(recipe)) {
                     statusMessage = "Crafted " + recipe.label();
+                    audio.play(AudioCue.CRAFT);
                     updateWindowTitle();
                 }
             });
@@ -763,9 +838,12 @@ public final class GameClient {
             float sy = y + row * (slotHeight + gap);
             boolean hotbarSlot = i < Hotbar.HOTBAR_SLOTS;
             Hotbar.SlotView slot = hotbar.slotView(i);
-            uiRenderer.rect(sx, sy, slotWidth, slotHeight, hotbarSlot ? UiColor.BUTTON_HOVER : UiColor.BUTTON);
+            uiRenderer.rect(sx, sy, slotWidth, slotHeight, hotbarSlot ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
             if (!slot.isEmpty()) {
                 drawItemIcon(slot.itemKey(), sx + 5.0f, sy + 4.0f, 26.0f);
+                if (slot.hasDurability()) {
+                    drawDurabilityBar(sx + 5.0f, sy + slotHeight - 5.0f, 26.0f, slot.durabilityLeft(), slot.maxDurability());
+                }
             }
             uiRenderer.text(clampText(slot.isEmpty() ? (i + 1) + " Empty" : slot.label() + " x" + slot.count(), 12), sx + 36.0f, sy + 11.0f, 1.0f, UiColor.WHITE);
         }
@@ -777,28 +855,58 @@ public final class GameClient {
         }
         uiRenderer.rect(framebufferWidth * 0.5f - 5.0f, framebufferHeight * 0.5f - 1.0f, 10.0f, 2.0f, UiColor.WHITE);
         uiRenderer.rect(framebufferWidth * 0.5f - 1.0f, framebufferHeight * 0.5f - 5.0f, 2.0f, 10.0f, UiColor.WHITE);
-        uiRenderer.text("HP " + meter(playerStats.health(), 20) + " MODE " + gameMode.name(), 20.0f, framebufferHeight - 116.0f, 1.7f, UiColor.WHITE);
-        uiRenderer.text("FOOD " + meter(playerStats.hunger(), 20) + " ARMOR " + meter(playerStats.armor(), 20), 20.0f, framebufferHeight - 96.0f, 1.7f, UiColor.MUTED);
+        float statsY = framebufferHeight - 145.0f;
+        uiRenderer.rect(14.0f, statsY - 10.0f, 342.0f, 88.0f, new UiColor(0.035f, 0.045f, 0.04f, 0.58f));
+        drawMeterBar("HEARTS", playerStats.health(), 20, 28.0f, statsY, UiColor.HEART);
+        drawMeterBar("HUNGER", playerStats.hunger(), 20, 28.0f, statsY + 24.0f, UiColor.HUNGER);
+        drawMeterBar("ENERGY", playerStats.stamina(), 20, 28.0f, statsY + 48.0f, UiColor.ENERGY);
+        uiRenderer.text("MODE " + gameMode.name(), 228.0f, statsY + 50.0f, 1.25f, UiColor.MUTED);
         if (playerStats.breath() < 20) {
-            uiRenderer.text("AIR " + meter(playerStats.breath(), 20), 20.0f, framebufferHeight - 136.0f, 1.7f, UiColor.WHITE);
+            drawMeterBar("AIR", playerStats.breath(), 20, 28.0f, statsY - 24.0f, UiColor.WATER);
         }
-        uiRenderer.text("1-9 " + hotbar.selectedLabel(), 20.0f, framebufferHeight - 34.0f, 2.0f, UiColor.WHITE);
+        uiRenderer.text(clampText(hotbar.selectedTooltip(), 64), 20.0f, framebufferHeight - 32.0f, 1.65f, UiColor.WHITE);
+        float hotbarWidth = Hotbar.HOTBAR_SLOTS * 72.0f + (Hotbar.HOTBAR_SLOTS - 1) * 6.0f;
+        float hotbarX = Math.max(20.0f, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {
-            float x = 20.0f + i * 98.0f;
+            float x = hotbarX + i * 78.0f;
             float y = framebufferHeight - 82.0f;
             Hotbar.SlotView slot = hotbar.slotView(i);
-            uiRenderer.rect(x, y, 92.0f, 36.0f, i == hotbar.selectedIndex() ? UiColor.BUTTON_HOVER : UiColor.BUTTON);
-            uiRenderer.text(String.valueOf(i + 1), x + 6.0f, y + 7.0f, 1.15f, UiColor.MUTED);
+            boolean selected = i == hotbar.selectedIndex();
+            uiRenderer.rect(x - 2.0f, y - 2.0f, 74.0f, 44.0f, selected ? UiColor.ACCENT : new UiColor(0.02f, 0.025f, 0.025f, 0.55f));
+            uiRenderer.rect(x, y, 70.0f, 40.0f, selected ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
+            uiRenderer.text(String.valueOf(i + 1), x + 5.0f, y + 6.0f, 1.05f, UiColor.MUTED);
             if (!slot.isEmpty()) {
-                drawItemIcon(slot.itemKey(), x + 24.0f, y + 4.0f, 28.0f);
-                uiRenderer.text("x" + slot.count(), x + 57.0f, y + 11.0f, 1.25f, UiColor.WHITE);
-            } else {
-                uiRenderer.text("Empty", x + 26.0f, y + 11.0f, 1.15f, UiColor.MUTED);
+                drawItemIcon(slot.itemKey(), x + 22.0f, y + 5.0f, 28.0f);
+                if (slot.count() > 1) {
+                    uiRenderer.text(String.valueOf(slot.count()), x + 53.0f, y + 23.0f, 1.15f, UiColor.WHITE);
+                }
+                if (slot.hasDurability()) {
+                    drawDurabilityBar(x + 10.0f, y + 35.0f, 50.0f, slot.durabilityLeft(), slot.maxDurability());
+                }
             }
         }
         if (settings.debugOverlayEnabled()) {
             renderDebugOverlay();
         }
+    }
+
+    private void drawMeterBar(String label, int value, int max, float x, float y, UiColor fill) {
+        float width = 128.0f;
+        float ratio = Math.max(0.0f, Math.min(1.0f, value / (float) max));
+        uiRenderer.text(label, x, y + 2.0f, 1.2f, UiColor.MUTED);
+        uiRenderer.rect(x + 78.0f, y, width, 14.0f, UiColor.SLOT);
+        uiRenderer.rect(x + 80.0f, y + 2.0f, (width - 4.0f) * ratio, 10.0f, fill);
+        uiRenderer.text(value + "/" + max, x + 214.0f, y + 2.0f, 1.05f, UiColor.WHITE);
+    }
+
+    private void drawDurabilityBar(float x, float y, float width, int value, int max) {
+        if (max <= 0) {
+            return;
+        }
+        float ratio = Math.max(0.0f, Math.min(1.0f, value / (float) max));
+        UiColor color = ratio > 0.45f ? UiColor.ACCENT : ratio > 0.18f ? UiColor.ENERGY : UiColor.HEART;
+        uiRenderer.rect(x, y, width, 3.0f, new UiColor(0.02f, 0.025f, 0.025f, 0.85f));
+        uiRenderer.rect(x, y, width * ratio, 3.0f, color);
     }
 
     private void renderChatOverlay() {
@@ -836,7 +944,18 @@ public final class GameClient {
         if (sprites == null || spriteRenderer == null || itemKey == null || itemKey.isBlank()) {
             return;
         }
-        sprites.item(itemKey).ifPresent(sprite -> spriteRenderer.sprite(sprite, x, y, size, size));
+        sprites.item(itemKey).ifPresent(sprite -> {
+            float drawWidth = size;
+            float drawHeight = size;
+            if (sprite.pixelWidth() > 0 && sprite.pixelHeight() > 0) {
+                if (sprite.pixelWidth() > sprite.pixelHeight()) {
+                    drawHeight = size * sprite.pixelHeight() / (float) sprite.pixelWidth();
+                } else if (sprite.pixelHeight() > sprite.pixelWidth()) {
+                    drawWidth = size * sprite.pixelWidth() / (float) sprite.pixelHeight();
+                }
+            }
+            spriteRenderer.sprite(sprite, x + (size - drawWidth) * 0.5f, y + (size - drawHeight) * 0.5f, drawWidth, drawHeight);
+        });
     }
 
     private void settingStepper(

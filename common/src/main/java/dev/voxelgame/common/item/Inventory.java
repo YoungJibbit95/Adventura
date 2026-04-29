@@ -71,7 +71,7 @@ public final class Inventory {
         ItemType type = items.requireById(itemId);
         for (int i = 0; i < slots.length && remaining > 0; i++) {
             ItemStack slot = slots[i];
-            if (slot.itemId() == itemId && slot.count() < type.maxStackSize()) {
+            if (slot.itemId() == itemId && slot.damage() == 0 && slot.count() < type.maxStackSize()) {
                 int moved = Math.min(remaining, type.maxStackSize() - slot.count());
                 slots[i] = new ItemStack(itemId, slot.count() + moved);
                 remaining -= moved;
@@ -110,7 +110,27 @@ public final class Inventory {
             return false;
         }
         int left = slot.count() - count;
-        slots[index] = left == 0 ? ItemStack.EMPTY : new ItemStack(slot.itemId(), left);
+        slots[index] = left == 0 ? ItemStack.EMPTY : new ItemStack(slot.itemId(), left, slot.damage());
+        return true;
+    }
+
+    public boolean damageSlot(int index, int amount, Registry<ItemType> items) {
+        if (amount <= 0) {
+            return false;
+        }
+        ItemStack slot = slots[index];
+        if (slot.isEmpty()) {
+            return false;
+        }
+        ItemType type = items.requireById(slot.itemId());
+        if (!type.isTool() || type.durability() <= 0) {
+            return false;
+        }
+        int damage = slot.damage() + amount;
+        if (damage >= type.durability()) {
+            return removeFromSlot(index, 1);
+        }
+        slots[index] = new ItemStack(slot.itemId(), slot.count(), damage);
         return true;
     }
 

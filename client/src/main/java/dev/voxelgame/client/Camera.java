@@ -31,6 +31,7 @@ public final class Camera {
     private boolean firstMouse = true;
     private double lastMouseX;
     private double lastMouseY;
+    private float lastFallImpactSpeed;
 
     public void update(long window, float deltaSeconds) {
         update(window, deltaSeconds, 1.0f);
@@ -42,6 +43,10 @@ public final class Camera {
     }
 
     public void update(long window, float deltaSeconds, float sensitivityScale, ClientWorld world, GameMode gameMode) {
+        update(window, deltaSeconds, sensitivityScale, world, gameMode, true);
+    }
+
+    public void update(long window, float deltaSeconds, float sensitivityScale, ClientWorld world, GameMode gameMode, boolean sprintAllowed) {
         updateMouse(window, sensitivityScale);
         if (world == null || !gameMode.hasCollision()) {
             updateMovement(window, deltaSeconds);
@@ -52,7 +57,7 @@ public final class Camera {
         if (gameMode.canFly()) {
             updateFlyingCollision(window, deltaSeconds, world);
         } else {
-            updateSurvivalPhysics(window, deltaSeconds, world);
+            updateSurvivalPhysics(window, deltaSeconds, world, sprintAllowed);
         }
     }
 
@@ -88,6 +93,23 @@ public final class Camera {
 
     public boolean onGround() {
         return onGround;
+    }
+
+    public float consumeFallImpactSpeed() {
+        float value = lastFallImpactSpeed;
+        lastFallImpactSpeed = 0.0f;
+        return value;
+    }
+
+    public boolean wantsSprint(long window) {
+        return glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS;
+    }
+
+    public boolean hasMovementInput(long window) {
+        return glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS
+                || glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS
+                || glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS
+                || glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
     }
 
     private void updateMouse(long window, float sensitivityScale) {
@@ -151,25 +173,41 @@ public final class Camera {
         onGround = world.collidesPlayer(position.x, position.y - 0.08f, position.z);
     }
 
-    private void updateSurvivalPhysics(long window, float deltaSeconds, ClientWorld world) {
-        float speed = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ? 8.0f : 5.2f;
+    private void updateSurvivalPhysics(long window, float deltaSeconds, ClientWorld world, boolean sprintAllowed) {
+        boolean underwater = world.isUnderwater(position);
+        boolean sprinting = sprintAllowed && wantsSprint(window) && !underwater;
+        float speed = sprinting ? 8.0f : 5.2f;
+        if (underwater) {
+            speed *= 0.58f;
+        }
         Vector3f move = movementInput(window, false);
         if (move.lengthSquared() > 0.0f) {
             move.normalize().mul(speed);
         }
         velocity.x = move.x;
         velocity.z = move.z;
-        if (onGround && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        if (underwater && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+            velocity.y = Math.max(velocity.y, 3.6f);
+        } else if (onGround && glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
             velocity.y = JUMP_SPEED;
             onGround = false;
         }
-        velocity.y -= GRAVITY * deltaSeconds;
-        velocity.y = Math.max(velocity.y, -42.0f);
+        if (underwater) {
+            velocity.y -= GRAVITY * 0.18f * deltaSeconds;
+            velocity.y *= 0.88f;
+            velocity.y = Math.max(velocity.y, -7.0f);
+        } else {
+            velocity.y -= GRAVITY * deltaSeconds;
+            velocity.y = Math.max(velocity.y, -42.0f);
+        }
 
         moveWithCollision(world, velocity.x * deltaSeconds, 0.0f, 0.0f);
         moveWithCollision(world, 0.0f, 0.0f, velocity.z * deltaSeconds);
         boolean verticalCollision = moveWithCollision(world, 0.0f, velocity.y * deltaSeconds, 0.0f);
         if (verticalCollision) {
+            if (velocity.y < -15.0f && !underwater) {
+                lastFallImpactSpeed = -velocity.y;
+            }
             onGround = velocity.y < 0.0f;
             velocity.y = 0.0f;
         } else {

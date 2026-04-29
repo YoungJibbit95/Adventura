@@ -22,7 +22,7 @@ public sealed interface GamePacket permits
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 3;
+    int PROTOCOL_VERSION = 4;
 
     PacketType type();
 

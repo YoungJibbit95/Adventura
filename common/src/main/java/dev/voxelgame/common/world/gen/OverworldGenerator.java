@@ -45,14 +45,31 @@ public final class OverworldGenerator implements WorldGenerator {
         double temperature = normalize(ValueNoise.fbm(seed ^ 0xCAFE, x, z, 3, 0.0025, 0.55));
         double moisture = normalize(ValueNoise.fbm(seed ^ 0xBEEF, x, z, 3, 0.0028, 0.55));
         double ridge = ValueNoise.fbm(seed ^ 0x7711, x, z, 4, 0.004, 0.5);
+        double flower = ValueNoise.fbm(seed ^ 0xF10AEL, x, z, 3, 0.006, 0.52);
+        double ruin = normalize(ValueNoise.fbm(seed ^ 0x0D12115L, x, z, 2, 0.0018, 0.6));
+        if (riverStrength(x, z) > 0.58 && temperature > 0.36) {
+            return biomes.requireByKey("voxel:lakeside");
+        }
         if (temperature < 0.30 && ridge > 0.12) {
             return biomes.requireByKey("voxel:frost_peaks");
         }
         if (temperature > 0.72 && moisture < 0.35) {
             return biomes.requireByKey("voxel:sun_dunes");
         }
+        if (ruin > 0.88 && ridge > 0.10) {
+            return biomes.requireByKey("voxel:old_ruins");
+        }
+        if (moisture > 0.80 && temperature > 0.38 && temperature < 0.70) {
+            return biomes.requireByKey("voxel:mushroom_grove");
+        }
         if (moisture > 0.78 && temperature > 0.42) {
             return biomes.requireByKey("voxel:mire");
+        }
+        if (temperature > 0.55 && moisture > 0.44 && flower > 0.28) {
+            return biomes.requireByKey("voxel:flower_fields");
+        }
+        if (moisture > 0.56 && temperature < 0.58) {
+            return biomes.requireByKey("voxel:pine_forest");
         }
         if (moisture > 0.62) {
             return biomes.requireByKey("voxel:skyroot_forest");
@@ -60,7 +77,7 @@ public final class OverworldGenerator implements WorldGenerator {
         if (ridge > 0.42) {
             return biomes.requireByKey("voxel:highlands");
         }
-        return biomes.requireByKey("voxel:meadow");
+        return biomes.requireByKey("voxel:cozy_meadow");
     }
 
     public int terrainHeight(int x, int z, BiomeType biome) {
@@ -83,6 +100,15 @@ public final class OverworldGenerator implements WorldGenerator {
         } else if ("voxel:mire".equals(biome.key())) {
             base -= 6;
             base = (int) Math.round(base * 0.82 + (SEA_LEVEL + 2) * 0.18);
+        } else if ("voxel:lakeside".equals(biome.key())) {
+            base -= 4;
+            base = (int) Math.round(base * 0.70 + (SEA_LEVEL + 3) * 0.30);
+        } else if ("voxel:mushroom_grove".equals(biome.key())) {
+            base -= 2;
+        } else if ("voxel:flower_fields".equals(biome.key())) {
+            base -= 3;
+        } else if ("voxel:old_ruins".equals(biome.key())) {
+            base += 5;
         }
         double river = riverStrength(x, z);
         if (river > 0.0) {
@@ -118,7 +144,7 @@ public final class OverworldGenerator implements WorldGenerator {
         }
 
         double chance = normalize(ValueNoise.hashUnit(seed ^ 0x51A7, x, z));
-        if ("voxel:frost_peaks".equals(biome.key()) && chance < biome.treeChance() && canPlaceTree(chunk, x, height + 1, z)) {
+        if (("voxel:frost_peaks".equals(biome.key()) || "voxel:pine_forest".equals(biome.key())) && chance < biome.treeChance() && canPlaceTree(chunk, x, height + 1, z)) {
             placePineTree(chunk, x, height + 1, z);
             return;
         }
@@ -131,10 +157,23 @@ public final class OverworldGenerator implements WorldGenerator {
         double plantChance = normalize(ValueNoise.hashUnit(seed ^ 0x61B7, x, z));
         if (plantChance < biome.plantChance()) {
             short plant = plantChance < biome.plantChance() * 0.15 ? Blocks.SUN_BLOOM : Blocks.WILD_GRASS;
-            if ("voxel:mire".equals(biome.key()) && plantChance < biome.plantChance() * 0.35) {
+            if (("voxel:mire".equals(biome.key()) || "voxel:mushroom_grove".equals(biome.key())) && plantChance < biome.plantChance() * 0.55) {
                 plant = Blocks.RED_MUSHROOM;
+            } else if ("voxel:flower_fields".equals(biome.key()) && plantChance < biome.plantChance() * 0.60) {
+                plant = Blocks.SUN_BLOOM;
+            } else if ("voxel:lakeside".equals(biome.key()) && plantChance < biome.plantChance() * 0.35) {
+                plant = Blocks.BERRY_BUSH;
             }
             chunk.setBlockId(x, height + 1, z, plant);
+        }
+
+        double detailChance = normalize(ValueNoise.hashUnit(seed ^ 0xC07ED11L, x, z));
+        if (detailChance < 0.009 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, Blocks.SMALL_STONE);
+        } else if (detailChance >= 0.009 && detailChance < 0.014 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, Blocks.BERRY_BUSH);
+        } else if (detailChance >= 0.014 && detailChance < 0.018 && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+            chunk.setBlockId(x, height + 1, z, Blocks.HERB_PLANTER);
         }
 
         if ("voxel:sun_dunes".equals(biome.key())) {
@@ -142,15 +181,15 @@ public final class OverworldGenerator implements WorldGenerator {
             if (cactusChance < 0.012 && canPlaceArea(chunk, x, height + 1, z, 4, 0)) {
                 placeCactus(chunk, x, height + 1, z, 2 + (int) Math.floor(cactusChance * 180.0));
             }
-        } else if ("voxel:highlands".equals(biome.key())) {
+        } else if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
             double boulderChance = normalize(ValueNoise.hashUnit(seed ^ 0xB011L, x, z));
             if (boulderChance < 0.008 && canPlaceArea(chunk, x, height + 1, z, 3, 2)) {
                 placeBoulder(chunk, x, height + 1, z);
             }
-        } else if ("voxel:mire".equals(biome.key())) {
+        } else if ("voxel:mire".equals(biome.key()) || "voxel:mushroom_grove".equals(biome.key())) {
             double stumpChance = normalize(ValueNoise.hashUnit(seed ^ 0x57ADEL, x, z));
             if (stumpChance < 0.010 && canPlaceArea(chunk, x, height + 1, z, 2, 1)) {
-                chunk.setBlockId(x, height + 1, z, Blocks.SKYROOT_LOG);
+                chunk.setBlockId(x, height + 1, z, Blocks.TREE_STUMP);
                 chunk.setBlockId(x, height + 2, z, Blocks.RED_MUSHROOM);
             }
         }
@@ -162,7 +201,7 @@ public final class OverworldGenerator implements WorldGenerator {
         BiomeType biome = biomeAt(centerX, centerZ);
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, chunk.pos().x(), chunk.pos().z()));
         double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, chunk.pos().x(), chunk.pos().z()));
-        if (("voxel:meadow".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.0025) {
+        if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.0025) {
             int groundY = terrainHeight(centerX, centerZ, biome) + 1;
             Structures.compactVillage().placeIntoChunk(chunk, centerX, groundY, centerZ);
             return;
@@ -173,7 +212,7 @@ public final class OverworldGenerator implements WorldGenerator {
         int groundY = terrainHeight(centerX, centerZ, biome) + 1;
         if ("voxel:sun_dunes".equals(biome.key())) {
             Structures.desertWell().placeIntoChunk(chunk, centerX, groundY, centerZ);
-        } else if ("voxel:meadow".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) {
+        } else if ("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:lakeside".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) {
             if (roll < biome.structureChance() * 0.35) {
                 Structures.campsite().placeIntoChunk(chunk, centerX, groundY, centerZ);
             } else {
@@ -181,8 +220,10 @@ public final class OverworldGenerator implements WorldGenerator {
             }
         } else if ("voxel:frost_peaks".equals(biome.key())) {
             Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
-        } else if ("voxel:highlands".equals(biome.key())) {
+        } else if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
             Structures.watchtower().placeIntoChunk(chunk, centerX, groundY, centerZ);
+        } else if ("voxel:mushroom_grove".equals(biome.key())) {
+            Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
         } else {
             Structures.smallRuin().placeIntoChunk(chunk, centerX, groundY, centerZ);
         }

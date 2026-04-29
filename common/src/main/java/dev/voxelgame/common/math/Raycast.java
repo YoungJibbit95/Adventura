@@ -25,7 +25,7 @@ public final class Raycast {
                 continue;
             }
             BlockType block = world.blockType(world.blockId(x, y, z));
-            if (block.collidable()) {
+            if (isTargetable(block)) {
                 int faceX;
                 int faceY;
                 int faceZ;
@@ -51,6 +51,10 @@ public final class Raycast {
 
     private static int manhattan(int ax, int ay, int az, int bx, int by, int bz) {
         return Math.abs(ax - bx) + Math.abs(ay - by) + Math.abs(az - bz);
+    }
+
+    private static boolean isTargetable(BlockType block) {
+        return block.id() != 0 && (block.collidable() || block.dropItemKey() != null);
     }
 
     private static Axis dominantAxis(Vector3d direction) {

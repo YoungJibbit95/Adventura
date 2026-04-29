@@ -35,12 +35,16 @@ Offline preview generation loads chunks around the camera as it moves. Online cl
 
 ## World Content
 
-The Overworld generator combines continent, erosion, ridge, river and detail noise. Biomes choose surface blocks, trees, plants, structures and ambient entity types. Current content covers meadows, skyroot forests, sun dunes, highlands, frost peaks, mires, caves, ore veins, cacti, boulders, campsites, watchtowers, ruins, desert wells, houses and compact village structures.
+The Overworld generator combines continent, erosion, ridge, river and detail noise. Biomes choose surface blocks, trees, plants, structures and ambient entity types. Current content covers meadows, cozy meadows, flower fields, pine forests, mushroom groves, lakesides, old ruins, skyroot forests, sun dunes, highlands, frost peaks, mires, caves, ore veins, cacti, small stones, berry bushes, herb patches, tree stumps, boulders, campsites, watchtowers, ruins, desert wells, decorated houses and compact village structures.
 
 ## Player Simulation
 
-The client currently owns local-feel movement while the server remains the authority for networked world edits and inventories. Survival mode uses collision, gravity and jumping; creative keeps collision but allows flying; spectator has free no-clip movement. HUD stats track health, hunger, armor and underwater breath so the survival loop has a place to grow without changing the UI shape again.
+The client currently owns local-feel movement while the server remains the authority for networked world edits and inventories. Survival mode uses collision, gravity, jumping, stamina-limited sprinting, swimming water movement, food regeneration and fall damage; creative keeps collision but allows flying; spectator has free no-clip movement. HUD stats track health, hunger, stamina, armor and underwater breath so the survival loop has a place to grow without changing the UI shape again.
 
 ## Client UI
 
-The client has main, pause, settings, crafting/inventory and chat states plus the separate launcher app. Chat opens on `T`; slash-prefixed commands are handled client-side for debug, gamemode and runtime settings, while normal messages can be sent through the existing network chat packet. The HUD includes crosshair, hotbar, selected item, health, hunger, armor, breath, mode and optional debug information. UI rendering now has a separate sprite pass for item icons, so hotbar/crafting/inventory can render sheet-based icons while the bitmap text and panels stay in the lightweight immediate UI layer.
+The client has main, pause, settings, crafting/inventory and chat states plus the separate launcher app. Chat opens on `T`; slash-prefixed commands are handled client-side for debug, gamemode and runtime settings, while normal messages can be sent through the existing network chat packet. The HUD includes crosshair, tabbed crafting/inventory surfaces, improved hotbar selection, stack counts, durability bars, selected-item tooltips, health, hunger, stamina, armor, breath, mode and optional debug information. UI rendering now has a separate sprite pass for item icons, so hotbar/crafting/inventory can render sheet-based icons while the bitmap text and panels stay in the lightweight immediate UI layer.
+
+## Feedback Hooks
+
+The client has a small no-op `GameAudio` hook with named cues for inventory clicks, block break/place, crafting, eating, footsteps, campfires and ambience. It intentionally does not bind to an audio backend yet, but gameplay code can now fire stable cue names when real sound loading is added.

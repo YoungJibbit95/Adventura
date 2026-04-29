@@ -200,6 +200,7 @@ public final class PacketCodec {
         for (ItemStack stack : stacks) {
             out.writeShort(stack.itemId());
             out.writeInt(stack.count());
+            out.writeInt(stack.damage());
         }
     }
 
@@ -207,7 +208,7 @@ public final class PacketCodec {
         int length = checkedLength(in.readInt());
         List<ItemStack> stacks = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
-            stacks.add(new ItemStack(in.readShort(), in.readInt()));
+            stacks.add(new ItemStack(in.readShort(), in.readInt(), in.readInt()));
         }
         return stacks;
     }
