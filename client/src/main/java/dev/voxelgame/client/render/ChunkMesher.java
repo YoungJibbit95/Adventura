@@ -309,6 +309,7 @@ public final class ChunkMesher {
             vertices.add(light);
             int[] aoOrigin = aoSampleOrigin(x, y, z, mergedCorner, uAxis, vAxis, width, height);
             vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, aoOrigin[0], aoOrigin[1], aoOrigin[2], face, mergedCorner) : 1.0f);
+            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, x, y, z, face, mergedCorner) : 1.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
             vertices.add(uv[1]);
