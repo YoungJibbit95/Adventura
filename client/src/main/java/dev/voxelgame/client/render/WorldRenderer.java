@@ -32,6 +32,7 @@ public final class WorldRenderer implements AutoCloseable {
     private final Map<ChunkPos, GpuChunkMesh> opaqueMeshes = new HashMap<>();
     private final Map<ChunkPos, GpuChunkMesh> cutoutMeshes = new HashMap<>();
     private final Map<ChunkPos, GpuChunkMesh> transparentMeshes = new HashMap<>();
+    private final Map<ChunkPos, Boolean> visibilityCache = new HashMap<>();
     private final float[] blockColorAlphaTable = BlockRenderProperties.shaderColorAlphaTable();
     private final float[] blockEffectsTable = BlockRenderProperties.shaderEffectsTable();
 

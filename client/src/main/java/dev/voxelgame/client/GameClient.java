@@ -1925,7 +1925,7 @@ public final class GameClient {
         }
     }
 
-    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, float x, float y) {
+    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
         float uiScale = settings.uiScale();
         float slot = 42.0f * uiScale;
         float gap = 6.0f * uiScale;

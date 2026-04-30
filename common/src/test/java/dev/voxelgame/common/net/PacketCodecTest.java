@@ -13,6 +13,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketCodecTest {
@@ -221,6 +222,16 @@ class PacketCodecTest {
         assertEquals(-9, decoded.stationZ());
         assertEquals("voxel:cooked_berries", decoded.recipeKey());
         assertEquals(List.of(3, 5), decoded.inputSlots());
+    }
+
+    @Test
+    void rejectsTrailingBytesAfterValidPacket() {
+        byte[] encoded = PacketCodec.encode(new GamePacket.Chat("hello"));
+        byte[] withTrailing = new byte[encoded.length + 1];
+        System.arraycopy(encoded, 0, withTrailing, 0, encoded.length);
+        withTrailing[withTrailing.length - 1] = 42;
+
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(withTrailing));
     }
 
     @Test
