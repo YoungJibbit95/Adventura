@@ -62,6 +62,7 @@ class PlayerStatsTest {
     @Test
     void deathBlocksActionsUntilRespawn() {
         PlayerStats stats = new PlayerStats();
+        stats.applyComfort(30);
 
         stats.hurt(100);
 
@@ -77,5 +78,6 @@ class PlayerStatsTest {
         assertEquals(20, stats.hunger());
         assertEquals(20, stats.stamina());
         assertEquals(20, stats.breath());
+        assertEquals(0, stats.comfort());
     }
 }
