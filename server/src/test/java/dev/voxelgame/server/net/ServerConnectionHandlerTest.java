@@ -561,6 +561,31 @@ class ServerConnectionHandlerTest {
         }
     }
 
+    @Test
+    void chatBroadcastDoesNotSendToUnauthenticatedConnections() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel loggedIn = loggedInChannel(world);
+        EmbeddedChannel unauthenticated = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(SECOND_PLAYER_ID),
+                new ServerEntityTracker()
+        ));
+        try {
+            drainOutbound(loggedIn);
+            drainOutbound(unauthenticated);
+
+            loggedIn.writeInbound(new GamePacket.Chat("hello"));
+
+            Object loggedInPacket = loggedIn.readOutbound();
+            Object unauthenticatedPacket = unauthenticated.readOutbound();
+            assertTrue(loggedInPacket instanceof GamePacket.Chat);
+            assertFalse(unauthenticatedPacket instanceof GamePacket.Chat);
+        } finally {
+            loggedIn.finishAndReleaseAll();
+            unauthenticated.finishAndReleaseAll();
+        }
+    }
+
     private static EmbeddedChannel loggedInChannel(ServerWorld world) {
         return loggedInChannel(world, new ServerEntityTracker());
     }

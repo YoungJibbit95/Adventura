@@ -80,6 +80,7 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 
 ### Interest Management
 - Entity-Snapshots nicht global an alle Spieler senden.
+- Fortschritt: Broadcasts gehen nur noch an authentifizierte Verbindungen (nicht mehr an Pre-Login Channels).
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.
