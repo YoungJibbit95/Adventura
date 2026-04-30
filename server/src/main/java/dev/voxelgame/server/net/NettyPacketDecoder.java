@@ -27,6 +27,7 @@ public final class NettyPacketDecoder extends ByteToMessageDecoder {
             throw new IllegalArgumentException("Packet length below minimum header size: " + packetLength);
         }
         if (packetLength > MAX_PACKET_SIZE) {
+        if (packetLength > PacketCodec.MAX_PACKET_SIZE) {
             throw new IllegalArgumentException("Packet length exceeds limit: " + packetLength);
         }
         if (in.readableBytes() < packetLength) {

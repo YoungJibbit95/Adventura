@@ -182,6 +182,7 @@ public final class GameClient {
     private int draggedInventorySlot = -1;
     private int storageTransactionId;
     private boolean previousUnderwater;
+    private boolean headUnderwaterNow;
     private double nextAmbientParticleSourceScanTime;
     private double nextStepAudioTime;
     private double nextAmbientAudioTime;
@@ -284,8 +285,9 @@ public final class GameClient {
                     playerStats.hurt(Math.round((fallImpact - 12.0f) * 0.55f));
                 }
                 PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(camera.position());
+                headUnderwaterNow = water.headUnderwater();
                 refreshLocalComfort(now);
-                playerStats.tick(deltaSeconds, gameMode, water.headUnderwater(), sprinting, moving);
+                playerStats.tick(deltaSeconds, gameMode, headUnderwaterNow, sprinting, moving);
                 emitComfortFeedback();
                 emitRecipeUnlockFeedback(now);
                 handleDeathIfNeeded();
@@ -2140,11 +2142,11 @@ public final class GameClient {
         uiRenderer.text("BIOME " + clampText(biome, 20), 18.0f * uiScale, 18.0f * uiScale, 1.0f * uiScale, UiColor.MUTED);
         uiRenderer.text("TEMP " + temperatureLabel(biomeKey), 18.0f * uiScale, 34.0f * uiScale, 0.95f * uiScale, UiColor.MUTED);
         renderFeedbackOverlay(framebufferWidth * 0.5f, statsY - 66.0f * uiScale);
-        if (playerStats.breath() < 20) {
+        if (headUnderwaterNow || playerStats.breath() < 20) {
             drawStatStrip("AIR", "air_full", "air_half", "air_empty", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, statsY - 28.0f * uiScale, statWidth, 10.5f * uiScale, UiColor.WATER);
         }
         if (playerStats.armor() > 0) {
-            float armorY = playerStats.breath() < 20 ? statsY - 54.0f * uiScale : statsY - 28.0f * uiScale;
+            float armorY = (headUnderwaterNow || playerStats.breath() < 20) ? statsY - 54.0f * uiScale : statsY - 28.0f * uiScale;
             drawStatStrip("ARMOR", "armor_full", "armor_half", "armor_empty", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, armorY, statWidth, 10.5f * uiScale, UiColor.MUTED);
         }
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {
