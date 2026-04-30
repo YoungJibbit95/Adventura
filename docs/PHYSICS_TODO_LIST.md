@@ -90,7 +90,7 @@ Unit:
 Integration:
 - server rejects impossible movement.
 - server rejects far interaction.
-- server rejects placement inside player.
+- ~~server rejects placement inside player.~~ ✅ Abgedeckt durch Server-Connection-Test für Block-Placement in Player-AABB.
 - multiplayer movement snapshots stay plausible.
 
 ## Akzeptanzkriterien

@@ -3,8 +3,11 @@ package dev.voxelgame.client.net;
 import dev.voxelgame.common.net.GamePacket;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 public final class ClientNetworkStats {
+    private final LongSupplier nanoTimeSource;
+    private final long startNanos;
     private final AtomicLong sentPackets = new AtomicLong();
     private final AtomicLong receivedPackets = new AtomicLong();
     private final AtomicLong chunkPackets = new AtomicLong();
@@ -13,6 +16,15 @@ public final class ClientNetworkStats {
     private final AtomicLong inventoryPackets = new AtomicLong();
     private final AtomicLong storageOpenPackets = new AtomicLong();
     private final AtomicLong chatPackets = new AtomicLong();
+
+    public ClientNetworkStats() {
+        this(System::nanoTime);
+    }
+
+    ClientNetworkStats(LongSupplier nanoTimeSource) {
+        this.nanoTimeSource = nanoTimeSource;
+        this.startNanos = nanoTimeSource.getAsLong();
+    }
 
     public void recordSent(GamePacket packet) {
         if (packet != null) {
@@ -38,9 +50,14 @@ public final class ClientNetworkStats {
     }
 
     public Snapshot snapshot() {
+        double elapsedSeconds = Math.max(1e-9, (nanoTimeSource.getAsLong() - startNanos) / 1_000_000_000.0);
+        long sent = sentPackets.get();
+        long received = receivedPackets.get();
         return new Snapshot(
-                sentPackets.get(),
-                receivedPackets.get(),
+                sent,
+                received,
+                sent / elapsedSeconds,
+                received / elapsedSeconds,
                 chunkPackets.get(),
                 blockUpdatePackets.get(),
                 entitySnapshotPackets.get(),
@@ -53,6 +70,8 @@ public final class ClientNetworkStats {
     public record Snapshot(
             long sentPackets,
             long receivedPackets,
+            double sentPacketsPerSecond,
+            double receivedPacketsPerSecond,
             long chunkPackets,
             long blockUpdatePackets,
             long entitySnapshotPackets,
@@ -61,7 +80,7 @@ public final class ClientNetworkStats {
             long chatPackets
     ) {
         public static Snapshot offline() {
-            return new Snapshot(0, 0, 0, 0, 0, 0, 0, 0);
+            return new Snapshot(0, 0, 0.0, 0.0, 0, 0, 0, 0, 0, 0);
         }
     }
 }
