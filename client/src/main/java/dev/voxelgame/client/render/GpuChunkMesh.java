@@ -75,6 +75,9 @@ public final class GpuChunkMesh implements AutoCloseable {
     }
 
     public void draw() {
+        if (closed) {
+            throw new IllegalStateException("Attempted to draw a closed chunk mesh");
+        }
         if (indexCount == 0) {
             return;
         }

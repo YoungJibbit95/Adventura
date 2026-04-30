@@ -21,19 +21,23 @@ public final class FeedbackLog {
         if (message == null || message.isBlank()) {
             return;
         }
+        entries.removeIf(entry -> entry.expiresAtSeconds <= nowSeconds);
         double expiresAt = nowSeconds + Math.max(0.2, durationSeconds);
-        Entry existing = null;
-        for (Entry entry : entries) {
-            if (entry.expiresAtSeconds <= nowSeconds) {
+        int duplicateIndex = -1;
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            Entry entry = entries.get(i);
+            if (!entry.message.equals(message)) {
                 continue;
             }
-            if (entry.message.equals(message)) {
-                existing = entry;
+            if (duplicateIndex == -1) {
+                duplicateIndex = i;
+                expiresAt = Math.max(entry.expiresAtSeconds, expiresAt);
+                continue;
             }
+            entries.remove(i);
         }
-        if (existing != null) {
-            entries.remove(existing);
-            entries.addLast(existing.refresh(expiresAt));
+        if (duplicateIndex >= 0) {
+            entries.set(duplicateIndex, new Entry(message, expiresAt));
             return;
         }
         entries.add(new Entry(message, expiresAt));
@@ -56,7 +60,7 @@ public final class FeedbackLog {
     }
 
     private static boolean isImportantMessage(String message) {
-        String lower = message.toLowerCase(Locale.ROOT);
+        String lower = message.toLowerCase();
         return lower.contains("unlock")
                 || lower.contains("discovered")
                 || lower.contains("lore")

@@ -106,6 +106,9 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setFloat("uShadowStrength", settings.softShadowsEnabled() ? 0.38f : 0.20f);
         shader.setFloat("uBloomStrength", settings.bloomStrength());
         shader.setVector3("uFogColor", new Vector3f(settings.skyR(), settings.skyG(), settings.skyB()));
+        float skyLuma = settings.skyR() * 0.2126f + settings.skyG() * 0.7152f + settings.skyB() * 0.0722f;
+        float globalBrightness = Math.max(0.35f, Math.min(1.0f, 0.30f + skyLuma * 0.90f));
+        shader.setFloat("uGlobalBrightness", globalBrightness);
         shader.setVector4Array("uBlockColorAlpha[0]", blockColorAlphaTable);
         shader.setVector4Array("uBlockEffects[0]", blockEffectsTable);
         blockTextureAtlas.bindAndApply(shader, 0);
@@ -114,11 +117,12 @@ public final class WorldRenderer implements AutoCloseable {
         int renderedTransparent = 0;
         int culledMeshes = 0;
         Set<ChunkPos> culledPositions = new HashSet<>();
+        Map<ChunkPos, Boolean> visibilityCache = new HashMap<>();
         int drawCalls = 0;
         int triangles = 0;
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : opaqueMeshes.entrySet()) {
             ChunkPos pos = entry.getKey();
-            if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
+            if (!isVisibleChunk(pos, cameraPosition, settings.renderDistanceChunks(), frustum, world, visibilityCache)) {
                 culledMeshes++;
                 culledPositions.add(pos);
                 continue;
@@ -131,7 +135,7 @@ public final class WorldRenderer implements AutoCloseable {
         }
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : cutoutMeshes.entrySet()) {
             ChunkPos pos = entry.getKey();
-            if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
+            if (!isVisibleChunk(pos, cameraPosition, settings.renderDistanceChunks(), frustum, world, visibilityCache)) {
                 culledMeshes++;
                 culledPositions.add(pos);
                 continue;
@@ -146,7 +150,7 @@ public final class WorldRenderer implements AutoCloseable {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(false);
         for (ChunkPos pos : transparentRenderOrder(transparentMeshes.keySet(), cameraPosition)) {
-            if (!withinRenderDistance(pos, cameraPosition, settings.renderDistanceChunks()) || !insideFrustum(frustum, world, pos)) {
+            if (!isVisibleChunk(pos, cameraPosition, settings.renderDistanceChunks(), frustum, world, visibilityCache)) {
                 culledMeshes++;
                 culledPositions.add(pos);
                 continue;
@@ -199,6 +203,20 @@ public final class WorldRenderer implements AutoCloseable {
             mesh.close();
         }
         target.clear();
+    }
+
+    private static boolean isVisibleChunk(
+            ChunkPos pos,
+            Vector3f cameraPosition,
+            int renderDistanceChunks,
+            FrustumIntersection frustum,
+            ClientWorld world,
+            Map<ChunkPos, Boolean> visibilityCache
+    ) {
+        return visibilityCache.computeIfAbsent(
+                pos,
+                key -> withinRenderDistance(key, cameraPosition, renderDistanceChunks) && insideFrustum(frustum, world, key)
+        );
     }
 
     private long meshBytes() {

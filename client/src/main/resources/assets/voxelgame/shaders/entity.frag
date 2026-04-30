@@ -12,6 +12,7 @@ void main() {
     float wrapped = 0.46 + lambert * 0.54;
     float topWarmth = clamp(vHeight, 0.0, 1.0) * 0.08;
     vec3 lit = uBaseColor * (wrapped + topWarmth);
-    vec3 emissive = uBaseColor * (0.85 + sin(gl_FragCoord.x * 0.05 + gl_FragCoord.y * 0.03) * 0.05);
+    float emissivePulse = 0.85 + sin(vHeight * 7.0) * 0.05;
+    vec3 emissive = uBaseColor * emissivePulse;
     fragColor = vec4(mix(lit, emissive, clamp(uEmissive, 0.0, 1.0)), 1.0);
 }

@@ -73,10 +73,9 @@ Kategorien:
 
 Regeln:
 - kurze Meldungen.
-- ~~gleiche Meldungen zusammenfassen.~~ ✅ Erledigt (FeedbackLog aggregiert Wiederholungen als `xN`).
+- gleiche Meldungen zusammenfassen.
 - ~~Cooldown gegen Spam.~~ ✅ Erledigt (FeedbackLog merged doppelte aktive Meldungen und refreshed Dauer).
-- ~~wichtige Meldungen länger sichtbar.~~ ✅ Erledigt (wichtige Kategorien bekommen längere Default-Dauer im FeedbackLog).
-- [ ] Prioritäts-Mapping ausbaubar machen (konfigurierbare wichtige Kategorien statt String-Matching im Code).
+- wichtige Meldungen länger sichtbar.
 
 ## P6 – Debug HUD
 

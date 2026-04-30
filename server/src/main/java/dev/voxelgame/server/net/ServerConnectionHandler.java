@@ -37,10 +37,12 @@ import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public final class ServerConnectionHandler extends SimpleChannelInboundHandler<GamePacket> {
     private static final int STREAM_RADIUS_CHUNKS = 4;
     private static final double ENTITY_INTERACT_RANGE = 6.0;
+    private static final double ENTITY_SNAPSHOT_RADIUS = 96.0;
     private static final double INITIAL_MOVE_SYNC_RADIUS = 128.0;
     private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
     private static final ChannelGroup CHANNELS = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
@@ -119,7 +121,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             }
             case GamePacket.Chat chat -> {
                 if (loggedIn) {
-                    CHANNELS.writeAndFlush(chat);
+                    broadcastToLoggedIn(chat);
                 }
             }
             default -> {
@@ -134,6 +136,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void handleLogin(ChannelHandlerContext ctx, GamePacket.LoginRequest login) {
+        if (loggedIn) {
+            ctx.writeAndFlush(new GamePacket.LoginRejected("Already logged in")).addListener(future -> ctx.close());
+            return;
+        }
         AuthResult result = authProvider.authenticate(login.username(), login.authToken());
         if (!result.accepted()) {
             ctx.writeAndFlush(new GamePacket.LoginRejected(result.message())).addListener(future -> ctx.close());
@@ -201,7 +207,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             dropItemId.ifPresent(itemId -> inventory.add(itemId, dropCount, items));
             inventory.damageSlot(action.selectedSlot(), InteractionRules.toolDamage(selected, items, target), items);
             nextBlockActionTime = now + InteractionRules.breakDelaySeconds(target, multiplier);
-            CHANNELS.writeAndFlush(update);
+            broadcastToLoggedInWorld(update);
             sendInventory(ctx);
         }, () -> sendInventory(ctx));
     }
@@ -226,7 +232,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         world.applyBlockAction(action).ifPresentOrElse(update -> {
             inventory.removeFromSlot(action.selectedSlot(), 1);
             nextBlockActionTime = now + 0.12;
-            CHANNELS.writeAndFlush(update);
+            broadcastToLoggedInWorld(update);
             sendInventory(ctx);
         }, () -> sendInventory(ctx));
     }
@@ -392,7 +398,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
-        world.tickCampfires(now).forEach(CHANNELS::writeAndFlush);
+        world.tickCampfires(now).forEach(this::broadcastToLoggedInWorld);
         Optional<BlockType> station = world.blockAt(cook.stationX(), cook.stationY(), cook.stationZ());
         if (station.isEmpty() || !CampfireRules.isActiveCampfire(station.get().id())) {
             sendInventory(ctx);
@@ -449,8 +455,13 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private boolean isNextStorageTransaction(int transactionId) {
-        return transactionId > lastStorageTransactionId
-                || (lastStorageTransactionId == Integer.MAX_VALUE && transactionId == 1);
+        if (transactionId < 1) {
+            return false;
+        }
+        if (lastStorageTransactionId == Integer.MAX_VALUE) {
+            return transactionId == 1;
+        }
+        return transactionId == lastStorageTransactionId + 1;
     }
 
     private boolean tryFuelCampfire(ChannelHandlerContext ctx, GamePacket.BlockInteract interact, BlockType targetBlock, double now) {
@@ -473,7 +484,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return true;
         }
         world.fuelCampfire(interact.targetX(), interact.targetY(), interact.targetZ(), now, fuelSeconds.getAsDouble())
-                .ifPresent(CHANNELS::writeAndFlush);
+                .ifPresent(this::broadcastToLoggedInWorld);
         nextBlockActionTime = now + 0.25;
         sendInventory(ctx);
         return true;
@@ -498,7 +509,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         nextEntityInteractTime = now + 0.35;
-        CHANNELS.writeAndFlush(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
         sendInventory(ctx);
     }
 
@@ -559,7 +570,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         if (recipe.stationType() == CraftingStationType.CAMPFIRE) {
             double now = System.nanoTime() / 1_000_000_000.0;
-            world.tickCampfires(now).forEach(CHANNELS::writeAndFlush);
+            world.tickCampfires(now).forEach(this::broadcastToLoggedInWorld);
         }
         Optional<BlockType> station = world.blockAt(craft.stationX(), craft.stationY(), craft.stationZ());
         if (recipe.stationType() == CraftingStationType.CAMPFIRE
@@ -571,7 +582,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     public static void broadcast(GamePacket packet) {
-        CHANNELS.writeAndFlush(packet);
+        broadcastToLoggedIn(packet);
     }
 
     public static void tickCookingJobs(double nowSeconds) {
@@ -584,7 +595,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (pendingCook == null || context == null || !loggedIn || nowSeconds < pendingCook.completeAtSeconds()) {
             return;
         }
-        world.tickCampfires(nowSeconds).forEach(CHANNELS::writeAndFlush);
+        world.tickCampfires(nowSeconds).forEach(this::broadcastToLoggedInWorld);
         Optional<BlockType> station = world.blockAt(pendingCook.stationX(), pendingCook.stationY(), pendingCook.stationZ());
         if (station.isEmpty() || !CampfireRules.isActiveCampfire(station.get().id())) {
             return;
@@ -662,7 +673,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         entityTracker.updatePlayer(playerId, move.x(), move.y(), move.z(), move.yaw(), move.pitch());
         streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(move.x()), (int) Math.floor(move.z())));
         sendPlayerStats(ctx, now, false);
-        CHANNELS.writeAndFlush(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private boolean acceptPlayerMove(GamePacket.PlayerMove move, double now) {
@@ -730,7 +741,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void broadcastEntitySnapshots() {
-        CHANNELS.writeAndFlush(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private void streamChunksAround(ChannelHandlerContext ctx, ChunkPos center) {
@@ -741,6 +752,27 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                     ctx.writeAndFlush(world.packetFor(pos));
                 }
             }
+        }
+    }
+
+    private static void broadcastToLoggedIn(GamePacket packet) {
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            ChannelHandlerContext ctx = handler.context;
+            if (ctx == null || !handler.loggedIn) {
+                continue;
+            }
+            ctx.writeAndFlush(packet);
+        }
+    }
+
+
+    private void broadcastToLoggedInWorld(GamePacket packet) {
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            ChannelHandlerContext ctx = handler.context;
+            if (ctx == null || !handler.loggedIn || handler.world != world) {
+                continue;
+            }
+            ctx.writeAndFlush(packet);
         }
     }
 
