@@ -478,6 +478,35 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void loginRejectsSecondLoginAttemptOnSameConnection() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+
+            channel.writeInbound(new GamePacket.LoginRequest("TesterAgain", "dev-token"));
+
+            Object outbound;
+            GamePacket.LoginRejected rejected = null;
+            while ((outbound = channel.readOutbound()) != null) {
+                if (outbound instanceof GamePacket.LoginRejected loginRejected) {
+                    rejected = loginRejected;
+                }
+            }
+
+            assertTrue(rejected != null && "Already logged in".equals(rejected.reason()));
+            assertFalse(channel.isActive());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveRejectsExtremeTeleportAfterAcceptedMove() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
