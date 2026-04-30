@@ -38,6 +38,7 @@ Das HUD soll die wichtigsten Survival-, Comfort-, Welt- und Feedback-Information
 - kurze Erklärung im Tooltip.
 - bei neuem Comfort-Level einmalige Meldung.
 - Quellen optional anzeigen: Campfire +5, Rug +3, Lantern +3.
+- ~~Comfort-Status nach Respawn korrekt zurücksetzen (kein stale Comfort-Wert).~~ ✅ Erledigt.
 
 ## P3 – Weltinformationen
 
