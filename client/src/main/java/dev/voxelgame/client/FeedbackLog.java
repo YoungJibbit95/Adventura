@@ -1,8 +1,6 @@
 package dev.voxelgame.client;
 
 import java.util.ArrayList;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 
@@ -10,7 +8,7 @@ public final class FeedbackLog {
     private static final int MAX_ENTRIES = 6;
     private static final double DEFAULT_DURATION_SECONDS = 3.4;
 
-    private final Deque<Entry> entries = new ArrayDeque<>();
+    private final List<Entry> entries = new ArrayList<>();
 
     public synchronized void add(String message, double nowSeconds) {
         double duration = isImportantMessage(message) ? DEFAULT_DURATION_SECONDS + 1.8 : DEFAULT_DURATION_SECONDS;
@@ -24,25 +22,28 @@ public final class FeedbackLog {
         entries.removeIf(entry -> entry.expiresAtSeconds <= nowSeconds);
         double expiresAt = nowSeconds + Math.max(0.2, durationSeconds);
         int duplicateIndex = -1;
+        Entry primaryDuplicate = null;
         for (int i = entries.size() - 1; i >= 0; i--) {
             Entry entry = entries.get(i);
             if (!entry.message.equals(message)) {
                 continue;
             }
-            if (duplicateIndex == -1) {
+            if (primaryDuplicate == null) {
                 duplicateIndex = i;
+                primaryDuplicate = entry;
                 expiresAt = Math.max(entry.expiresAtSeconds, expiresAt);
                 continue;
             }
+            primaryDuplicate = primaryDuplicate.refresh(entry.expiresAtSeconds);
             entries.remove(i);
         }
         if (duplicateIndex >= 0) {
-            entries.set(duplicateIndex, new Entry(message, expiresAt));
+            entries.set(duplicateIndex, primaryDuplicate.refresh(expiresAt));
             return;
         }
         entries.add(new Entry(message, expiresAt));
         while (entries.size() > MAX_ENTRIES) {
-            entries.pollFirst();
+            entries.remove(0);
         }
     }
 

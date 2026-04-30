@@ -36,8 +36,8 @@ class FeedbackLogTest {
         log.add("Inventory Full", 10.0, 1.0);
         log.add("Inventory Full", 10.4, 2.0);
 
-        assertEquals(List.of("Inventory Full"), log.visible(10.8));
-        assertEquals(List.of("Inventory Full"), log.visible(12.0));
+        assertEquals(List.of("Inventory Full x2"), log.visible(10.8));
+        assertEquals(List.of("Inventory Full x2"), log.visible(12.0));
         assertEquals(List.of(), log.visible(12.5));
     }
     @Test
