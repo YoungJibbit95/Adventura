@@ -13,6 +13,8 @@ import dev.voxelgame.server.world.ServerWorld;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.UUID;
 
@@ -478,6 +480,35 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void loginRejectsSecondLoginAttemptOnSameConnection() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+
+            channel.writeInbound(new GamePacket.LoginRequest("TesterAgain", "dev-token"));
+
+            Object outbound;
+            GamePacket.LoginRejected rejected = null;
+            while ((outbound = channel.readOutbound()) != null) {
+                if (outbound instanceof GamePacket.LoginRejected loginRejected) {
+                    rejected = loginRejected;
+                }
+            }
+
+            assertTrue(rejected != null && "Already logged in".equals(rejected.reason()));
+            assertFalse(channel.isActive());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveRejectsExtremeTeleportAfterAcceptedMove() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
@@ -511,6 +542,42 @@ class ServerConnectionHandlerTest {
         } finally {
             channel.finishAndReleaseAll();
         }
+    }
+
+    @Test
+    void storageTransactionIdsMustAdvanceByExactlyOne() throws Exception {
+        ServerConnectionHandler handler = new ServerConnectionHandler(
+                new ServerWorld(123L),
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        );
+        Field lastTransactionField = ServerConnectionHandler.class.getDeclaredField("lastStorageTransactionId");
+        lastTransactionField.setAccessible(true);
+        Method validator = ServerConnectionHandler.class.getDeclaredMethod("isNextStorageTransaction", int.class);
+        validator.setAccessible(true);
+
+        lastTransactionField.setInt(handler, 5);
+        assertFalse((boolean) validator.invoke(handler, 5));
+        assertFalse((boolean) validator.invoke(handler, 7));
+        assertTrue((boolean) validator.invoke(handler, 6));
+    }
+
+    @Test
+    void storageTransactionIdWrapRequiresOneAfterIntegerMax() throws Exception {
+        ServerConnectionHandler handler = new ServerConnectionHandler(
+                new ServerWorld(123L),
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        );
+        Field lastTransactionField = ServerConnectionHandler.class.getDeclaredField("lastStorageTransactionId");
+        lastTransactionField.setAccessible(true);
+        Method validator = ServerConnectionHandler.class.getDeclaredMethod("isNextStorageTransaction", int.class);
+        validator.setAccessible(true);
+
+        lastTransactionField.setInt(handler, Integer.MAX_VALUE);
+        assertTrue((boolean) validator.invoke(handler, 1));
+        assertFalse((boolean) validator.invoke(handler, 2));
+        assertFalse((boolean) validator.invoke(handler, 0));
     }
 
     private static EmbeddedChannel loggedInChannel(ServerWorld world) {
