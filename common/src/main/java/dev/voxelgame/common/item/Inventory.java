@@ -115,7 +115,7 @@ public final class Inventory {
             if (slot.itemId() == itemId) {
                 int removed = Math.min(remaining, slot.count());
                 int left = slot.count() - removed;
-                slots[i] = left == 0 ? ItemStack.EMPTY : new ItemStack(itemId, left);
+                slots[i] = left == 0 ? ItemStack.EMPTY : new ItemStack(itemId, left, slot.damage());
                 remaining -= removed;
             }
         }

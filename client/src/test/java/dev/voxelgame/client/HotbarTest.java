@@ -188,4 +188,14 @@ class HotbarTest {
         assertTrue(hotbar.canHarvestSelected(copperOre));
         assertFalse(hotbar.canHarvestSelected(ironOre));
     }
+
+    @Test
+    void invalidSlotAccessorsAreUiSafe() {
+        Hotbar hotbar = new Hotbar();
+        hotbar.resetForNewGame();
+
+        assertEquals("Invalid slot", hotbar.slotLabel(-1));
+        assertEquals("Invalid slot", hotbar.inventorySlotLabel(36));
+        assertTrue(hotbar.slotView(999).isEmpty());
+    }
 }
