@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NettyPacketCodecTest {
@@ -50,6 +51,18 @@ class NettyPacketCodecTest {
             GamePacket.Chat secondDecoded = channel.readInbound();
             assertEquals("first", firstDecoded.message());
             assertEquals("second", secondDecoded.message());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void decoderRejectsOversizedFrames() {
+        EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
+        try {
+            int tooLarge = (2 * 1024 * 1024) + 1;
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(tooLarge);
+            assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(frameHeader));
         } finally {
             channel.finishAndReleaseAll();
         }

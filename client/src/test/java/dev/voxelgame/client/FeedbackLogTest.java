@@ -27,4 +27,28 @@ class FeedbackLogTest {
 
         assertEquals(List.of("Message 2", "Message 3", "Message 4", "Message 5", "Message 6", "Message 7"), log.visible(1.0));
     }
+
+    @Test
+    void duplicateActiveMessagesAreMergedAndDurationIsRefreshed() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Inventory Full", 10.0, 1.0);
+        log.add("Inventory Full", 10.4, 2.0);
+
+        assertEquals(List.of("Inventory Full"), log.visible(10.8));
+        assertEquals(List.of("Inventory Full"), log.visible(12.0));
+        assertEquals(List.of(), log.visible(12.5));
+    }
+    @Test
+    void addPurgesExpiredEntriesBeforeApplyingCapacityLimit() {
+        FeedbackLog log = new FeedbackLog();
+
+        for (int i = 0; i < 6; i++) {
+            log.add("Expired " + i, 0.0, 0.5);
+        }
+        log.add("Fresh", 1.0, 2.0);
+
+        assertEquals(List.of("Fresh"), log.visible(1.1));
+    }
+
 }
