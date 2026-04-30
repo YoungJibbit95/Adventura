@@ -209,5 +209,7 @@ class HotbarTest {
         assertEquals("Unknown Item x2", hotbar.selectedLabel());
         assertTrue(hotbar.slotLabel(0).contains("Unknown Item"));
         assertEquals("unknown:999", hotbar.slotView(0).itemKey());
+        assertEquals("unknown:999", hotbar.selectedItemKey().orElseThrow());
+        assertTrue(hotbar.selectedTooltip().contains("Unrecognized item id 999"));
     }
 }

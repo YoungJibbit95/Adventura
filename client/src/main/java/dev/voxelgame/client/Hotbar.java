@@ -441,7 +441,9 @@ public final class Hotbar {
         if (stack.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(items.requireById(stack.itemId()).key());
+        return items.findById(stack.itemId())
+                .map(ItemType::key)
+                .or(() -> Optional.of("unknown:" + stack.itemId()));
     }
 
     public synchronized String slotLabel(int index) {
@@ -558,7 +560,10 @@ public final class Hotbar {
         if (stack.isEmpty()) {
             return "Empty hand";
         }
-        ItemType item = items.requireById(stack.itemId());
+        ItemType item = items.findById(stack.itemId()).orElse(null);
+        if (item == null) {
+            return "Unknown Item | Unknown | Unknown | Unrecognized item id " + stack.itemId();
+        }
         StringBuilder tooltip = new StringBuilder(label(item.key()));
         tooltip.append(" | ").append(itemCategory(item));
         tooltip.append(" | ").append(itemRarity(item));
