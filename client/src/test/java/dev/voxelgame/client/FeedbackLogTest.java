@@ -3,6 +3,7 @@ package dev.voxelgame.client;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -51,4 +52,18 @@ class FeedbackLogTest {
         assertEquals(List.of("Fresh"), log.visible(1.1));
     }
 
+
+    @Test
+    void importantMessageDetectionIsLocaleStable() {
+        FeedbackLog log = new FeedbackLog();
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            log.add("Item unlocked", 5.0);
+            assertEquals(List.of("Item unlocked"), log.visible(9.0));
+        } finally {
+            Locale.setDefault(previous);
+        }
+        assertEquals(List.of(), log.visible(10.3));
+    }
 }
