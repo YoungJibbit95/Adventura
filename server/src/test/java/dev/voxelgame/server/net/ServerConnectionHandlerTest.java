@@ -586,6 +586,27 @@ class ServerConnectionHandlerTest {
         }
     }
 
+    @Test
+    void worldStateBroadcastsStayWithinSameWorld() {
+        EmbeddedChannel worldAChannel = loggedInChannel(new ServerWorld(123L), new ServerEntityTracker(), PLAYER_ID);
+        EmbeddedChannel worldBChannel = loggedInChannel(new ServerWorld(456L), new ServerEntityTracker(), SECOND_PLAYER_ID);
+        try {
+            drainOutbound(worldAChannel);
+            drainOutbound(worldBChannel);
+
+            worldAChannel.writeInbound(new GamePacket.PlayerMove(8.6, 120.0, 8.5, 0.0f, 0.0f, true));
+
+            Object firstWorldPacket = worldAChannel.readOutbound();
+            Object secondWorldPacket = worldBChannel.readOutbound();
+            assertTrue(firstWorldPacket instanceof GamePacket.EntitySnapshots || firstWorldPacket instanceof GamePacket.PlayerStatsSnapshot);
+            assertFalse(secondWorldPacket instanceof GamePacket.EntitySnapshots);
+            assertFalse(secondWorldPacket instanceof GamePacket.BlockUpdate);
+        } finally {
+            worldAChannel.finishAndReleaseAll();
+            worldBChannel.finishAndReleaseAll();
+        }
+    }
+
     private static EmbeddedChannel loggedInChannel(ServerWorld world) {
         return loggedInChannel(world, new ServerEntityTracker());
     }

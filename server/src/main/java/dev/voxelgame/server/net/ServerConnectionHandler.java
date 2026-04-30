@@ -205,7 +205,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             dropItemId.ifPresent(itemId -> inventory.add(itemId, dropCount, items));
             inventory.damageSlot(action.selectedSlot(), InteractionRules.toolDamage(selected, items, target), items);
             nextBlockActionTime = now + InteractionRules.breakDelaySeconds(target, multiplier);
-            broadcastToLoggedIn(update);
+            broadcastToLoggedInWorld(update);
             sendInventory(ctx);
         }, () -> sendInventory(ctx));
     }
@@ -230,7 +230,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         world.applyBlockAction(action).ifPresentOrElse(update -> {
             inventory.removeFromSlot(action.selectedSlot(), 1);
             nextBlockActionTime = now + 0.12;
-            broadcastToLoggedIn(update);
+            broadcastToLoggedInWorld(update);
             sendInventory(ctx);
         }, () -> sendInventory(ctx));
     }
@@ -396,7 +396,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
-        world.tickCampfires(now).forEach(ServerConnectionHandler::broadcastToLoggedIn);
+        world.tickCampfires(now).forEach(this::broadcastToLoggedInWorld);
         Optional<BlockType> station = world.blockAt(cook.stationX(), cook.stationY(), cook.stationZ());
         if (station.isEmpty() || !CampfireRules.isActiveCampfire(station.get().id())) {
             sendInventory(ctx);
@@ -482,7 +482,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return true;
         }
         world.fuelCampfire(interact.targetX(), interact.targetY(), interact.targetZ(), now, fuelSeconds.getAsDouble())
-                .ifPresent(ServerConnectionHandler::broadcastToLoggedIn);
+                .ifPresent(this::broadcastToLoggedInWorld);
         nextBlockActionTime = now + 0.25;
         sendInventory(ctx);
         return true;
@@ -507,7 +507,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         nextEntityInteractTime = now + 0.35;
-        broadcastToLoggedIn(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
         sendInventory(ctx);
     }
 
@@ -568,7 +568,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         if (recipe.stationType() == CraftingStationType.CAMPFIRE) {
             double now = System.nanoTime() / 1_000_000_000.0;
-            world.tickCampfires(now).forEach(ServerConnectionHandler::broadcastToLoggedIn);
+            world.tickCampfires(now).forEach(this::broadcastToLoggedInWorld);
         }
         Optional<BlockType> station = world.blockAt(craft.stationX(), craft.stationY(), craft.stationZ());
         if (recipe.stationType() == CraftingStationType.CAMPFIRE
@@ -593,7 +593,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (pendingCook == null || context == null || !loggedIn || nowSeconds < pendingCook.completeAtSeconds()) {
             return;
         }
-        world.tickCampfires(nowSeconds).forEach(ServerConnectionHandler::broadcastToLoggedIn);
+        world.tickCampfires(nowSeconds).forEach(this::broadcastToLoggedInWorld);
         Optional<BlockType> station = world.blockAt(pendingCook.stationX(), pendingCook.stationY(), pendingCook.stationZ());
         if (station.isEmpty() || !CampfireRules.isActiveCampfire(station.get().id())) {
             return;
@@ -671,7 +671,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         entityTracker.updatePlayer(playerId, move.x(), move.y(), move.z(), move.yaw(), move.pitch());
         streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(move.x()), (int) Math.floor(move.z())));
         sendPlayerStats(ctx, now, false);
-        broadcastToLoggedIn(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private boolean acceptPlayerMove(GamePacket.PlayerMove move, double now) {
@@ -739,7 +739,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void broadcastEntitySnapshots() {
-        broadcastToLoggedIn(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private void streamChunksAround(ChannelHandlerContext ctx, ChunkPos center) {
@@ -757,6 +757,17 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
             ChannelHandlerContext ctx = handler.context;
             if (ctx == null || !handler.loggedIn) {
+                continue;
+            }
+            ctx.writeAndFlush(packet);
+        }
+    }
+
+
+    private void broadcastToLoggedInWorld(GamePacket packet) {
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            ChannelHandlerContext ctx = handler.context;
+            if (ctx == null || !handler.loggedIn || handler.world != world) {
                 continue;
             }
             ctx.writeAndFlush(packet);
