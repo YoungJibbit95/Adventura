@@ -37,10 +37,12 @@ import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public final class ServerConnectionHandler extends SimpleChannelInboundHandler<GamePacket> {
     private static final int STREAM_RADIUS_CHUNKS = 4;
     private static final double ENTITY_INTERACT_RANGE = 6.0;
+    private static final double ENTITY_SNAPSHOT_RADIUS = 96.0;
     private static final double INITIAL_MOVE_SYNC_RADIUS = 128.0;
     private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
     private static final ChannelGroup CHANNELS = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
