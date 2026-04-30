@@ -16,6 +16,7 @@ import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorldSaveStoreTest {
@@ -95,5 +96,15 @@ class WorldSaveStoreTest {
         WorldSave decoded = WorldSaveCodec.decode(properties, items);
 
         assertFalse(decoded.blockEntities().blockEntities().unknownEntries().isEmpty());
+    }
+
+    @Test
+    void worldSaveDecodeRejectsMissingKindMarker() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Properties properties = new Properties();
+        properties.setProperty("save.version", "1");
+        properties.setProperty("world.seed", "42");
+
+        assertThrows(IllegalArgumentException.class, () -> WorldSaveCodec.decode(properties, items));
     }
 }

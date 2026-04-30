@@ -401,8 +401,14 @@ public final class PacketCodec {
     }
 
     private static void writeItemStacks(DataOutputStream out, List<ItemStack> stacks) throws IOException {
+        if (stacks.size() > MAX_ITEM_STACKS) {
+            throw new IllegalArgumentException("Invalid item stack count: " + stacks.size());
+        }
         out.writeInt(stacks.size());
         for (ItemStack stack : stacks) {
+            if (stack == null) {
+                throw new IllegalArgumentException("Item stack list cannot contain null entries");
+            }
             out.writeShort(stack.itemId());
             out.writeInt(stack.count());
             out.writeInt(stack.damage());

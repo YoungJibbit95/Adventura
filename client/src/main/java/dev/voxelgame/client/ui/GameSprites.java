@@ -54,7 +54,7 @@ public final class GameSprites implements AutoCloseable {
         sprites.hud("button_green", ui.sprite(29, 584, 114, 64));
         sprites.hud("button_close", ui.sprite(386, 584, 91, 64));
 
-        sprites.item("voxel:grass_block", blocks.sprite(29, 49, 150, 158));
+        sprites.item("voxel:grass_block", blocks.sprite(1123, 259, 150, 158));
         sprites.item("voxel:dirt", blocks.sprite(211, 50, 150, 158));
         sprites.item("voxel:clay", blocks.sprite(394, 50, 150, 158));
         sprites.item("voxel:stone", blocks.sprite(576, 50, 150, 158));
