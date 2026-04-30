@@ -255,8 +255,10 @@ public final class ChunkMesher {
 
     private static float light(WorldView world, int x, int y, int z) {
         if (world instanceof dev.voxelgame.common.world.InMemoryWorld memoryWorld) {
-            int packed = Math.max(memoryWorld.skyLight(x, y, z), memoryWorld.blockLight(x, y, z));
-            return packed / 15.0f;
+            float sky = memoryWorld.skyLight(x, y, z) / 15.0f;
+            float block = memoryWorld.blockLight(x, y, z) / 15.0f;
+            float combined = sky * 0.65f + block * 0.85f;
+            return Math.max(0.12f, Math.min(1.0f, combined));
         }
         return 1.0f;
     }
@@ -305,6 +307,8 @@ public final class ChunkMesher {
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
             vertices.add(light);
+            int[] aoOrigin = aoSampleOrigin(x, y, z, mergedCorner, uAxis, vAxis, width, height);
+            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, aoOrigin[0], aoOrigin[1], aoOrigin[2], face, mergedCorner) : 1.0f);
             vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, x, y, z, face, mergedCorner) : 1.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
