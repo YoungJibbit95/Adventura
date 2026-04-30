@@ -269,6 +269,11 @@ public final class ClientWorld {
         return false;
     }
 
+
+    public synchronized short blockIdAt(int x, int y, int z) {
+        return world.blockId(x, y, z);
+    }
+
     public synchronized int skyLightAt(int x, int y, int z) {
         return world.skyLight(x, y, z);
     }
