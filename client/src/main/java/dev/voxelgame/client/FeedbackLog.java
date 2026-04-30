@@ -60,7 +60,7 @@ public final class FeedbackLog {
     }
 
     private static boolean isImportantMessage(String message) {
-        String lower = message.toLowerCase();
+        String lower = message.toLowerCase(Locale.ROOT);
         return lower.contains("unlock")
                 || lower.contains("discovered")
                 || lower.contains("lore")
