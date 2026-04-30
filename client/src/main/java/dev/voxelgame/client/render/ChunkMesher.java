@@ -188,7 +188,7 @@ public final class ChunkMesher {
                 int x = blockX(face, fixed, u, v, baseX);
                 int y = blockY(face, fixed, v, minY);
                 int z = blockZ(face, fixed, u, v, baseZ);
-                addMergedFace(vertices, indices, x, y, z, face, cell.blockId(), cell.light(), width, height);
+                addMergedFace(vertices, indices, world, x, y, z, face, cell.blockId(), cell.light(), width, height, ambientOcclusion);
                 clearMask(mask, u, v, width, height, uCount);
                 u += width;
             }
@@ -285,7 +285,7 @@ public final class ChunkMesher {
         indices.add(baseVertex + 3);
     }
 
-    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, int x, int y, int z, Face face, short blockId, float light, int width, int height) {
+    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, float light, int width, int height, boolean ambientOcclusionEnabled) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         int uAxis = uAxis(face);
         int vAxis = vAxis(face);
@@ -305,7 +305,7 @@ public final class ChunkMesher {
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
             vertices.add(light);
-            vertices.add(1.0f);
+            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, x, y, z, face, mergedCorner) : 1.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
             vertices.add(uv[1]);
