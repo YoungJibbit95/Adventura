@@ -1116,6 +1116,12 @@ public final class GameClient {
         int x = (int) Math.floor(camera.position().x);
         int y = (int) Math.floor(camera.position().y);
         int z = (int) Math.floor(camera.position().z);
+        Optional<dev.voxelgame.common.math.Raycast.Hit> target = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (target.isPresent()) {
+            x = target.get().x();
+            y = target.get().y();
+            z = target.get().z();
+        }
         int sky = world.skyLightAt(x, y, z);
         int block = world.blockLightAt(x, y, z);
         short blockId = world.blockIdAt(x, y, z);

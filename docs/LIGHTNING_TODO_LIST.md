@@ -26,7 +26,7 @@ Light-Arten:
 - Sky Light Tests für Höhlen, Überhänge, Chunkgrenzen, Wasser/Eis, transparente Blöcke und hohe Berge.
 
 ### Light Debug Overlay
-- aktuelles Light Level am Zielblock.
+- ~~aktuelles Light Level am Zielblock.~~ ✅ (`/debuglight` nutzt jetzt bevorzugt den anvisierten Block statt nur die Kameraposition)
 - Sky Light.
 - Block Light.
 - ~~Emissive Material Flag.~~ ✅ (`/debuglight` zeigt jetzt emissive-Wert des aktuellen Blocks)
