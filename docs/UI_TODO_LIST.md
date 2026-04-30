@@ -17,7 +17,7 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 - Drag/drop weiter testen.
 - Shift-click quick move weiter testen.
-- Right-click split stack weiter testen.
+- ~~Right-click split stack weiter testen.~~ ✅ Erledigt (Crafting-Inventory unterstützt jetzt Right-Click Split in leere Slots).
 - Sort Button klarer beschriften.
 - Trash nur Creative sichtbar/aktiv.
 - Slot Hover Feedback verbessern.

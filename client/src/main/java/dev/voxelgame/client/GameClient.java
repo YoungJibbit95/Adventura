@@ -361,7 +361,7 @@ public final class GameClient {
             } else if (gameState == GameState.SETTINGS) {
                 renderSettingsMenu(mouse, leftClicked);
             } else if (gameState == GameState.CRAFTING) {
-                renderCraftingScreen(mouse, leftClicked, leftReleased);
+                renderCraftingScreen(mouse, leftClicked, leftReleased, rightClicked);
             } else if (gameState == GameState.STORAGE) {
                 renderStorageScreen(mouse, leftClicked, rightClicked);
             } else if (gameState == GameState.DEAD) {
@@ -1378,10 +1378,10 @@ public final class GameClient {
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, y + 188.0f, buttonWidth, 34.0f, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
     }
 
-    private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released) {
+    private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.72f));
         uiRenderer.centeredText("CRAFTING", framebufferWidth * 0.5f, 70.0f, 5.0f, UiColor.WHITE);
-        uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
+        uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  RIGHT-CLICK SPLIT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
 
         float contentWidth = Math.min(980.0f, framebufferWidth - 64.0f);
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
@@ -1390,7 +1390,7 @@ public final class GameClient {
         CraftingStationType stationType = currentCraftingStation();
         renderWorkbenchPreview(previewCraftingRecipe(stationType), x, y, stationType);
         renderCraftingMenu(mouse, clicked, x + 360.0f, y, stationType);
-        renderInventoryGridCompact(mouse, clicked, released, x, y + 266.0f);
+        renderInventoryGridCompact(mouse, clicked, released, rightClicked, x, y + 266.0f);
     }
 
     private void renderStorageScreen(MousePosition mouse, boolean clicked, boolean rightClicked) {
@@ -1992,6 +1992,10 @@ public final class GameClient {
                     audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
+            } else if (hovered && rightClicked && hotbar.splitInventorySlot(i)) {
+                setStatus("Split stack");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
             } else if (hovered && clicked && inventoryTrashMode && hotbar.trashInventorySlot(i)) {
                 setStatus("Item trashed");
                 audio.play(AudioCue.INVENTORY_CLICK);
