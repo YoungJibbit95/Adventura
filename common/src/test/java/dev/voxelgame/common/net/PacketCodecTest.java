@@ -5,9 +5,12 @@ import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.world.ChunkPos;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -282,5 +285,19 @@ class PacketCodecTest {
         ));
 
         assertEquals("Hello server", decoded.message());
+    }
+
+    @Test
+    void rejectsInventorySnapshotWithNegativeItemCount() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.INVENTORY_SNAPSHOT.id());
+        out.writeInt(1);
+        out.writeShort(2);
+        out.writeInt(-5);
+        out.writeInt(0);
+        out.flush();
+
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(bytes.toByteArray()));
     }
 }

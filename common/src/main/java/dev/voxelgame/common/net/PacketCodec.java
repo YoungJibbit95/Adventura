@@ -324,7 +324,19 @@ public final class PacketCodec {
         int length = checkedLength(in.readInt());
         List<ItemStack> stacks = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
-            stacks.add(new ItemStack(in.readShort(), in.readInt(), in.readInt()));
+            short itemId = in.readShort();
+            int count = in.readInt();
+            int damage = in.readInt();
+            if (itemId < 0) {
+                throw new IllegalArgumentException("Invalid item id: " + itemId);
+            }
+            if (count < 0) {
+                throw new IllegalArgumentException("Invalid item count: " + count);
+            }
+            if (damage < 0) {
+                throw new IllegalArgumentException("Invalid item damage: " + damage);
+            }
+            stacks.add(new ItemStack(itemId, count, damage));
         }
         return stacks;
     }

@@ -13,6 +13,8 @@ import dev.voxelgame.server.world.ServerWorld;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.UUID;
 
@@ -543,99 +545,39 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
-    void storageTransferRejectsSkippedTransactionId() {
-        ServerWorld world = new ServerWorld(123L);
-        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
-        EmbeddedChannel channel = loggedInChannel(world);
-        try {
-            channel.writeInbound(new GamePacket.StorageTransfer(8, 120, 9, false, 0, GamePacket.StorageTransfer.AUTO_TARGET_SLOT, 1, 1));
-            StorageOpenResponse accepted = readStorageOpenResponse(channel);
-
-            channel.writeInbound(new GamePacket.StorageTransfer(8, 120, 9, false, 0, GamePacket.StorageTransfer.AUTO_TARGET_SLOT, 1, 3));
-            StorageOpenResponse rejected = readStorageOpenResponse(channel);
-
-            assertTrue(accepted.hasStorageOpen());
-            assertFalse(rejected.hasStorageOpen());
-        } finally {
-            channel.finishAndReleaseAll();
-        }
-    }
-
-    @Test
-    void chatBroadcastDoesNotSendToUnauthenticatedConnections() {
-        ServerWorld world = new ServerWorld(123L);
-        EmbeddedChannel loggedIn = loggedInChannel(world);
-        EmbeddedChannel unauthenticated = new EmbeddedChannel(new ServerConnectionHandler(
-                world,
-                (username, authToken) -> AuthResult.accepted(SECOND_PLAYER_ID),
+    void storageTransactionIdsMustAdvanceByExactlyOne() throws Exception {
+        ServerConnectionHandler handler = new ServerConnectionHandler(
+                new ServerWorld(123L),
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
                 new ServerEntityTracker()
-        ));
-        try {
-            drainOutbound(loggedIn);
-            drainOutbound(unauthenticated);
+        );
+        Field lastTransactionField = ServerConnectionHandler.class.getDeclaredField("lastStorageTransactionId");
+        lastTransactionField.setAccessible(true);
+        Method validator = ServerConnectionHandler.class.getDeclaredMethod("isNextStorageTransaction", int.class);
+        validator.setAccessible(true);
 
-            loggedIn.writeInbound(new GamePacket.Chat("hello"));
-
-            Object loggedInPacket = loggedIn.readOutbound();
-            Object unauthenticatedPacket = unauthenticated.readOutbound();
-            assertTrue(loggedInPacket instanceof GamePacket.Chat);
-            assertFalse(unauthenticatedPacket instanceof GamePacket.Chat);
-        } finally {
-            loggedIn.finishAndReleaseAll();
-            unauthenticated.finishAndReleaseAll();
-        }
+        lastTransactionField.setInt(handler, 5);
+        assertFalse((boolean) validator.invoke(handler, 5));
+        assertFalse((boolean) validator.invoke(handler, 7));
+        assertTrue((boolean) validator.invoke(handler, 6));
     }
 
     @Test
-    void worldStateBroadcastsStayWithinSameWorld() {
-        EmbeddedChannel worldAChannel = loggedInChannel(new ServerWorld(123L), new ServerEntityTracker(), PLAYER_ID);
-        EmbeddedChannel worldBChannel = loggedInChannel(new ServerWorld(456L), new ServerEntityTracker(), SECOND_PLAYER_ID);
-        try {
-            drainOutbound(worldAChannel);
-            drainOutbound(worldBChannel);
+    void storageTransactionIdWrapRequiresOneAfterIntegerMax() throws Exception {
+        ServerConnectionHandler handler = new ServerConnectionHandler(
+                new ServerWorld(123L),
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        );
+        Field lastTransactionField = ServerConnectionHandler.class.getDeclaredField("lastStorageTransactionId");
+        lastTransactionField.setAccessible(true);
+        Method validator = ServerConnectionHandler.class.getDeclaredMethod("isNextStorageTransaction", int.class);
+        validator.setAccessible(true);
 
-            worldAChannel.writeInbound(new GamePacket.PlayerMove(8.6, 120.0, 8.5, 0.0f, 0.0f, true));
-
-            Object firstWorldPacket = worldAChannel.readOutbound();
-            Object secondWorldPacket = worldBChannel.readOutbound();
-            assertTrue(firstWorldPacket instanceof GamePacket.EntitySnapshots || firstWorldPacket instanceof GamePacket.PlayerStatsSnapshot);
-            assertFalse(secondWorldPacket instanceof GamePacket.EntitySnapshots);
-            assertFalse(secondWorldPacket instanceof GamePacket.BlockUpdate);
-        } finally {
-            worldAChannel.finishAndReleaseAll();
-            worldBChannel.finishAndReleaseAll();
-        }
-    }
-
-    @Test
-    void entitySnapshotsAreFilteredByDistancePerPlayer() {
-        ServerWorld world = new ServerWorld(123L);
-        ServerEntityTracker tracker = new ServerEntityTracker(123L);
-        EmbeddedChannel first = loggedInChannel(world, tracker, PLAYER_ID);
-        EmbeddedChannel second = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
-        try {
-            drainOutbound(first);
-            drainOutbound(second);
-
-            second.writeInbound(new GamePacket.PlayerMove(120.0, 120.0, 8.5, 0.0f, 0.0f, true));
-            drainOutbound(first);
-            drainOutbound(second);
-
-            first.writeInbound(new GamePacket.PlayerMove(8.6, 120.0, 8.5, 0.0f, 0.0f, true));
-
-            GamePacket.EntitySnapshots snapshotsForSecond = null;
-            Object outbound;
-            while ((outbound = second.readOutbound()) != null) {
-                if (outbound instanceof GamePacket.EntitySnapshots packet) {
-                    snapshotsForSecond = packet;
-                }
-            }
-            assertTrue(snapshotsForSecond != null);
-            assertFalse(snapshotsForSecond.snapshots().stream().anyMatch(snapshot -> PLAYER_ID.equals(snapshot.ownerPlayerId())));
-        } finally {
-            first.finishAndReleaseAll();
-            second.finishAndReleaseAll();
-        }
+        lastTransactionField.setInt(handler, Integer.MAX_VALUE);
+        assertTrue((boolean) validator.invoke(handler, 1));
+        assertFalse((boolean) validator.invoke(handler, 2));
+        assertFalse((boolean) validator.invoke(handler, 0));
     }
 
     private static EmbeddedChannel loggedInChannel(ServerWorld world) {

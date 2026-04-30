@@ -19,4 +19,18 @@ class ChatLogTest {
         log.clear();
         assertTrue(log.recent(10).isEmpty());
     }
+
+    @Test
+    void keepsOnlyMostRecentEntriesAndHandlesNonPositiveRequests() {
+        ChatLog log = new ChatLog();
+        for (int i = 1; i <= 100; i++) {
+            log.add("msg-" + i);
+        }
+
+        assertEquals(80, log.recent(200).size());
+        assertEquals("msg-21", log.recent(200).getFirst());
+        assertEquals("msg-100", log.recent(1).getFirst());
+        assertTrue(log.recent(0).isEmpty());
+        assertTrue(log.recent(-5).isEmpty());
+    }
 }

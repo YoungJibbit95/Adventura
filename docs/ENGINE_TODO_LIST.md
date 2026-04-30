@@ -42,13 +42,14 @@ Diese Liste bündelt alle offenen Engine-Aufgaben aus Gameplay-Roadmap und Engin
 ### Section-Aware Chunk-Daten
 - leere Sections schneller überspringen.
 - Mesh-Bounds pro Section oder Layer vorbereiten.
-- Frustum-Culling genauer machen.
+- ~~Frustum-Culling genauer machen.~~ ✅ (Chunk-Sichtbarkeit wird pro Frame/Lage gecacht statt pro Render-Layer mehrfach berechnet)
 - Ziel: weniger unnötige Draw Calls bei hohen Chunks, Höhlen und Bergen.
 
 ### GL Resource Tracking
 - VAO/VBO/Texture-Lebenszeit tracken.
 - Debug-Zähler für aktive GPU-Ressourcen anzeigen.
 - Mesh dispose sicherstellen.
+- ✅ Guard ergänzt: geschlossene `GpuChunkMesh`-Instanzen werfen nun bei `draw()` sofort einen Fehler statt still auf gelöschte GL-Handles zuzugreifen.
 - Smoke-Test für längeres Erkunden mit Chunk-Unload.
 
 ## P2 – Save/Load und Persistenz
@@ -79,7 +80,7 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 ## P4 – Multiplayer Engine
 
 ### Interest Management
-- ~~Entity-Snapshots nicht global an alle Spieler senden.~~ ✅ Snapshot-Broadcast ist jetzt pro Spieler auf Distanz gefiltert.
+- Entity-Snapshots nicht global an alle Spieler senden.
 - Fortschritt: Broadcasts gehen nur noch an authentifizierte Verbindungen (nicht mehr an Pre-Login Channels).
 - Fortschritt: Broadcasts für Weltzustand/Entities sind auf die jeweilige `ServerWorld` begrenzt.
 - Relevanz nach Chunk/Radius berechnen.
