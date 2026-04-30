@@ -73,7 +73,8 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - BlockEntity-Daten serverseitig autoritativ halten.
 - Client bekommt nur Snapshots/UI-Daten.
 - Save/Load für alle BlockEntities.
-- Multiplayer-Transfers und Station-Operationen serverseitig prüfen.
+- ~~Multiplayer-Transfers und Station-Operationen serverseitig prüfen.~~ ✅ Basis-Validierung für Storage-Transfers/Crafting/Cooking ist serverseitig aktiv.
+- Transaktionsvalidierung weiter ausbauen: Sequenznummern auch für Craft/Cook/Open-Requests vereinheitlichen.
 
 ## P4 – Multiplayer Engine
 
