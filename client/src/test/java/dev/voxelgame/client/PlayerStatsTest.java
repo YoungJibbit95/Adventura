@@ -62,6 +62,8 @@ class PlayerStatsTest {
     @Test
     void deathBlocksActionsUntilRespawn() {
         PlayerStats stats = new PlayerStats();
+        stats.applyComfort(17);
+        stats.applyComfort(30);
 
         stats.hurt(100);
 
@@ -77,5 +79,21 @@ class PlayerStatsTest {
         assertEquals(20, stats.hunger());
         assertEquals(20, stats.stamina());
         assertEquals(20, stats.breath());
+        assertEquals(0, stats.comfort());
+    }
+
+    @Test
+    void resetForCreativeRespawnsDeadPlayer() {
+        PlayerStats stats = new PlayerStats();
+        stats.hurt(100);
+        assertTrue(stats.dead());
+
+        stats.resetForMode(GameMode.CREATIVE);
+
+        assertEquals(20, stats.health());
+        assertEquals(20, stats.hunger());
+        assertEquals(20, stats.stamina());
+        assertEquals(20, stats.breath());
+        assertEquals(0, stats.comfort());
     }
 }
