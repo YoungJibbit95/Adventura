@@ -61,7 +61,7 @@ class ClientPacketCodecTest {
     void decoderRejectsOversizedFrames() {
         EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
         try {
-            int oversizedLength = PacketCodec.MAX_PACKET_SIZE + 1;
+            int oversizedLength = (2 * 1024 * 1024) + 1;
             var buffer = Unpooled.buffer(Integer.BYTES);
             buffer.writeInt(oversizedLength);
 
