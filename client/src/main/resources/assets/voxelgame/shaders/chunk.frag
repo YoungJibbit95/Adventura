@@ -40,14 +40,14 @@ bool fillsTextureGaps(int id) {
 }
 
 vec2 faceUv() {
-    vec2 uv = max(vFaceUv, vec2(0.0));
-    if (uv.x > 1.0) {
+    vec2 uv = vFaceUv;
+    if (uv.x < 0.0 || uv.x > 1.0) {
         uv.x = fract(uv.x);
     }
-    if (uv.y > 1.0) {
+    if (uv.y < 0.0 || uv.y > 1.0) {
         uv.y = fract(uv.y);
     }
-    return clamp(uv, vec2(0.0), vec2(1.0));
+    return uv;
 }
 
 vec4 atlasRect(int id) {
