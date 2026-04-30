@@ -106,6 +106,9 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setFloat("uShadowStrength", settings.softShadowsEnabled() ? 0.38f : 0.20f);
         shader.setFloat("uBloomStrength", settings.bloomStrength());
         shader.setVector3("uFogColor", new Vector3f(settings.skyR(), settings.skyG(), settings.skyB()));
+        float skyLuma = settings.skyR() * 0.2126f + settings.skyG() * 0.7152f + settings.skyB() * 0.0722f;
+        float globalBrightness = Math.max(0.35f, Math.min(1.0f, 0.30f + skyLuma * 0.90f));
+        shader.setFloat("uGlobalBrightness", globalBrightness);
         shader.setVector4Array("uBlockColorAlpha[0]", blockColorAlphaTable);
         shader.setVector4Array("uBlockEffects[0]", blockEffectsTable);
         blockTextureAtlas.bindAndApply(shader, 0);

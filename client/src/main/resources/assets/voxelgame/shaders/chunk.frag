@@ -14,6 +14,7 @@ uniform int uBloomEnabled;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uBloomStrength;
+uniform float uGlobalBrightness;
 uniform vec3 uFogColor;
 uniform sampler2D uBlockAtlas;
 uniform vec4 uSideUv[64];
@@ -91,7 +92,7 @@ float emissiveStrength(int id) {
 void main() {
     int id = int(vBlockId + 0.5);
     vec4 surface = blockSurface(id);
-    vec3 lit = surface.rgb * vLight * vShade * vAo;
+    vec3 lit = surface.rgb * vLight * vShade * vAo * uGlobalBrightness;
     if (uBloomEnabled == 1) {
         float glow = emissiveStrength(id);
         lit += surface.rgb * glow * uBloomStrength * (1.0 + vLight * 0.35);
