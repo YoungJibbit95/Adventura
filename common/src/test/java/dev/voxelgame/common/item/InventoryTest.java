@@ -73,4 +73,15 @@ class InventoryTest {
 
         assertEquals(ItemStack.EMPTY, inventory.slot(0));
     }
+
+    @Test
+    void removePreservesDamageForPartialDamagedStack() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short dirt = items.requireByKey("voxel:dirt").id();
+        Inventory inventory = new Inventory(1);
+        inventory.setSlot(0, new ItemStack(dirt, 10, 3));
+
+        assertTrue(inventory.remove(dirt, 4));
+        assertEquals(new ItemStack(dirt, 6, 3), inventory.slot(0));
+    }
 }

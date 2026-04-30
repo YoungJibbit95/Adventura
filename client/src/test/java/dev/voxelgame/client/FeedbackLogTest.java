@@ -27,4 +27,36 @@ class FeedbackLogTest {
 
         assertEquals(List.of("Message 2", "Message 3", "Message 4", "Message 5", "Message 6", "Message 7"), log.visible(1.0));
     }
+
+    @Test
+    void duplicateActiveMessagesAreMergedAndDurationIsRefreshed() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Inventory Full", 10.0, 1.0);
+        log.add("Inventory Full", 10.4, 2.0);
+
+        assertEquals(List.of("Inventory Full x2"), log.visible(10.8));
+        assertEquals(List.of("Inventory Full x2"), log.visible(12.0));
+        assertEquals(List.of(), log.visible(12.5));
+    }
+
+    @Test
+    void importantMessagesStayVisibleLongerWithDefaultAdd() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Recipe Unlock: Campfire Soup", 0.0);
+
+        assertEquals(List.of("Recipe Unlock: Campfire Soup"), log.visible(4.2));
+        assertEquals(List.of(), log.visible(5.4));
+    }
+
+    @Test
+    void importantDetectionIsCaseInsensitive() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("LORE FOUND: Old Shrine", 0.0);
+
+        assertEquals(List.of("LORE FOUND: Old Shrine"), log.visible(4.2));
+        assertEquals(List.of(), log.visible(5.4));
+    }
 }
