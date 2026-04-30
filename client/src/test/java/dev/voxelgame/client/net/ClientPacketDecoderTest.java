@@ -9,6 +9,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class ClientPacketDecoderTest {
     @Test
+    void rejectsTooSmallPackets() {
+        EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
+        ByteBuf undersizedHeader = Unpooled.buffer(Integer.BYTES);
+        undersizedHeader.writeInt(Integer.BYTES - 1);
+
+        assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(undersizedHeader));
+        channel.finishAndReleaseAll();
+    }
+
+    @Test
     void rejectsOversizedPackets() {
         EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
         ByteBuf oversizedHeader = Unpooled.buffer(Integer.BYTES);
