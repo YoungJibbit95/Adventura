@@ -89,6 +89,7 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.
+- Protokoll-Decoder strikt halten: trailing bytes nach Paketdecode ablehnen. ✅ umgesetzt im `PacketCodec`.
 
 ### Async Server Chunk Generation
 - Chunk-Erzeugung darf Netty-Handler nicht blockieren.

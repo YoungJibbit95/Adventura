@@ -28,7 +28,7 @@ Das HUD soll die wichtigsten Survival-, Comfort-, Welt- und Feedback-Information
 - niedrigen Wert kurz pulsen lassen.
 
 ### Breath
-- nur anzeigen, wenn relevant: underwater oder kurz nach Auftauchen.
+- ~~nur anzeigen, wenn relevant: underwater oder kurz nach Auftauchen.~~ ✅ Erledigt (Air-Leiste wird jetzt unter Wasser auch bei voller Luft angezeigt; nach Auftauchen weiterhin bis Refill sichtbar).
 - volle, halbe und leere Luftblasen.
 
 ## P2 – Comfort HUD
@@ -38,6 +38,7 @@ Das HUD soll die wichtigsten Survival-, Comfort-, Welt- und Feedback-Information
 - kurze Erklärung im Tooltip.
 - bei neuem Comfort-Level einmalige Meldung.
 - Quellen optional anzeigen: Campfire +5, Rug +3, Lantern +3.
+- ~~Comfort-Status nach Respawn korrekt zurücksetzen (kein stale Comfort-Wert).~~ ✅ Erledigt.
 
 ## P3 – Weltinformationen
 
