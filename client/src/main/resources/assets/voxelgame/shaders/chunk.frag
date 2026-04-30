@@ -46,10 +46,6 @@ vec2 faceUv() {
         uv.x = fract(uv.x);
     }
     if (uv.y < 0.0 || uv.y >= 1.0) {
-    if (uv.x < 0.0 || uv.x > 1.0) {
-        uv.x = fract(uv.x);
-    }
-    if (uv.y < 0.0 || uv.y > 1.0) {
         uv.y = fract(uv.y);
     }
     return uv;
