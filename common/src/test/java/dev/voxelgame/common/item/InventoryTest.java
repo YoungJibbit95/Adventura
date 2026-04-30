@@ -7,6 +7,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InventoryTest {
@@ -83,5 +84,16 @@ class InventoryTest {
 
         assertTrue(inventory.remove(dirt, 4));
         assertEquals(new ItemStack(dirt, 6, 3), inventory.slot(0));
+    }
+
+    @Test
+    void rejectsNegativeItemIdsInItemStacks() {
+        assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) -1, 1));
+    }
+
+    @Test
+    void rejectsZeroCountStacksWithNonEmptyIdOrDamage() {
+        assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) 5, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) 4, 0, 2));
     }
 }

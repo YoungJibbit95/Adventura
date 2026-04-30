@@ -8,6 +8,9 @@ public record ItemStack(short itemId, int count, int damage) {
     }
 
     public ItemStack {
+        if (itemId < 0) {
+            throw new IllegalArgumentException("Item id must be >= 0");
+        }
         if (count < 0) {
             throw new IllegalArgumentException("Item count must be >= 0");
         }
@@ -19,6 +22,12 @@ public record ItemStack(short itemId, int count, int damage) {
         }
         if (itemId == 0 && damage != 0) {
             throw new IllegalArgumentException("Empty item id must have damage 0");
+        }
+        if (count == 0 && itemId != 0) {
+            throw new IllegalArgumentException("Item count 0 must use empty item id");
+        }
+        if (count == 0 && damage != 0) {
+            throw new IllegalArgumentException("Item count 0 must have damage 0");
         }
     }
 
