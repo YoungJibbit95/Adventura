@@ -134,6 +134,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void handleLogin(ChannelHandlerContext ctx, GamePacket.LoginRequest login) {
+        if (loggedIn) {
+            ctx.writeAndFlush(new GamePacket.LoginRejected("Already logged in")).addListener(future -> ctx.close());
+            return;
+        }
         AuthResult result = authProvider.authenticate(login.username(), login.authToken());
         if (!result.accepted()) {
             ctx.writeAndFlush(new GamePacket.LoginRejected(result.message())).addListener(future -> ctx.close());
@@ -449,8 +453,13 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private boolean isNextStorageTransaction(int transactionId) {
-        return transactionId > lastStorageTransactionId
-                || (lastStorageTransactionId == Integer.MAX_VALUE && transactionId == 1);
+        if (transactionId < 1) {
+            return false;
+        }
+        if (lastStorageTransactionId == Integer.MAX_VALUE) {
+            return transactionId == 1;
+        }
+        return transactionId == lastStorageTransactionId + 1;
     }
 
     private boolean tryFuelCampfire(ChannelHandlerContext ctx, GamePacket.BlockInteract interact, BlockType targetBlock, double now) {
