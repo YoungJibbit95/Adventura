@@ -20,16 +20,24 @@ public final class FeedbackLog {
         if (message == null || message.isBlank()) {
             return;
         }
+        entries.removeIf(entry -> entry.expiresAtSeconds <= nowSeconds);
         double expiresAt = nowSeconds + Math.max(0.2, durationSeconds);
+        int duplicateIndex = -1;
         for (int i = entries.size() - 1; i >= 0; i--) {
             Entry entry = entries.get(i);
-            if (entry.expiresAtSeconds <= nowSeconds) {
+            if (!entry.message.equals(message)) {
                 continue;
             }
-            if (entry.message.equals(message)) {
-                entries.set(i, new Entry(message, Math.max(entry.expiresAtSeconds, expiresAt)));
-                return;
+            if (duplicateIndex == -1) {
+                duplicateIndex = i;
+                expiresAt = Math.max(entry.expiresAtSeconds, expiresAt);
+                continue;
             }
+            entries.remove(i);
+        }
+        if (duplicateIndex >= 0) {
+            entries.set(duplicateIndex, new Entry(message, expiresAt));
+            return;
         }
         entries.add(new Entry(message, expiresAt));
         while (entries.size() > MAX_ENTRIES) {
