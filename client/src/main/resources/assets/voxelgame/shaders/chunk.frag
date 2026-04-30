@@ -46,10 +46,6 @@ vec2 faceUv() {
         uv.x = fract(uv.x);
     }
     if (uv.y < 0.0 || uv.y >= 1.0) {
-    if (uv.x < 0.0 || uv.x > 1.0) {
-        uv.x = fract(uv.x);
-    }
-    if (uv.y < 0.0 || uv.y > 1.0) {
         uv.y = fract(uv.y);
     }
     return uv;
@@ -89,6 +85,10 @@ float emissiveStrength(int id) {
     return uBlockEffects[safeBlockId(id)].x;
 }
 
+bool animatedFluid(int id) {
+    return uBlockEffects[safeBlockId(id)].y > 0.5;
+}
+
 void main() {
     int id = int(vBlockId + 0.5);
     vec4 surface = blockSurface(id);
@@ -96,6 +96,10 @@ void main() {
     if (uBloomEnabled == 1) {
         float glow = emissiveStrength(id);
         lit += surface.rgb * glow * uBloomStrength * (1.0 + vLight * 0.35);
+    }
+    if (animatedFluid(id)) {
+        lit = max(lit, surface.rgb * 0.18);
+        lit = mix(lit, lit + vec3(0.03, 0.06, 0.10), 0.25);
     }
     lit = pow(lit, vec3(0.92));
     lit = mix(vec3(dot(lit, vec3(0.299, 0.587, 0.114))), lit, 1.12);

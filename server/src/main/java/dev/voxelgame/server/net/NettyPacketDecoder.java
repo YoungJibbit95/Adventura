@@ -2,6 +2,7 @@ package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.net.PacketCodec;
+import dev.voxelgame.common.net.PacketLimits;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
