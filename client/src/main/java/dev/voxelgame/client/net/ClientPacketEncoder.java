@@ -9,6 +9,8 @@ import io.netty.handler.codec.MessageToByteEncoder;
 public final class ClientPacketEncoder extends MessageToByteEncoder<GamePacket> {
     @Override
     protected void encode(ChannelHandlerContext ctx, GamePacket msg, ByteBuf out) {
-        out.writeBytes(PacketCodec.encode(msg));
+        byte[] bytes = PacketCodec.encode(msg);
+        out.writeInt(bytes.length);
+        out.writeBytes(bytes);
     }
 }

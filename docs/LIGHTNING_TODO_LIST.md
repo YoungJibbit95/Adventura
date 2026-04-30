@@ -67,9 +67,9 @@ Propagation:
 ### Terrain Shader
 - per-face brightness.
 - vertex AO.
-- fog.
+- ~~fog.~~ ✅ (bereits im `chunk.frag` aktiv; zusätzlich gegen fehlerhafte Fog-Range abgesichert)
 - biome tint später.
-- day/night global brightness.
+- ~~day/night global brightness.~~ ✅ (als `uGlobalBrightness` aus Sky-Luminanz im Terrain-Shader verdrahtet)
 - block light contribution.
 
 ### Cutout / Vegetation
