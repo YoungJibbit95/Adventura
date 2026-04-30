@@ -65,6 +65,7 @@ Propagation:
 - Glow/Bloom Toggle respektieren.
 
 ### Terrain Shader
+- ✅ UV-Wrapping im Terrain-Shader (`faceUv`) repariert; doppelte/defekte Bedingung entfernt, damit Atlas-UVs stabil normalisiert werden.
 - per-face brightness.
 - vertex AO.
 - ~~fog.~~ ✅ (bereits im `chunk.frag` aktiv; zusätzlich gegen fehlerhafte Fog-Range abgesichert)
