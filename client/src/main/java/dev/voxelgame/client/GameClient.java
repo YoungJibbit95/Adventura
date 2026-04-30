@@ -183,6 +183,7 @@ public final class GameClient {
     private int draggedInventorySlot = -1;
     private int storageTransactionId;
     private boolean previousUnderwater;
+    private boolean headUnderwaterNow;
     private double nextAmbientParticleSourceScanTime;
     private double nextStepAudioTime;
     private double nextAmbientAudioTime;
@@ -285,8 +286,9 @@ public final class GameClient {
                     playerStats.hurt(Math.round((fallImpact - 12.0f) * 0.55f));
                 }
                 PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(camera.position());
+                headUnderwaterNow = water.headUnderwater();
                 refreshLocalComfort(now);
-                playerStats.tick(deltaSeconds, gameMode, water.headUnderwater(), sprinting, moving);
+                playerStats.tick(deltaSeconds, gameMode, headUnderwaterNow, sprinting, moving);
                 emitComfortFeedback();
                 emitRecipeUnlockFeedback(now);
                 handleDeathIfNeeded();
@@ -360,7 +362,7 @@ public final class GameClient {
             } else if (gameState == GameState.SETTINGS) {
                 renderSettingsMenu(mouse, leftClicked);
             } else if (gameState == GameState.CRAFTING) {
-                renderCraftingScreen(mouse, leftClicked, leftReleased);
+                renderCraftingScreen(mouse, leftClicked, leftReleased, rightClicked);
             } else if (gameState == GameState.STORAGE) {
                 renderStorageScreen(mouse, leftClicked, rightClicked);
             } else if (gameState == GameState.DEAD) {
@@ -1126,7 +1128,6 @@ public final class GameClient {
         BlockRenderProperties properties = BlockRenderProperties.forBlock(blockId);
         String emissive = properties.emissive() > 0.0f ? String.format(Locale.ROOT, "%.2f", properties.emissive()) : "0";
         return "Light @ " + x + " " + y + " " + z
-                + (target.isPresent() ? " (target)" : " (camera)")
                 + ": combined " + Math.max(sky, block)
                 + " sky " + sky
                 + " block " + block
@@ -1391,10 +1392,10 @@ public final class GameClient {
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, y + 188.0f, buttonWidth, 34.0f, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
     }
 
-    private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released) {
+    private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.72f));
         uiRenderer.centeredText("CRAFTING", framebufferWidth * 0.5f, 70.0f, 5.0f, UiColor.WHITE);
-        uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
+        uiRenderer.centeredText("E CLOSE  CLICK RECIPE TO CRAFT  RIGHT-CLICK SPLIT  O SETTINGS", framebufferWidth * 0.5f, 116.0f, 1.7f, UiColor.MUTED);
 
         float contentWidth = Math.min(980.0f, framebufferWidth - 64.0f);
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
@@ -1403,7 +1404,7 @@ public final class GameClient {
         CraftingStationType stationType = currentCraftingStation();
         renderWorkbenchPreview(previewCraftingRecipe(stationType), x, y, stationType);
         renderCraftingMenu(mouse, clicked, x + 360.0f, y, stationType);
-        renderInventoryGridCompact(mouse, clicked, released, x, y + 266.0f);
+        renderInventoryGridCompact(mouse, clicked, released, rightClicked, x, y + 266.0f);
     }
 
     private void renderStorageScreen(MousePosition mouse, boolean clicked, boolean rightClicked) {
@@ -1939,19 +1940,20 @@ public final class GameClient {
     }
 
     private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
-        float slot = 42.0f;
-        float gap = 6.0f;
+        float uiScale = settings.uiScale();
+        float slot = 42.0f * uiScale;
+        float gap = 6.0f * uiScale;
         int columns = 9;
         int rows = 4;
         float gridWidth = columns * slot + (columns - 1) * gap;
-        float panelWidth = Math.min(gridWidth + 28.0f, framebufferWidth - 48.0f);
-        if (x + panelWidth > framebufferWidth - 24.0f) {
-            x = Math.max(24.0f, framebufferWidth * 0.5f - panelWidth * 0.5f);
+        float panelWidth = Math.min(gridWidth + 28.0f * uiScale, framebufferWidth - 48.0f * uiScale);
+        if (x + panelWidth > framebufferWidth - 24.0f * uiScale) {
+            x = Math.max(24.0f * uiScale, framebufferWidth * 0.5f - panelWidth * 0.5f);
         }
-        drawAssetPanel("panel_inventory", x - 14.0f, y - 42.0f, panelWidth, rows * (slot + gap) + 48.0f, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
-        uiRenderer.rect(x + 2.0f, y - 2.0f, gridWidth - 4.0f, rows * (slot + gap) - gap + 4.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
-        uiRenderer.text("INVENTORY", x, y - 28.0f, 2.4f, UiColor.WHITE);
-        drawButton(new UiButton(x + panelWidth - 188.0f, y - 36.0f, 76.0f, 28.0f, "SORT", true), mouse, clicked, () -> {
+        drawAssetPanel("panel_inventory", x - 14.0f * uiScale, y - 42.0f * uiScale, panelWidth, rows * (slot + gap) + 48.0f * uiScale, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
+        uiRenderer.rect(x + 2.0f * uiScale, y - 2.0f * uiScale, gridWidth - 4.0f * uiScale, rows * (slot + gap) - gap + 4.0f * uiScale, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
+        uiRenderer.text("INVENTORY", x, y - 28.0f * uiScale, 2.4f * uiScale, UiColor.WHITE);
+        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 76.0f * uiScale, 28.0f * uiScale, "SORT", true), mouse, clicked, () -> {
             if (hotbar.sortBackpack()) {
                 setStatus("Backpack sorted");
                 audio.play(AudioCue.INVENTORY_CLICK);
@@ -1962,7 +1964,7 @@ public final class GameClient {
         if (!trashEnabled) {
             inventoryTrashMode = false;
         }
-        drawButton(new UiButton(x + panelWidth - 104.0f, y - 36.0f, 90.0f, 28.0f, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
+        drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y - 36.0f * uiScale, 90.0f * uiScale, 28.0f * uiScale, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
             inventoryTrashMode = !inventoryTrashMode;
             setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
             audio.play(AudioCue.INVENTORY_CLICK);
@@ -1979,19 +1981,19 @@ public final class GameClient {
             Hotbar.SlotView slotView = hotbar.slotView(i);
             boolean hovered = contains(mouse, sx, sy, slot, slot);
             if (hovered) {
-                uiRenderer.rect(sx - 3.0f, sy - 3.0f, slot + 6.0f, slot + 6.0f, UiColor.BUTTON_HOVER);
+                uiRenderer.rect(sx - 3.0f * uiScale, sy - 3.0f * uiScale, slot + 6.0f * uiScale, slot + 6.0f * uiScale, UiColor.BUTTON_HOVER);
             }
             if (draggedInventorySlot == i) {
-                uiRenderer.rect(sx - 2.0f, sy - 2.0f, slot + 4.0f, slot + 4.0f, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
+                uiRenderer.rect(sx - 2.0f * uiScale, sy - 2.0f * uiScale, slot + 4.0f * uiScale, slot + 4.0f * uiScale, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
             }
             drawAssetSlot(sx, sy, slot, selected, i < Hotbar.HOTBAR_SLOTS);
             if (!slotView.isEmpty()) {
-                drawItemIcon(slotView.itemKey(), sx + 6.0f, sy + 5.0f, 30.0f);
+                drawItemIcon(slotView.itemKey(), sx + 6.0f * uiScale, sy + 5.0f * uiScale, 30.0f * uiScale);
                 if (slotView.count() > 1) {
-                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f, sy + 28.0f, 1.05f, UiColor.WHITE);
+                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f * uiScale, sy + 28.0f * uiScale, 1.05f * uiScale, UiColor.WHITE);
                 }
                 if (slotView.hasDurability()) {
-                    drawDurabilityBar(sx + 7.0f, sy + 36.0f, 28.0f, slotView.durabilityLeft(), slotView.maxDurability());
+                    drawDurabilityBar(sx + 7.0f * uiScale, sy + 36.0f * uiScale, 28.0f * uiScale, slotView.durabilityLeft(), slotView.maxDurability());
                 }
                 if (hovered) {
                     hoverHint = slotHoverText(slotView);
@@ -2004,6 +2006,10 @@ public final class GameClient {
                     audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
+            } else if (hovered && rightClicked && hotbar.splitInventorySlot(i)) {
+                setStatus("Split stack");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
             } else if (hovered && clicked && inventoryTrashMode && hotbar.trashInventorySlot(i)) {
                 setStatus("Item trashed");
                 audio.play(AudioCue.INVENTORY_CLICK);
@@ -2155,11 +2161,11 @@ public final class GameClient {
         uiRenderer.text("BIOME " + clampText(biome, 20), 18.0f * uiScale, 18.0f * uiScale, 1.0f * uiScale, UiColor.MUTED);
         uiRenderer.text("TEMP " + temperatureLabel(biomeKey), 18.0f * uiScale, 34.0f * uiScale, 0.95f * uiScale, UiColor.MUTED);
         renderFeedbackOverlay(framebufferWidth * 0.5f, statsY - 66.0f * uiScale);
-        if (playerStats.breath() < 20) {
+        if (headUnderwaterNow || playerStats.breath() < 20) {
             drawStatStrip("AIR", "air_full", "air_half", "air_empty", playerStats.breath(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, statsY - 28.0f * uiScale, statWidth, 10.5f * uiScale, UiColor.WATER);
         }
         if (playerStats.armor() > 0) {
-            float armorY = playerStats.breath() < 20 ? statsY - 54.0f * uiScale : statsY - 28.0f * uiScale;
+            float armorY = (headUnderwaterNow || playerStats.breath() < 20) ? statsY - 54.0f * uiScale : statsY - 28.0f * uiScale;
             drawStatStrip("ARMOR", "armor_full", "armor_half", "armor_empty", playerStats.armor(), 20, hotbarX + hotbarWidth * 0.5f - statWidth * 0.5f, armorY, statWidth, 10.5f * uiScale, UiColor.MUTED);
         }
         for (int i = 0; i < Hotbar.HOTBAR_SLOTS; i++) {

@@ -150,6 +150,34 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void blockPlaceRejectsPlacementInsidePlayerBounds() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 119, 8, Blocks.STONE);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.BlockAction(
+                    GamePacket.BlockAction.Action.PLACE,
+                    0,
+                    8,
+                    119,
+                    8,
+                    8,
+                    120,
+                    8,
+                    Blocks.DIRT
+            ));
+
+            List<ItemStack> slots = readLastInventory(channel);
+
+            assertEquals(Blocks.AIR, world.blockAt(8, 120, 8).orElseThrow().id());
+            assertEquals(16, count(slots, items, "voxel:dirt"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void blockInteractOpensStorageCrate() {
         ServerWorld world = new ServerWorld(123L);
         world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
