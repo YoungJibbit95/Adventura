@@ -509,7 +509,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         nextEntityInteractTime = now + 0.35;
-        broadcastEntitySnapshots();
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
         sendInventory(ctx);
     }
 
@@ -673,7 +673,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         entityTracker.updatePlayer(playerId, move.x(), move.y(), move.z(), move.yaw(), move.pitch());
         streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(move.x()), (int) Math.floor(move.z())));
         sendPlayerStats(ctx, now, false);
-        broadcastEntitySnapshots();
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private boolean acceptPlayerMove(GamePacket.PlayerMove move, double now) {
@@ -741,26 +741,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void broadcastEntitySnapshots() {
-        List<EntitySnapshot> allSnapshots = entityTracker.snapshots();
-        double maxDistanceSquared = ENTITY_SNAPSHOT_RADIUS * ENTITY_SNAPSHOT_RADIUS;
-        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
-            ChannelHandlerContext ctx = handler.context;
-            if (ctx == null || !handler.loggedIn || handler.world != world) {
-                continue;
-            }
-            List<EntitySnapshot> scoped = allSnapshots.stream()
-                    .filter(snapshot -> {
-                        if (handler.playerId != null && handler.playerId.equals(snapshot.ownerPlayerId())) {
-                            return true;
-                        }
-                        double dx = snapshot.x() - handler.playerX;
-                        double dy = snapshot.y() - handler.playerY;
-                        double dz = snapshot.z() - handler.playerZ;
-                        return dx * dx + dy * dy + dz * dz <= maxDistanceSquared;
-                    })
-                    .collect(Collectors.toList());
-            ctx.writeAndFlush(new GamePacket.EntitySnapshots(scoped));
-        }
+        broadcastToLoggedInWorld(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
     }
 
     private void streamChunksAround(ChannelHandlerContext ctx, ChunkPos center) {

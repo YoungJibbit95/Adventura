@@ -80,6 +80,9 @@ public final class ShaderProgram implements AutoCloseable {
     }
 
     public void setVector4Array(String uniformName, float[] values) {
+        if (values.length % 4 != 0) {
+            throw new IllegalArgumentException("Uniform " + uniformName + " requires a float array length divisible by 4 but was " + values.length);
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             FloatBuffer buffer = stack.mallocFloat(values.length);
             buffer.put(values).flip();
