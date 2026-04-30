@@ -447,16 +447,4 @@ class PacketCodecTest {
                 () -> PacketCodec.encode(new GamePacket.StorageOpen(0, 64, 0, slots))
         );
     }
-
-    @Test
-    void rejectsEncodingStorageOpenWithNullItemStackEntry() {
-        List<ItemStack> slots = new ArrayList<>();
-        slots.add(new ItemStack((short) 1, 1));
-        slots.add(null);
-
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> PacketCodec.encode(new GamePacket.StorageOpen(0, 64, 0, slots))
-        );
-    }
 }

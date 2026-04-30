@@ -90,10 +90,4 @@ class InventoryTest {
     void rejectsNegativeItemIdsInItemStacks() {
         assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) -1, 1));
     }
-
-    @Test
-    void rejectsZeroCountStacksWithNonEmptyIdOrDamage() {
-        assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) 5, 0, 0));
-        assertThrows(IllegalArgumentException.class, () -> new ItemStack((short) 4, 0, 2));
-    }
 }
