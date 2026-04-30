@@ -9,9 +9,28 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 
 public final class NettyPacketDecoder extends ByteToMessageDecoder {
+    private static final int MAX_PACKET_SIZE = 2 * 1024 * 1024;
+
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-        byte[] bytes = new byte[in.readableBytes()];
+        if (in.readableBytes() < Integer.BYTES) {
+            return;
+        }
+
+        in.markReaderIndex();
+        int packetLength = in.readInt();
+        if (packetLength < 0) {
+            throw new IllegalArgumentException("Negative packet length: " + packetLength);
+        }
+        if (packetLength > MAX_PACKET_SIZE) {
+            throw new IllegalArgumentException("Packet length exceeds limit: " + packetLength);
+        }
+        if (in.readableBytes() < packetLength) {
+            in.resetReaderIndex();
+            return;
+        }
+
+        byte[] bytes = new byte[packetLength];
         in.readBytes(bytes);
         out.add(PacketCodec.decode(bytes));
     }

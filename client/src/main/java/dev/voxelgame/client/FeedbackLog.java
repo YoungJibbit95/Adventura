@@ -21,19 +21,15 @@ public final class FeedbackLog {
             return;
         }
         double expiresAt = nowSeconds + Math.max(0.2, durationSeconds);
-        Entry existing = null;
-        for (Entry entry : entries) {
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            Entry entry = entries.get(i);
             if (entry.expiresAtSeconds <= nowSeconds) {
                 continue;
             }
             if (entry.message.equals(message)) {
-                existing = entry;
+                entries.set(i, new Entry(message, Math.max(entry.expiresAtSeconds, expiresAt)));
+                return;
             }
-        }
-        if (existing != null) {
-            entries.remove(existing);
-            entries.addLast(existing.refresh(expiresAt));
-            return;
         }
         entries.add(new Entry(message, expiresAt));
         while (entries.size() > MAX_ENTRIES) {
