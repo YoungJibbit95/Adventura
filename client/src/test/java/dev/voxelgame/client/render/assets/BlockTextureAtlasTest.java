@@ -11,6 +11,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlockTextureAtlasTest {
@@ -81,6 +82,23 @@ class BlockTextureAtlasTest {
         assertFalse(report.uvRectDebugLines().isEmpty());
         assertTrue(report.uvRectDebugLines().stream().anyMatch(line -> line.startsWith("voxel:stone.side ")));
         assertTrue(report.summary().contains("atlas"));
+    }
+
+    @Test
+    void usesDifferentGrassTopAndSideAtlasSlices() {
+        BlockTextureAtlas.AtlasValidationReport report = BlockTextureAtlas.validationReport(Blocks.createDefaultRegistry());
+        String grassTop = report.uvRectDebugLines().stream()
+                .filter(line -> line.startsWith("voxel:grass_block.top "))
+                .findFirst()
+                .orElseThrow();
+        String grassSide = report.uvRectDebugLines().stream()
+                .filter(line -> line.startsWith("voxel:grass_block.side "))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(grassTop.contains("sheet:grass_top"));
+        assertTrue(grassSide.contains("sheet:grass_side"));
+        assertNotEquals(grassTop, grassSide);
     }
 
     @Test

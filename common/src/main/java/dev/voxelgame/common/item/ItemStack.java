@@ -8,6 +8,9 @@ public record ItemStack(short itemId, int count, int damage) {
     }
 
     public ItemStack {
+        if (itemId < 0) {
+            throw new IllegalArgumentException("Item id must be >= 0");
+        }
         if (count < 0) {
             throw new IllegalArgumentException("Item count must be >= 0");
         }
