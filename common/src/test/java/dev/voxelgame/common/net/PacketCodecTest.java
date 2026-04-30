@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -432,5 +433,18 @@ class PacketCodecTest {
         );
 
         assertTrue(exception.getMessage().contains("remaining payload"));
+    }
+
+    @Test
+    void rejectsEncodingStorageOpenBeyondItemStackLimit() {
+        List<ItemStack> slots = new ArrayList<>();
+        for (int i = 0; i < 129; i++) {
+            slots.add(new ItemStack((short) 1, 1));
+        }
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.encode(new GamePacket.StorageOpen(0, 64, 0, slots))
+        );
     }
 }
