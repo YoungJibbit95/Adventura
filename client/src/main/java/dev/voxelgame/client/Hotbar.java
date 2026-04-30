@@ -445,6 +445,9 @@ public final class Hotbar {
     }
 
     public synchronized String slotLabel(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return "Invalid slot";
+        }
         ItemStack stack = inventory.slot(index);
         if (stack.isEmpty()) {
             return (index + 1) + " Empty";
@@ -453,6 +456,9 @@ public final class Hotbar {
     }
 
     public synchronized SlotView slotView(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return SlotView.empty();
+        }
         return viewFor(inventory.slot(index));
     }
 
@@ -485,6 +491,9 @@ public final class Hotbar {
     }
 
     public synchronized String inventorySlotLabel(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return "Invalid slot";
+        }
         ItemStack stack = inventory.slot(index);
         if (stack.isEmpty()) {
             return (index + 1) + " Empty";
