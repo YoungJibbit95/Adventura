@@ -14,6 +14,7 @@ uniform int uBloomEnabled;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uBloomStrength;
+uniform float uGlobalBrightness;
 uniform vec3 uFogColor;
 uniform sampler2D uBlockAtlas;
 uniform vec4 uSideUv[64];
@@ -40,14 +41,14 @@ bool fillsTextureGaps(int id) {
 }
 
 vec2 faceUv() {
-    vec2 uv = max(vFaceUv, vec2(0.0));
-    if (uv.x > 1.0) {
+    vec2 uv = vFaceUv;
+    if (uv.x < 0.0 || uv.x >= 1.0) {
         uv.x = fract(uv.x);
     }
-    if (uv.y > 1.0) {
+    if (uv.y < 0.0 || uv.y >= 1.0) {
         uv.y = fract(uv.y);
     }
-    return clamp(uv, vec2(0.0), vec2(1.0));
+    return uv;
 }
 
 vec4 atlasRect(int id) {
@@ -87,7 +88,7 @@ float emissiveStrength(int id) {
 void main() {
     int id = int(vBlockId + 0.5);
     vec4 surface = blockSurface(id);
-    vec3 lit = surface.rgb * vLight * vShade * vAo;
+    vec3 lit = surface.rgb * vLight * vShade * vAo * uGlobalBrightness;
     if (uBloomEnabled == 1) {
         float glow = emissiveStrength(id);
         lit += surface.rgb * glow * uBloomStrength * (1.0 + vLight * 0.35);
@@ -95,7 +96,8 @@ void main() {
     lit = pow(lit, vec3(0.92));
     lit = mix(vec3(dot(lit, vec3(0.299, 0.587, 0.114))), lit, 1.12);
     if (uFogEnabled == 1) {
-        float fog = smoothstep(uFogStart, uFogEnd, vDistance);
+        float fogStart = min(uFogStart, uFogEnd - 0.001);
+        float fog = smoothstep(fogStart, uFogEnd, vDistance);
         lit = mix(lit, uFogColor, fog);
     }
     fragColor = vec4(lit, blockAlpha(id) * surface.a);
