@@ -42,7 +42,7 @@ Diese Liste bündelt alle offenen Engine-Aufgaben aus Gameplay-Roadmap und Engin
 ### Section-Aware Chunk-Daten
 - leere Sections schneller überspringen.
 - Mesh-Bounds pro Section oder Layer vorbereiten.
-- Frustum-Culling genauer machen.
+- ~~Frustum-Culling genauer machen.~~ ✅ (Chunk-Sichtbarkeit wird pro Frame/Lage gecacht statt pro Render-Layer mehrfach berechnet)
 - Ziel: weniger unnötige Draw Calls bei hohen Chunks, Höhlen und Bergen.
 
 ### GL Resource Tracking
