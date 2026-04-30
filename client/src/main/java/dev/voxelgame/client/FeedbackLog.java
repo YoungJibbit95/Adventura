@@ -17,7 +17,18 @@ public final class FeedbackLog {
         if (message == null || message.isBlank()) {
             return;
         }
-        entries.add(new Entry(message, nowSeconds + Math.max(0.2, durationSeconds)));
+        double expiresAt = nowSeconds + Math.max(0.2, durationSeconds);
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            Entry entry = entries.get(i);
+            if (entry.expiresAtSeconds <= nowSeconds) {
+                continue;
+            }
+            if (entry.message.equals(message)) {
+                entries.set(i, new Entry(message, Math.max(entry.expiresAtSeconds, expiresAt)));
+                return;
+            }
+        }
+        entries.add(new Entry(message, expiresAt));
         while (entries.size() > MAX_ENTRIES) {
             entries.removeFirst();
         }
