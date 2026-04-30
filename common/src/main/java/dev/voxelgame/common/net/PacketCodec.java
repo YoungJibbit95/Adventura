@@ -406,6 +406,9 @@ public final class PacketCodec {
         }
         out.writeInt(stacks.size());
         for (ItemStack stack : stacks) {
+            if (stack == null) {
+                throw new IllegalArgumentException("Item stack list cannot contain null entries");
+            }
             out.writeShort(stack.itemId());
             out.writeInt(stack.count());
             out.writeInt(stack.damage());
