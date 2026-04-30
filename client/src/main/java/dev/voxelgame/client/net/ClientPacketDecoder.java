@@ -19,6 +19,9 @@ public final class ClientPacketDecoder extends ByteToMessageDecoder {
         if (packetLength < 0) {
             throw new IllegalArgumentException("Negative packet length: " + packetLength);
         }
+        if (packetLength > PacketCodec.MAX_PACKET_SIZE) {
+            throw new IllegalArgumentException("Packet length exceeds limit: " + packetLength);
+        }
         if (in.readableBytes() < packetLength) {
             in.resetReaderIndex();
             return;
