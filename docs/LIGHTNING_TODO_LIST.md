@@ -65,12 +65,14 @@ Propagation:
 - Glow/Bloom Toggle respektieren.
 
 ### Terrain Shader
+- ✅ UV-Wrapping im Terrain-Shader (`faceUv`) repariert; doppelte/defekte Bedingung entfernt, damit Atlas-UVs stabil normalisiert werden.
 - per-face brightness.
-- vertex AO.
+- ~~vertex AO.~~ ✅ (AO wird auf greedy-gemeshte Terrain-Flächen pro Vertex angewendet; AO-Sampling für große Merges nutzt jetzt die jeweilige Eck-Blockposition statt nur den Ursprung des Merges)
+- ~~vertex AO.~~ ✅ (AO wird jetzt auch auf greedy-gemeshte Terrain-Flächen pro Vertex angewendet statt hart auf `1.0` gesetzt)
 - ~~fog.~~ ✅ (bereits im `chunk.frag` aktiv; zusätzlich gegen fehlerhafte Fog-Range abgesichert)
 - biome tint später.
 - ~~day/night global brightness.~~ ✅ (als `uGlobalBrightness` aus Sky-Luminanz im Terrain-Shader verdrahtet)
-- block light contribution.
+- ~~block light contribution.~~ ✅ (Mesher kombiniert Sky/Block-Light gewichtet statt nur `max()`, damit lokale Lichtquellen trotz Tageshelligkeit sichtbar beitragen)
 
 ### Cutout / Vegetation
 - Alpha Cutout bleibt scharf.

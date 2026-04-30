@@ -188,7 +188,7 @@ public final class ChunkMesher {
                 int x = blockX(face, fixed, u, v, baseX);
                 int y = blockY(face, fixed, v, minY);
                 int z = blockZ(face, fixed, u, v, baseZ);
-                addMergedFace(vertices, indices, x, y, z, face, cell.blockId(), cell.light(), width, height);
+                addMergedFace(vertices, indices, world, x, y, z, face, cell.blockId(), cell.light(), width, height, ambientOcclusion);
                 clearMask(mask, u, v, width, height, uCount);
                 u += width;
             }
@@ -255,8 +255,10 @@ public final class ChunkMesher {
 
     private static float light(WorldView world, int x, int y, int z) {
         if (world instanceof dev.voxelgame.common.world.InMemoryWorld memoryWorld) {
-            int packed = Math.max(memoryWorld.skyLight(x, y, z), memoryWorld.blockLight(x, y, z));
-            return packed / 15.0f;
+            float sky = memoryWorld.skyLight(x, y, z) / 15.0f;
+            float block = memoryWorld.blockLight(x, y, z) / 15.0f;
+            float combined = sky * 0.65f + block * 0.85f;
+            return Math.max(0.12f, Math.min(1.0f, combined));
         }
         return 1.0f;
     }
@@ -285,7 +287,7 @@ public final class ChunkMesher {
         indices.add(baseVertex + 3);
     }
 
-    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, int x, int y, int z, Face face, short blockId, float light, int width, int height) {
+    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, float light, int width, int height, boolean ambientOcclusionEnabled) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         int uAxis = uAxis(face);
         int vAxis = vAxis(face);
@@ -305,7 +307,9 @@ public final class ChunkMesher {
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
             vertices.add(light);
-            vertices.add(1.0f);
+            int[] aoOrigin = aoSampleOrigin(x, y, z, mergedCorner, uAxis, vAxis, width, height);
+            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, aoOrigin[0], aoOrigin[1], aoOrigin[2], face, mergedCorner) : 1.0f);
+            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, x, y, z, face, mergedCorner) : 1.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
             vertices.add(uv[1]);
@@ -318,6 +322,17 @@ public final class ChunkMesher {
         indices.add(baseVertex + 3);
     }
 
+
+    private static int[] aoSampleOrigin(int x, int y, int z, float[] mergedCorner, int uAxis, int vAxis, int width, int height) {
+        int[] origin = new int[]{x, y, z};
+        if (width > 1) {
+            origin[uAxis] += mergedCorner[uAxis] == 0.0f ? 0 : width - 1;
+        }
+        if (height > 1) {
+            origin[vAxis] += mergedCorner[vAxis] == 0.0f ? 0 : height - 1;
+        }
+        return origin;
+    }
     private static void addCrossSprite(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion) {
         addSpriteQuad(vertices, indices, world, x, y, z, blockId, light, ambientOcclusion, new Face(0, 0, 1, new float[][]{
                 {0.0f, 0.0f, 0.5f},
