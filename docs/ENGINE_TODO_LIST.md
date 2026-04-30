@@ -83,9 +83,11 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - Entity-Snapshots nicht global an alle Spieler senden.
 - Fortschritt: Broadcasts gehen nur noch an authentifizierte Verbindungen (nicht mehr an Pre-Login Channels).
 - Fortschritt: Broadcasts für Weltzustand/Entities sind auf die jeweilige `ServerWorld` begrenzt.
+- Fortschritt: Client-Netzwerkdecoder begrenzt eingehende Packet-Größe jetzt ebenfalls auf 2 MiB, um OOM durch manipulierte Längenfelder zu verhindern.
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.
+- Protokoll-Decoder strikt halten: trailing bytes nach Paketdecode ablehnen. ✅ umgesetzt im `PacketCodec`.
 
 ### Async Server Chunk Generation
 - Chunk-Erzeugung darf Netty-Handler nicht blockieren.
