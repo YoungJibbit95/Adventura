@@ -433,7 +433,7 @@ public final class Hotbar {
         if (stack.isEmpty()) {
             return "Empty";
         }
-        return label(items.requireById(stack.itemId()).key()) + " x" + stack.count();
+        return itemDisplayName(stack.itemId()) + " x" + stack.count();
     }
 
     public synchronized Optional<String> selectedItemKey() {
@@ -445,14 +445,20 @@ public final class Hotbar {
     }
 
     public synchronized String slotLabel(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return "Invalid slot";
+        }
         ItemStack stack = inventory.slot(index);
         if (stack.isEmpty()) {
             return (index + 1) + " Empty";
         }
-        return (index + 1) + " " + label(items.requireById(stack.itemId()).key()) + " x" + stack.count();
+        return (index + 1) + " " + itemDisplayName(stack.itemId()) + " x" + stack.count();
     }
 
     public synchronized SlotView slotView(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return SlotView.empty();
+        }
         return viewFor(inventory.slot(index));
     }
 
@@ -460,7 +466,25 @@ public final class Hotbar {
         if (stack.isEmpty()) {
             return SlotView.empty();
         }
-        ItemType item = items.requireById(stack.itemId());
+        ItemType item = items.findById(stack.itemId()).orElse(null);
+        if (item == null) {
+            return new SlotView(
+                    "unknown:" + stack.itemId(),
+                    "Unknown Item",
+                    "Unknown",
+                    "Unrecognized item id " + stack.itemId(),
+                    "Unknown",
+                    stack.count(),
+                    0,
+                    0,
+                    "-",
+                    0,
+                    0,
+                    0,
+                    0,
+                    false
+            );
+        }
         int durability = item.durability() <= 0 ? 0 : Math.max(0, item.durability() - stack.damage());
         return new SlotView(
                 item.key(),
@@ -485,11 +509,21 @@ public final class Hotbar {
     }
 
     public synchronized String inventorySlotLabel(int index) {
+        if (index < 0 || index >= inventory.size()) {
+            return "Invalid slot";
+        }
         ItemStack stack = inventory.slot(index);
         if (stack.isEmpty()) {
             return (index + 1) + " Empty";
         }
-        return label(items.requireById(stack.itemId()).key()) + " x" + stack.count();
+        return itemDisplayName(stack.itemId()) + " x" + stack.count();
+    }
+
+    private String itemDisplayName(short itemId) {
+        return items.findById(itemId)
+                .map(ItemType::key)
+                .map(Hotbar::label)
+                .orElse("Unknown Item");
     }
 
     public synchronized String itemKey(short itemId) {
