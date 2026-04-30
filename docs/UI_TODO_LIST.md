@@ -9,6 +9,7 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - warmer Pixel-Art-Stil.
 - klare Rahmen und gute Lesbarkeit.
 - UI Scale überall anwenden.
+- ✅ Teilweise erledigt: Compact-Inventory (Slots, Header, Buttons, Hover, Durability-Bar) skaliert jetzt konsistent mit UI Scale.
 - Hover/Pressed/Disabled States vereinheitlichen.
 - zentrale Komponenten: Buttons, Panels, Slots, Tabs, Chips, Scrollbars, Tooltips, Progress Bars, Textfelder.
 
