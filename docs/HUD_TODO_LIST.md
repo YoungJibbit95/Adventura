@@ -85,6 +85,7 @@ Engine Stats: FPS, Frame ms, Render ms, Update ms, Chunkgen ms, Meshing ms, Uplo
 Gameplay Stats: Position, Chunk Coordinate, Current Biome, Light Level, Looking at Block, Selected Item, Gamemode, raw survival values.
 
 Network Stats: Ping, Server tick estimate, packets/sec optional, entity snapshot count, chunk packet count.
+- Fortschritt: Packets/sec sind jetzt im Debug-HUD sichtbar (TX/s, RX/s auf Basis der bisherigen Laufzeitpakete).
 
 ## Akzeptanzkriterien
 
