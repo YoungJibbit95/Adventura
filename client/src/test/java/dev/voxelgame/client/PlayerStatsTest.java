@@ -63,6 +63,7 @@ class PlayerStatsTest {
     void deathBlocksActionsUntilRespawn() {
         PlayerStats stats = new PlayerStats();
         stats.applyComfort(17);
+        stats.applyComfort(30);
 
         stats.hurt(100);
 

@@ -5,6 +5,7 @@ import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
+import dev.voxelgame.client.render.BlockRenderProperties;
 import dev.voxelgame.client.render.ChunkBorderRenderer;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
@@ -1115,9 +1116,22 @@ public final class GameClient {
         int x = (int) Math.floor(camera.position().x);
         int y = (int) Math.floor(camera.position().y);
         int z = (int) Math.floor(camera.position().z);
+        Optional<dev.voxelgame.common.math.Raycast.Hit> target = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (target.isPresent()) {
+            x = target.get().x();
+            y = target.get().y();
+            z = target.get().z();
+        }
         int sky = world.skyLightAt(x, y, z);
         int block = world.blockLightAt(x, y, z);
-        return "Light @ " + x + " " + y + " " + z + ": combined " + Math.max(sky, block) + " sky " + sky + " block " + block;
+        short blockId = world.blockIdAt(x, y, z);
+        BlockRenderProperties properties = BlockRenderProperties.forBlock(blockId);
+        String emissive = properties.emissive() > 0.0f ? String.format(Locale.ROOT, "%.2f", properties.emissive()) : "0";
+        return "Light @ " + x + " " + y + " " + z
+                + ": combined " + Math.max(sky, block)
+                + " sky " + sky
+                + " block " + block
+                + " emissive " + emissive;
     }
 
     private String biomeDebugLine() {
@@ -1198,6 +1212,13 @@ public final class GameClient {
             return String.format(Locale.ROOT, "%.1fK", value / 1_000.0);
         }
         return Long.toString(value);
+    }
+
+    private static String formatRate(double value) {
+        if (!Double.isFinite(value) || value < 0.0) {
+            return "0.0";
+        }
+        return String.format(Locale.ROOT, "%.1f", value);
     }
 
     private String positionLine() {
@@ -1925,7 +1946,7 @@ public final class GameClient {
         }
     }
 
-    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, float x, float y) {
+    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
         float uiScale = settings.uiScale();
         float slot = 42.0f * uiScale;
         float gap = 6.0f * uiScale;
@@ -1939,7 +1960,7 @@ public final class GameClient {
         drawAssetPanel("panel_inventory", x - 14.0f * uiScale, y - 42.0f * uiScale, panelWidth, rows * (slot + gap) + 48.0f * uiScale, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
         uiRenderer.rect(x + 2.0f * uiScale, y - 2.0f * uiScale, gridWidth - 4.0f * uiScale, rows * (slot + gap) - gap + 4.0f * uiScale, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
         uiRenderer.text("INVENTORY", x, y - 28.0f * uiScale, 2.4f * uiScale, UiColor.WHITE);
-        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 96.0f * uiScale, 28.0f * uiScale, "SORT BAG", true), mouse, clicked, () -> {
+        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 76.0f * uiScale, 28.0f * uiScale, "SORT", true), mouse, clicked, () -> {
             if (hotbar.sortBackpack()) {
                 setStatus("Backpack sorted");
                 audio.play(AudioCue.INVENTORY_CLICK);
@@ -1950,14 +1971,12 @@ public final class GameClient {
         if (!trashEnabled) {
             inventoryTrashMode = false;
         }
-        if (trashEnabled) {
-            drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y - 36.0f * uiScale, 90.0f * uiScale, 28.0f * uiScale, inventoryTrashMode ? "TRASH ON" : "TRASH", true), mouse, clicked, () -> {
-                inventoryTrashMode = !inventoryTrashMode;
-                setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
-                audio.play(AudioCue.INVENTORY_CLICK);
-                updateWindowTitle();
-            });
-        }
+        drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y - 36.0f * uiScale, 90.0f * uiScale, 28.0f * uiScale, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
+            inventoryTrashMode = !inventoryTrashMode;
+            setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
+            audio.play(AudioCue.INVENTORY_CLICK);
+            updateWindowTitle();
+        });
         String hoverHint = "";
         boolean droppedOnSlot = false;
         for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), columns * rows); i++) {
@@ -2399,7 +2418,7 @@ public final class GameClient {
         uiRenderer.text("TRIS " + formatCount(lastRenderStats.triangles()) + " VRAM " + formatMegabytes(lastRenderStats.meshBytes()) + " ENT " + lastRenderedEntities + " EDC " + lastEntityRenderStats.drawCalls() + " EP " + lastEntityRenderStats.modelParts() + " EMDL " + lastEntityRenderStats.cachedModels() + " ECULL " + lastEntityRenderStats.culledEntities() + " HITBOX " + lastRenderedEntityHitboxes, 22.0f, 144.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()) + " BORDERS " + lastChunkBorderDebugChunks, 22.0f, 164.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("PART " + lastParticleRenderStats.liveParticles() + " PDC " + lastParticleRenderStats.drawCalls() + " PTRI " + lastParticleRenderStats.triangles() + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 184.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("NET " + onOff(onlineMode) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("NET " + onOff(onlineMode) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " TX/s " + formatRate(network.sentPacketsPerSecond()) + " RX/s " + formatRate(network.receivedPacketsPerSecond()) + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SEL " + clampText(selectedItem, 52), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOOK " + clampText(lookingAt, 52), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
     }
