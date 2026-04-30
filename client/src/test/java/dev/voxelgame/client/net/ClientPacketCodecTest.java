@@ -4,9 +4,11 @@ import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.net.PacketCodec;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -61,6 +63,28 @@ class ClientPacketCodecTest {
     void decoderRejectsOversizedFrames() {
         EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
         try {
+            int oversizedLength = PacketCodec.MAX_PACKET_SIZE + 1;
+            var buffer = Unpooled.buffer(Integer.BYTES);
+            buffer.writeInt(oversizedLength);
+
+            try {
+                assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(buffer));
+            } finally {
+                ReferenceCountUtil.release(buffer);
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+
+    @Test
+    void decoderAcceptsFrameLengthAtLimit() {
+        EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
+        try {
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketCodec.MAX_PACKET_SIZE);
+            assertFalse(channel.writeInbound(frameHeader));
+            assertNull(channel.readInbound());
             int oversizedLength = (2 * 1024 * 1024) + 1;
             var buffer = Unpooled.buffer(Integer.BYTES);
             buffer.writeInt(oversizedLength);

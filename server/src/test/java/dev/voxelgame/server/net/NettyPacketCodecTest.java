@@ -4,9 +4,11 @@ import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.net.PacketCodec;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,7 +65,24 @@ class NettyPacketCodecTest {
         try {
             int tooLarge = PacketCodec.MAX_PACKET_SIZE + 1;
             var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(tooLarge);
-            assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(frameHeader));
+            try {
+                assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(frameHeader));
+            } finally {
+                ReferenceCountUtil.release(frameHeader);
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+
+    @Test
+    void decoderAcceptsFrameLengthAtLimit() {
+        EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
+        try {
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketCodec.MAX_PACKET_SIZE);
+            assertFalse(channel.writeInbound(frameHeader));
+            assertNull(channel.readInbound());
         } finally {
             channel.finishAndReleaseAll();
         }
