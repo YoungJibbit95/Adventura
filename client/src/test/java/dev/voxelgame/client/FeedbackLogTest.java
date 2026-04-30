@@ -39,4 +39,16 @@ class FeedbackLogTest {
         assertEquals(List.of("Inventory Full"), log.visible(12.0));
         assertEquals(List.of(), log.visible(12.5));
     }
+    @Test
+    void addPurgesExpiredEntriesBeforeApplyingCapacityLimit() {
+        FeedbackLog log = new FeedbackLog();
+
+        for (int i = 0; i < 6; i++) {
+            log.add("Expired " + i, 0.0, 0.5);
+        }
+        log.add("Fresh", 1.0, 2.0);
+
+        assertEquals(List.of("Fresh"), log.visible(1.1));
+    }
+
 }
