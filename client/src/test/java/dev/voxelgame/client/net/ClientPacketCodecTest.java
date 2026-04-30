@@ -1,6 +1,7 @@
 package dev.voxelgame.client.net;
 
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.net.PacketCodec;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;

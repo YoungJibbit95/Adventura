@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 public final class PacketCodec {
+    public static final int MAX_PACKET_SIZE = 2 * 1024 * 1024;
     private static final int MAX_ARRAY_LENGTH = 1_000_000;
 
     private PacketCodec() {
