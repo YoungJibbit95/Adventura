@@ -12,6 +12,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerSaveCodecTest {
@@ -70,5 +71,14 @@ class PlayerSaveCodecTest {
 
         assertEquals(new ItemStack(berries, 3), decoded.inventory().get(0));
         assertTrue(decoded.inventory().get(1).isEmpty());
+    }
+
+    @Test
+    void playerSaveDecodeRejectsMissingKindMarker() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Properties properties = new Properties();
+        properties.setProperty("save.version", "1");
+
+        assertThrows(IllegalArgumentException.class, () -> PlayerSaveCodec.decode(properties, items));
     }
 }
