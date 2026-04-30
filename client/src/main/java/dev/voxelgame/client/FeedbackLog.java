@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
 
 public final class FeedbackLog {
     private static final int MAX_ENTRIES = 6;
