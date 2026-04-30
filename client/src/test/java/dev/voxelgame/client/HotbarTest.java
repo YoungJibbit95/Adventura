@@ -188,4 +188,28 @@ class HotbarTest {
         assertTrue(hotbar.canHarvestSelected(copperOre));
         assertFalse(hotbar.canHarvestSelected(ironOre));
     }
+
+    @Test
+    void invalidSlotAccessorsAreUiSafe() {
+        Hotbar hotbar = new Hotbar();
+        hotbar.resetForNewGame();
+
+        assertEquals("Invalid slot", hotbar.slotLabel(-1));
+        assertEquals("Invalid slot", hotbar.inventorySlotLabel(36));
+        assertTrue(hotbar.slotView(999).isEmpty());
+    }
+
+    @Test
+    void unknownItemIdInSnapshotDoesNotBreakHudLabelsOrViews() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack((short) 999, 2));
+        hotbar.applySnapshot(slots);
+
+        assertEquals("Unknown Item x2", hotbar.selectedLabel());
+        assertTrue(hotbar.slotLabel(0).contains("Unknown Item"));
+        assertEquals("unknown:999", hotbar.slotView(0).itemKey());
+        assertEquals("unknown:999", hotbar.selectedItemKey().orElseThrow());
+        assertTrue(hotbar.selectedTooltip().contains("Unrecognized item id 999"));
+    }
 }
