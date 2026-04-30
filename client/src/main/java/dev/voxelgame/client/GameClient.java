@@ -1926,19 +1926,20 @@ public final class GameClient {
     }
 
     private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
-        float slot = 42.0f;
-        float gap = 6.0f;
+        float uiScale = settings.uiScale();
+        float slot = 42.0f * uiScale;
+        float gap = 6.0f * uiScale;
         int columns = 9;
         int rows = 4;
         float gridWidth = columns * slot + (columns - 1) * gap;
-        float panelWidth = Math.min(gridWidth + 28.0f, framebufferWidth - 48.0f);
-        if (x + panelWidth > framebufferWidth - 24.0f) {
-            x = Math.max(24.0f, framebufferWidth * 0.5f - panelWidth * 0.5f);
+        float panelWidth = Math.min(gridWidth + 28.0f * uiScale, framebufferWidth - 48.0f * uiScale);
+        if (x + panelWidth > framebufferWidth - 24.0f * uiScale) {
+            x = Math.max(24.0f * uiScale, framebufferWidth * 0.5f - panelWidth * 0.5f);
         }
-        drawAssetPanel("panel_inventory", x - 14.0f, y - 42.0f, panelWidth, rows * (slot + gap) + 48.0f, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
-        uiRenderer.rect(x + 2.0f, y - 2.0f, gridWidth - 4.0f, rows * (slot + gap) - gap + 4.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
-        uiRenderer.text("INVENTORY", x, y - 28.0f, 2.4f, UiColor.WHITE);
-        drawButton(new UiButton(x + panelWidth - 188.0f, y - 36.0f, 76.0f, 28.0f, "SORT", true), mouse, clicked, () -> {
+        drawAssetPanel("panel_inventory", x - 14.0f * uiScale, y - 42.0f * uiScale, panelWidth, rows * (slot + gap) + 48.0f * uiScale, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
+        uiRenderer.rect(x + 2.0f * uiScale, y - 2.0f * uiScale, gridWidth - 4.0f * uiScale, rows * (slot + gap) - gap + 4.0f * uiScale, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
+        uiRenderer.text("INVENTORY", x, y - 28.0f * uiScale, 2.4f * uiScale, UiColor.WHITE);
+        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 76.0f * uiScale, 28.0f * uiScale, "SORT", true), mouse, clicked, () -> {
             if (hotbar.sortBackpack()) {
                 setStatus("Backpack sorted");
                 audio.play(AudioCue.INVENTORY_CLICK);
@@ -1949,7 +1950,7 @@ public final class GameClient {
         if (!trashEnabled) {
             inventoryTrashMode = false;
         }
-        drawButton(new UiButton(x + panelWidth - 104.0f, y - 36.0f, 90.0f, 28.0f, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
+        drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y - 36.0f * uiScale, 90.0f * uiScale, 28.0f * uiScale, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
             inventoryTrashMode = !inventoryTrashMode;
             setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
             audio.play(AudioCue.INVENTORY_CLICK);
@@ -1966,19 +1967,19 @@ public final class GameClient {
             Hotbar.SlotView slotView = hotbar.slotView(i);
             boolean hovered = contains(mouse, sx, sy, slot, slot);
             if (hovered) {
-                uiRenderer.rect(sx - 3.0f, sy - 3.0f, slot + 6.0f, slot + 6.0f, UiColor.BUTTON_HOVER);
+                uiRenderer.rect(sx - 3.0f * uiScale, sy - 3.0f * uiScale, slot + 6.0f * uiScale, slot + 6.0f * uiScale, UiColor.BUTTON_HOVER);
             }
             if (draggedInventorySlot == i) {
-                uiRenderer.rect(sx - 2.0f, sy - 2.0f, slot + 4.0f, slot + 4.0f, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
+                uiRenderer.rect(sx - 2.0f * uiScale, sy - 2.0f * uiScale, slot + 4.0f * uiScale, slot + 4.0f * uiScale, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
             }
             drawAssetSlot(sx, sy, slot, selected, i < Hotbar.HOTBAR_SLOTS);
             if (!slotView.isEmpty()) {
-                drawItemIcon(slotView.itemKey(), sx + 6.0f, sy + 5.0f, 30.0f);
+                drawItemIcon(slotView.itemKey(), sx + 6.0f * uiScale, sy + 5.0f * uiScale, 30.0f * uiScale);
                 if (slotView.count() > 1) {
-                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f, sy + 28.0f, 1.05f, UiColor.WHITE);
+                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f * uiScale, sy + 28.0f * uiScale, 1.05f * uiScale, UiColor.WHITE);
                 }
                 if (slotView.hasDurability()) {
-                    drawDurabilityBar(sx + 7.0f, sy + 36.0f, 28.0f, slotView.durabilityLeft(), slotView.maxDurability());
+                    drawDurabilityBar(sx + 7.0f * uiScale, sy + 36.0f * uiScale, 28.0f * uiScale, slotView.durabilityLeft(), slotView.maxDurability());
                 }
                 if (hovered) {
                     hoverHint = slotHoverText(slotView);
