@@ -40,14 +40,14 @@ bool fillsTextureGaps(int id) {
 }
 
 vec2 faceUv() {
-    vec2 uv = max(vFaceUv, vec2(0.0));
-    if (uv.x > 1.0) {
+    vec2 uv = vFaceUv;
+    if (uv.x < 0.0 || uv.x >= 1.0) {
         uv.x = fract(uv.x);
     }
-    if (uv.y > 1.0) {
+    if (uv.y < 0.0 || uv.y >= 1.0) {
         uv.y = fract(uv.y);
     }
-    return clamp(uv, vec2(0.0), vec2(1.0));
+    return uv;
 }
 
 vec4 atlasRect(int id) {
@@ -95,7 +95,8 @@ void main() {
     lit = pow(lit, vec3(0.92));
     lit = mix(vec3(dot(lit, vec3(0.299, 0.587, 0.114))), lit, 1.12);
     if (uFogEnabled == 1) {
-        float fog = smoothstep(uFogStart, uFogEnd, vDistance);
+        float fogStart = min(uFogStart, uFogEnd - 0.001);
+        float fog = smoothstep(fogStart, uFogEnd, vDistance);
         lit = mix(lit, uFogColor, fog);
     }
     fragColor = vec4(lit, blockAlpha(id) * surface.a);
