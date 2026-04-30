@@ -69,6 +69,7 @@ Adventura soll sich wie ein eigenständiges cozy Survival-Adventure anfühlen: s
 - Comfort soll Basebuilding belohnen, aber nicht erzwingen.
 - Quellen: active campfire, lanterns, rugs, chairs, tables, flower pots, bookshelf, sleeping mat, shelter, friendly animals, storage crate, garden fence.
 - Effekte: Hunger sinkt langsamer, Stamina regeneriert schneller, Health regeneriert etwas besser, Sleep funktioniert besser, Base fühlt sich sicherer an.
+- ~~Comfort nach Respawn zurücksetzen, damit kein alter Base-Buff ins neue Leben geleakt wird.~~ ✅ Erledigt.
 - Offene Aufgaben: Boni besser erklären, Comfort-Cap pro Progression erhöhen, Shelter-Erkennung verbessern, Friendly Animal Comfort stärker nutzen, Furniture-Tooltips mit Comfort-Wert anzeigen.
 
 ## P4 – Tool Progression

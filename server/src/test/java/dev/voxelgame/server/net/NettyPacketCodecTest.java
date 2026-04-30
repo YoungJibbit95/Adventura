@@ -1,6 +1,7 @@
 package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.net.PacketCodec;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.jupiter.api.Test;
@@ -60,7 +61,7 @@ class NettyPacketCodecTest {
     void decoderRejectsOversizedFrames() {
         EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
         try {
-            int tooLarge = (2 * 1024 * 1024) + 1;
+            int tooLarge = PacketCodec.MAX_PACKET_SIZE + 1;
             var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(tooLarge);
             assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(frameHeader));
         } finally {
