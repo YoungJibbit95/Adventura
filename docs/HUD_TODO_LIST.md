@@ -75,7 +75,7 @@ Regeln:
 - kurze Meldungen.
 - ~~gleiche Meldungen zusammenfassen.~~ ✅ Erledigt (FeedbackLog aggregiert Wiederholungen als `xN`).
 - ~~Cooldown gegen Spam.~~ ✅ Erledigt (FeedbackLog merged doppelte aktive Meldungen und refreshed Dauer).
-- wichtige Meldungen länger sichtbar.
+- ~~wichtige Meldungen länger sichtbar.~~ ✅ Erledigt (wichtige Kategorien bekommen längere Default-Dauer im FeedbackLog).
 
 ## P6 – Debug HUD
 

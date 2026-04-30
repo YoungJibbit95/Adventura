@@ -12,7 +12,8 @@ public final class FeedbackLog {
     private final Deque<Entry> entries = new ArrayDeque<>();
 
     public synchronized void add(String message, double nowSeconds) {
-        add(message, nowSeconds, DEFAULT_DURATION_SECONDS);
+        double duration = isImportantMessage(message) ? DEFAULT_DURATION_SECONDS + 1.8 : DEFAULT_DURATION_SECONDS;
+        add(message, nowSeconds, duration);
     }
 
     public synchronized void add(String message, double nowSeconds, double durationSeconds) {
@@ -51,6 +52,14 @@ public final class FeedbackLog {
 
     public synchronized void clear() {
         entries.clear();
+    }
+
+    private static boolean isImportantMessage(String message) {
+        String lower = message.toLowerCase();
+        return lower.contains("unlock")
+                || lower.contains("discovered")
+                || lower.contains("lore")
+                || lower.contains("comfort level");
     }
 
     private record Entry(String message, int count, double expiresAtSeconds) {
