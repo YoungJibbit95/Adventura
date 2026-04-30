@@ -10,9 +10,10 @@ import java.io.DataOutputStream;
 import java.util.List;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -35,6 +36,24 @@ class PacketCodecTest {
 
         assertEquals("Player", decoded.username());
         assertEquals("dev-token", decoded.authToken());
+    }
+
+    @Test
+    void rejectsOversizedLoginRequestFields() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new GamePacket.LoginRequest("P".repeat(GamePacket.MAX_USERNAME_LENGTH + 1), "dev-token")
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new GamePacket.LoginRequest("Player", "x".repeat(GamePacket.MAX_AUTH_TOKEN_LENGTH + 1))
+        );
+    }
+
+    @Test
+    void rejectsPacketsOutsideSharedSizeLimits() {
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(new byte[PacketLimits.MIN_PACKET_SIZE - 1]));
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(new byte[PacketLimits.MAX_PACKET_SIZE + 1]));
     }
 
     @Test
@@ -111,15 +130,37 @@ class PacketCodecTest {
     @Test
     void roundTripsPlayerMove() {
         GamePacket.PlayerMove decoded = (GamePacket.PlayerMove) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.PlayerMove(1.5, 80.25, -3.75, 45.0f, -12.5f, true)
+                new GamePacket.PlayerMove(42L, 1.5, 80.25, -3.75, 45.0f, -12.5f, true, true, false, true)
         ));
 
+        assertEquals(42L, decoded.sequence());
         assertEquals(1.5, decoded.x());
         assertEquals(80.25, decoded.y());
         assertEquals(-3.75, decoded.z());
         assertEquals(45.0f, decoded.yaw());
         assertEquals(-12.5f, decoded.pitch());
         assertTrue(decoded.onGround());
+        assertTrue(decoded.feetInWater());
+        assertFalse(decoded.bodyInWater());
+        assertTrue(decoded.headUnderwater());
+    }
+
+    @Test
+    void roundTripsPlayerPositionSnapshot() {
+        GamePacket.PlayerPositionSnapshot decoded = (GamePacket.PlayerPositionSnapshot) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.PlayerPositionSnapshot(99L, 8.5, 120.0, -4.5, 12.0f, -3.0f, true, true, true, false)
+        ));
+
+        assertEquals(99L, decoded.sequence());
+        assertEquals(8.5, decoded.x());
+        assertEquals(120.0, decoded.y());
+        assertEquals(-4.5, decoded.z());
+        assertEquals(12.0f, decoded.yaw());
+        assertEquals(-3.0f, decoded.pitch());
+        assertTrue(decoded.onGround());
+        assertTrue(decoded.feetInWater());
+        assertTrue(decoded.bodyInWater());
+        assertFalse(decoded.headUnderwater());
     }
 
     @Test
@@ -137,13 +178,15 @@ class PacketCodecTest {
     @Test
     void roundTripsEntitySnapshots() {
         UUID playerId = UUID.randomUUID();
-        EntitySnapshot snapshot = new EntitySnapshot(123L, "voxel:player", playerId, 1.0, 2.0, 3.0, 90.0f, -10.0f, 20, EntitySnapshot.STATE_WANDER);
+        EntitySnapshot snapshot = new EntitySnapshot(123L, "voxel:player", playerId, 1.0, 2.0, 3.0, 90.0f, -10.0f, 20, EntitySnapshot.STATE_WANDER)
+                .withVelocity(0.2, -0.1, 0.4);
+        EntitySnapshot ambient = new EntitySnapshot(456L, "voxel:bunny", null, 4.0, 5.0, 6.0, 15.0f, 0.0f, 8, EntitySnapshot.STATE_FLEE);
 
         GamePacket.EntitySnapshots decoded = (GamePacket.EntitySnapshots) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.EntitySnapshots(List.of(snapshot))
+                new GamePacket.EntitySnapshots(List.of(snapshot, ambient))
         ));
 
-        assertEquals(1, decoded.snapshots().size());
+        assertEquals(2, decoded.snapshots().size());
         EntitySnapshot actual = decoded.snapshots().getFirst();
         assertEquals(123L, actual.entityId());
         assertEquals("voxel:player", actual.typeKey());
@@ -151,17 +194,21 @@ class PacketCodecTest {
         assertEquals(3.0, actual.z());
         assertEquals(90.0f, actual.yaw());
         assertEquals(EntitySnapshot.STATE_WANDER, actual.stateKey());
+        assertEquals(0.2, actual.velocityX(), 0.0001);
+        assertEquals(-0.1, actual.velocityY(), 0.0001);
+        assertEquals(0.4, actual.velocityZ(), 0.0001);
+        assertNull(decoded.snapshots().get(1).ownerPlayerId());
     }
 
     @Test
     void roundTripsEntityInteract() {
         GamePacket.EntityInteract decoded = (GamePacket.EntityInteract) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.EntityInteract(123L, 4, GamePacket.EntityInteract.Action.FEED)
+                new GamePacket.EntityInteract(123L, 4, GamePacket.EntityInteract.Action.ATTACK)
         ));
 
         assertEquals(123L, decoded.entityId());
         assertEquals(4, decoded.selectedSlot());
-        assertEquals(GamePacket.EntityInteract.Action.FEED, decoded.action());
+        assertEquals(GamePacket.EntityInteract.Action.ATTACK, decoded.action());
     }
 
     @Test
@@ -192,12 +239,13 @@ class PacketCodecTest {
     @Test
     void roundTripsStorageOpenRequest() {
         GamePacket.StorageOpenRequest decoded = (GamePacket.StorageOpenRequest) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.StorageOpenRequest(-3, 72, 8)
+                new GamePacket.StorageOpenRequest(-3, 72, 8, 17)
         ));
 
         assertEquals(-3, decoded.x());
         assertEquals(72, decoded.y());
         assertEquals(8, decoded.z());
+        assertEquals(17, decoded.transactionId());
     }
 
     @Test
@@ -214,7 +262,7 @@ class PacketCodecTest {
     @Test
     void roundTripsCookRequest() {
         GamePacket.CookRequest decoded = (GamePacket.CookRequest) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.CookRequest(4, 80, -9, "voxel:cooked_berries", List.of(3, 5))
+                new GamePacket.CookRequest(4, 80, -9, "voxel:cooked_berries", List.of(3, 5), 18)
         ));
 
         assertEquals(4, decoded.stationX());
@@ -222,6 +270,41 @@ class PacketCodecTest {
         assertEquals(-9, decoded.stationZ());
         assertEquals("voxel:cooked_berries", decoded.recipeKey());
         assertEquals(List.of(3, 5), decoded.inputSlots());
+        assertEquals(18, decoded.transactionId());
+    }
+
+    @Test
+    void roundTripsCampfireStatus() {
+        GamePacket.CampfireStatus decoded = (GamePacket.CampfireStatus) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.CampfireStatus(4, 80, -9, true, 42.5, "voxel:cooked_berries", 3.0, 1.5)
+        ));
+
+        assertEquals(4, decoded.x());
+        assertEquals(80, decoded.y());
+        assertEquals(-9, decoded.z());
+        assertTrue(decoded.active());
+        assertEquals(42.5, decoded.fuelSecondsRemaining(), 0.001);
+        assertEquals("voxel:cooked_berries", decoded.cookingRecipeKey());
+        assertEquals(3.0, decoded.cookTotalSeconds(), 0.001);
+        assertEquals(1.5, decoded.cookSecondsRemaining(), 0.001);
+        assertTrue(decoded.cooking());
+    }
+
+    @Test
+    void rejectsDecodedCraftRequestWithOversizedRecipeKey() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.CRAFT_REQUEST.id());
+        out.writeUTF("x".repeat(GamePacket.MAX_RECIPE_KEY_LENGTH + 1));
+        out.writeInt(1);
+        out.writeBoolean(false);
+        out.writeInt(0);
+        out.writeInt(0);
+        out.writeInt(0);
+        out.writeInt(1);
+        out.flush();
+
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(bytes.toByteArray()));
     }
 
     @Test
@@ -267,7 +350,7 @@ class PacketCodecTest {
     @Test
     void roundTripsCraftRequest() {
         GamePacket.CraftRequest decoded = (GamePacket.CraftRequest) PacketCodec.decode(PacketCodec.encode(
-                GamePacket.CraftRequest.atStation("voxel:stone_pickaxe", 3, 10, 80, -4)
+                GamePacket.CraftRequest.atStation("voxel:stone_pickaxe", 3, 10, 80, -4, 19)
         ));
 
         assertEquals("voxel:stone_pickaxe", decoded.recipeKey());
@@ -276,6 +359,15 @@ class PacketCodecTest {
         assertEquals(10, decoded.stationX());
         assertEquals(80, decoded.stationY());
         assertEquals(-4, decoded.stationZ());
+        assertEquals(19, decoded.transactionId());
+    }
+
+    @Test
+    void rejectsNonPositiveClientTransactionIds() {
+        assertThrows(IllegalArgumentException.class, () -> new GamePacket.StorageOpenRequest(0, 0, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new GamePacket.CookRequest(0, 0, 0, "voxel:charcoal", List.of(1), 0));
+        assertThrows(IllegalArgumentException.class, () -> new GamePacket.StorageTransfer(0, 0, 0, false, 0, -1, 1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new GamePacket.CraftRequest("voxel:planks", 1, false, 0, 0, 0, 0));
     }
 
     @Test
@@ -285,6 +377,15 @@ class PacketCodecTest {
         ));
 
         assertEquals("Hello server", decoded.message());
+    }
+
+    @Test
+    void rejectsBlankAndOversizedChatMessages() {
+        assertThrows(IllegalArgumentException.class, () -> new GamePacket.Chat("   "));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new GamePacket.Chat("x".repeat(GamePacket.MAX_CHAT_MESSAGE_LENGTH + 1))
+        );
     }
 
     @Test
@@ -299,5 +400,37 @@ class PacketCodecTest {
         out.flush();
 
         assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(bytes.toByteArray()));
+    }
+
+    @Test
+    void rejectsInventorySnapshotLengthBeyondCodecLimitBeforeAllocation() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.INVENTORY_SNAPSHOT.id());
+        out.writeInt(10_000);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("item stack count"));
+    }
+
+    @Test
+    void rejectsInventorySnapshotLengthBeyondRemainingPayload() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.INVENTORY_SNAPSHOT.id());
+        out.writeInt(1);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("remaining payload"));
     }
 }

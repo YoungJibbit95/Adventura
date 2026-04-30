@@ -25,11 +25,15 @@ public final class Structures {
             }
         }
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.STORAGE_CRATE));
+        blocks.add(new BlockPlacement(-1, 1, 0, Blocks.STORAGE_CRATE));
         blocks.add(new BlockPlacement(1, 1, 0, Blocks.LANTERN));
         return new StructureTemplate(
                 "voxel:small_ruin",
                 blocks,
-                List.of(StructureMarker.loot("voxel:ruin_crate", 0, 1, 0))
+                List.of(
+                        StructureMarker.loot("voxel:ruin_crate", 0, 1, 0),
+                        StructureMarker.loot("voxel:ruin_rare_crate", -1, 1, 0)
+                )
         );
     }
 
@@ -132,6 +136,7 @@ public final class Structures {
         blocks.add(new BlockPlacement(0, 0, 0, Blocks.MOSSY_PATH));
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.CAMPFIRE));
         blocks.add(new BlockPlacement(1, 1, 0, Blocks.LANTERN));
+        blocks.add(new BlockPlacement(-1, 1, 0, Blocks.COOKING_POT));
         blocks.add(new BlockPlacement(-2, 1, -1, Blocks.SKYROOT_LOG));
         blocks.add(new BlockPlacement(-2, 1, 0, Blocks.SKYROOT_LOG));
         blocks.add(new BlockPlacement(2, 1, 1, Blocks.PINE_LOG));

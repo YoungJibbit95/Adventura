@@ -5,5 +5,6 @@ public enum CraftingStationType {
     CRAFTING_TABLE,
     CAMPFIRE,
     COOKING_POT,
-    WORKBENCH
+    WORKBENCH,
+    FORGE
 }

@@ -1,5 +1,14 @@
 package dev.voxelgame.client;
 
+import dev.voxelgame.client.animation.AnimationChannels;
+import dev.voxelgame.client.animation.AnimationClip;
+import dev.voxelgame.client.animation.AnimationPlayback;
+import dev.voxelgame.client.animation.AnimationSample;
+import dev.voxelgame.client.animation.HeldItemAnimation;
+import dev.voxelgame.client.animation.PopAnimation;
+import dev.voxelgame.client.animation.SlotHoverAnimation;
+import dev.voxelgame.client.animation.UiPulse;
+import dev.voxelgame.client.animation.UiAnimationPresets;
 import dev.voxelgame.client.audio.AudioCue;
 import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
@@ -7,9 +16,12 @@ import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
 import dev.voxelgame.client.render.BlockRenderProperties;
 import dev.voxelgame.client.render.ChunkBorderRenderer;
+import dev.voxelgame.client.render.LightDebugInfo;
+import dev.voxelgame.client.render.RenderMaterial;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
 import dev.voxelgame.client.render.WorldRenderer;
+import dev.voxelgame.client.render.assets.BlockTextureAtlas;
 import dev.voxelgame.client.render.entity.EntityRenderer;
 import dev.voxelgame.client.render.particle.ParticleSystem;
 import dev.voxelgame.client.ui.BitmapFont;
@@ -24,13 +36,16 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.block.ToolType;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.gameplay.CampfireRules;
+import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.CraftingCategory;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingStationType;
+import dev.voxelgame.common.item.ItemType;
+import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.net.GamePacket;
-import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.BiomeType;
@@ -52,6 +67,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
@@ -65,6 +81,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_J;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_O;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_R;
@@ -111,6 +128,10 @@ import static org.lwjgl.opengl.GL11.glViewport;
 public final class GameClient {
     private static final double LOCAL_DAY_LENGTH_SECONDS = 900.0;
     private static final int DAY_START_MINUTES = 6 * 60;
+    private static final int INVENTORY_COLUMNS = 9;
+    private static final int INVENTORY_MAIN_ROWS = 3;
+    private static final int INVENTORY_ROWS = 4;
+    private static final UiPulse SELECTED_SLOT_PULSE = UiPulse.selectedHotbarSlot();
 
     private final ConnectionOptions connectionOptions;
     private final GameSettings settings;
@@ -118,14 +139,29 @@ public final class GameClient {
     private final Hotbar hotbar = new Hotbar();
     private final ChatLog chatLog = new ChatLog();
     private final FeedbackLog feedbackLog = new FeedbackLog();
+    private final EarlyGameMilestones earlyGameMilestones = new EarlyGameMilestones();
+    private final NightSafetyPrompts nightSafetyPrompts = new NightSafetyPrompts();
     private final EnumSet<CraftingStationType> discoveredRecipeStations = EnumSet.of(CraftingStationType.INVENTORY);
     private final PlayerStats playerStats = new PlayerStats();
     private final BlockBreakAnimation blockBreakAnimation = new BlockBreakAnimation();
     private final GameAudio audio = new GameAudio();
+    private final Registry<ItemType> items = Items.createDefaultRegistry();
+    private final Registry<BlockType> blocks = Blocks.createDefaultRegistry();
     private final Registry<BiomeType> biomes = Biomes.createDefaultRegistry();
     private final StringBuilder chatDraft = new StringBuilder();
     private final StringBuilder craftingSearch = new StringBuilder();
     private final Set<String> announcedRecipeUnlocks = new HashSet<>();
+    private final Set<String> discoveredBiomeKeys = new HashSet<>();
+    private final Set<String> discoveredCreatureKeys = new HashSet<>();
+    private final PopAnimation pickupPop = new PopAnimation(0.48);
+    private final PopAnimation comfortPop = new PopAnimation(0.78);
+    private final PopAnimation recipeUnlockPop = new PopAnimation(0.90);
+    private final PopAnimation craftingSuccessPop = new PopAnimation(0.72);
+    private final HeldItemAnimation heldItemAnimation = new HeldItemAnimation();
+    private final SlotHoverAnimation slotHoverAnimation = new SlotHoverAnimation();
+    private final AnimationClip craftingFailureShakeClip = UiAnimationPresets.subtleShake("crafting-failure-shake", 0.36, 6.0f);
+    private final AnimationPlayback craftingFailureShake = new AnimationPlayback();
+    private final AtomicReference<GamePacket.PlayerPositionSnapshot> pendingAuthoritativePlayerState = new AtomicReference<>();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
     private ClientWorld world;
@@ -150,11 +186,14 @@ public final class GameClient {
     private boolean previousBackspace;
     private boolean previousF3;
     private boolean previousCrafting;
+    private boolean previousJournal;
     private boolean previousHudToggle;
     private boolean previousModeCycle;
     private boolean previousSettingsKey;
     private boolean previousSpawnKey;
     private boolean onlineMode;
+    private long nextMovementSequence = 1L;
+    private long lastAuthoritativeMovementSequence;
     private double nextMoveSendTime;
     private double nextFpsSampleTime;
     private int framesThisSecond;
@@ -162,26 +201,31 @@ public final class GameClient {
     private WorldRenderer.RenderStats lastRenderStats = new WorldRenderer.RenderStats(0, 0);
     private String statusMessage = "Ready";
     private GameState settingsReturnState = GameState.MAIN_MENU;
+    private GameState journalReturnState = GameState.PLAYING;
     private double nextBlockActionTime;
     private double pendingScrollY;
     private double frameTimeSeconds;
     private double worldStartTimeSeconds;
-    private String pickupAnimationItemKey = "";
-    private double pickupAnimationUntil;
     private double lastFrameMilliseconds;
     private double lastWorldRenderMilliseconds;
+    private double lastUiMilliseconds;
+    private EngineFrameStats engineFrameStats = EngineFrameStats.empty();
     private int lastMeshBuilds;
-    private int lastRenderedEntities;
+    private int lastUnloadedChunks;
+    private int lastReleasedGpuMeshLayers;
     private EntityRenderer.RenderStats lastEntityRenderStats = EntityRenderer.RenderStats.empty();
     private ParticleSystem.RenderStats lastParticleRenderStats = ParticleSystem.RenderStats.empty();
     private int lastRenderedEntityHitboxes;
     private int lastChunkBorderDebugChunks;
+    private int lastMeshBoundsDebugBoxes;
     private CraftingCategory craftingCategoryFilter;
     private boolean craftableRecipesOnly;
     private boolean craftingSearchFocused;
     private boolean inventoryTrashMode;
     private int draggedInventorySlot = -1;
-    private int storageTransactionId;
+    private InventoryDragSource draggedInventorySource = InventoryDragSource.PLAYER;
+    private int clientTransactionId;
+    private JournalTab journalTab = JournalTab.NOTES;
     private boolean previousUnderwater;
     private boolean headUnderwaterNow;
     private double nextAmbientParticleSourceScanTime;
@@ -266,6 +310,7 @@ public final class GameClient {
             lastTime = now;
             lastFrameMilliseconds = rawDeltaSeconds * 1000.0;
             updateFps(now);
+            long updateStartNanos = System.nanoTime();
 
             boolean leftMouse = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
             boolean rightMouse = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
@@ -278,6 +323,7 @@ public final class GameClient {
             handleGlobalKeys();
 
             if (gameState == GameState.PLAYING) {
+                consumeAuthoritativePlayerState();
                 boolean moving = camera.hasMovementInput(window);
                 boolean sprinting = camera.wantsSprint(window) && moving && playerStats.canSprint();
                 camera.update(window, deltaSeconds, settings.mouseSensitivity(), world, gameMode, playerStats.canSprint());
@@ -291,13 +337,21 @@ public final class GameClient {
                 playerStats.tick(deltaSeconds, gameMode, headUnderwaterNow, sprinting, moving);
                 emitComfortFeedback();
                 emitRecipeUnlockFeedback(now);
+                refreshJournalDiscoveries(now);
+                emitNightSafetyFeedback(now);
                 handleDeathIfNeeded();
                 emitWaterSplashIfNeeded(water.movementAffected(), now);
                 emitMovementAudio(moving, sprinting, water.movementAffected(), now);
                 if (!onlineMode) {
                     world.tickCampfires(now);
                     world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks(), settings.meshBuildBudgetChunks());
+                    List<ChunkPos> unloadedChunks = world.unloadOutside(camera.position(), chunkRetentionRadiusChunks());
+                    WorldRenderer.MeshReleaseStats releaseStats = worldRenderer.releaseChunks(unloadedChunks);
+                    lastUnloadedChunks = unloadedChunks.size();
+                    lastReleasedGpuMeshLayers = releaseStats.releasedLayers();
                 } else {
+                    lastUnloadedChunks = 0;
+                    lastReleasedGpuMeshLayers = 0;
                     sendMovementIfDue(now);
                 }
                 if (hotbar.updateSelection(window) || consumeHotbarScroll()) {
@@ -314,12 +368,25 @@ public final class GameClient {
                 emitAmbientParticles(now);
                 emitAmbientAudio(now);
             }
+            double updateMilliseconds = (System.nanoTime() - updateStartNanos) / 1_000_000.0;
 
             glClearColor(0.52f, 0.72f, 0.95f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            int visibleEntitySnapshotCount = 0;
             if (world != null) {
                 long renderStartNanos = System.nanoTime();
-                lastMeshBuilds = worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), settings.meshBuildBudgetChunks(), camera.position());
+                lastMeshBuilds = worldRenderer.rebuildDirty(
+                        world,
+                        settings.ambientOcclusionEnabled(),
+                        settings.transparentWaterEnabled(),
+                        settings.meshBuildBudgetChunks(),
+                        camera.position(),
+                        settings.effectiveMeshBuildBudgetMilliseconds(lastFrameMilliseconds),
+                        settings.effectiveGpuUploadBudgetMilliseconds(lastFrameMilliseconds),
+                        settings.renderDistanceChunks(),
+                        settings.previewRadiusChunks(),
+                        settings.greedyMeshingEnabled()
+                );
                 Matrix4f projection = new Matrix4f().perspective(
                         (float) Math.toRadians(settings.fieldOfViewDegrees()),
                         (float) framebufferWidth / framebufferHeight,
@@ -328,13 +395,16 @@ public final class GameClient {
                 );
                 Matrix4f view = camera.viewMatrix();
                 List<EntitySnapshot> visibleEntities = world.visibleEntities(now);
+                visibleEntitySnapshotCount = visibleEntities.size();
                 lastRenderStats = worldRenderer.render(projection, view, world, camera.position(), currentRenderSettings(), now);
                 lastEntityRenderStats = entityRenderer.renderDetailed(projection, view, visibleEntities, now);
                 emitEntityParticles(visibleEntities, now);
                 lastParticleRenderStats = particleSystem.render(projection, view, now);
-                lastRenderedEntities = lastEntityRenderStats.renderedEntities();
                 lastChunkBorderDebugChunks = settings.debugChunkBordersEnabled()
                         ? chunkBorderRenderer.render(projection, view, camera.position(), world.dimension(), settings.renderDistanceChunks())
+                        : 0;
+                lastMeshBoundsDebugBoxes = settings.debugMeshBoundsEnabled()
+                        ? chunkBorderRenderer.renderMeshBounds(projection, view, worldRenderer.meshBounds())
                         : 0;
                 lastRenderedEntityHitboxes = settings.debugOverlayEnabled()
                         ? chunkBorderRenderer.renderEntityHitboxes(projection, view, visibleEntities)
@@ -342,16 +412,43 @@ public final class GameClient {
                 lastWorldRenderMilliseconds = (System.nanoTime() - renderStartNanos) / 1_000_000.0;
             } else {
                 lastMeshBuilds = 0;
-                lastRenderedEntities = 0;
+                lastUnloadedChunks = 0;
+                lastReleasedGpuMeshLayers = 0;
                 lastEntityRenderStats = EntityRenderer.RenderStats.empty();
                 lastParticleRenderStats = ParticleSystem.RenderStats.empty();
                 lastRenderedEntityHitboxes = 0;
                 lastChunkBorderDebugChunks = 0;
+                lastMeshBoundsDebugBoxes = 0;
                 lastWorldRenderMilliseconds = 0.0;
                 lastRenderStats = new WorldRenderer.RenderStats(0, 0);
                 previousUnderwater = false;
             }
 
+            engineFrameStats = EngineFrameStats.capture(
+                    lastFps,
+                    lastFrameMilliseconds,
+                    updateMilliseconds,
+                    lastWorldRenderMilliseconds,
+                    lastUiMilliseconds,
+                    settings,
+                    chunkRetentionRadiusChunks(),
+                    world,
+                    lastRenderStats,
+                    lastMeshBuilds,
+                    lastUnloadedChunks,
+                    lastReleasedGpuMeshLayers,
+                    visibleEntitySnapshotCount,
+                    lastEntityRenderStats,
+                    lastRenderedEntityHitboxes,
+                    lastChunkBorderDebugChunks,
+                    lastMeshBoundsDebugBoxes,
+                    lastParticleRenderStats,
+                    onlineMode,
+                    connection == null ? ClientNetworkStats.Snapshot.offline() : connection.stats(world == null ? 0 : world.dirtyChunkCount()),
+                    RenderResourceTracker.snapshot()
+            );
+
+            long uiStartNanos = System.nanoTime();
             uiRenderer.begin();
             backgroundSpriteRenderer.begin();
             spriteRenderer.begin();
@@ -363,16 +460,19 @@ public final class GameClient {
                 renderSettingsMenu(mouse, leftClicked);
             } else if (gameState == GameState.CRAFTING) {
                 renderCraftingScreen(mouse, leftClicked, leftReleased, rightClicked);
+            } else if (gameState == GameState.JOURNAL) {
+                renderJournalScreen(mouse, leftClicked);
             } else if (gameState == GameState.STORAGE) {
-                renderStorageScreen(mouse, leftClicked, rightClicked);
+                renderStorageScreen(mouse, leftClicked, leftReleased, rightClicked);
             } else if (gameState == GameState.DEAD) {
                 renderDeathScreen(mouse, leftClicked);
             }
-            renderHud();
+            renderHud(mouse);
             renderChatOverlay();
             backgroundSpriteRenderer.flush(framebufferWidth, framebufferHeight);
             uiRenderer.flush(framebufferWidth, framebufferHeight);
             spriteRenderer.flush(framebufferWidth, framebufferHeight);
+            lastUiMilliseconds = (System.nanoTime() - uiStartNanos) / 1_000_000.0;
 
             glfwSwapBuffers(window);
             glfwPollEvents();
@@ -448,6 +548,7 @@ public final class GameClient {
             if (hotbar.useSelectedFood(playerStats)) {
                 setStatus("Ate " + foodLabel);
                 nextBlockActionTime = now + 0.22;
+                heldItemAnimation.eat(now);
                 audio.play(AudioCue.EAT);
                 return;
             }
@@ -462,6 +563,7 @@ public final class GameClient {
                         connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
                         setStatus("Campfire fuel requested");
                         nextBlockActionTime = now + 0.15;
+                        heldItemAnimation.use(now);
                         updateWindowTitle();
                     } else {
                         handleLocalBlockInteract(hit, now);
@@ -473,6 +575,7 @@ public final class GameClient {
                         connection.send(new GamePacket.BlockInteract(hotbar.selectedIndex(), hit.x(), hit.y(), hit.z()));
                         setStatus("Interaction requested");
                         nextBlockActionTime = now + 0.15;
+                        heldItemAnimation.use(now);
                         updateWindowTitle();
                     } else {
                         handleLocalBlockInteract(hit, now);
@@ -481,8 +584,13 @@ public final class GameClient {
                 }
                 short blockId = placeBlockId.get();
                 org.joml.Vector3f eyePosition = camera.position();
-                if (PlayerBounds.DEFAULT.intersectsBlock(eyePosition.x, eyePosition.y, eyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ())) {
+                if (InteractionRules.placementIntersectsPlayer(eyePosition.x, eyePosition.y, eyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ())) {
                     setStatus("Too close to place");
+                    nextBlockActionTime = now + 0.10;
+                    return;
+                }
+                if (world.placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ(), now)) {
+                    setStatus("Blocked by entity");
                     nextBlockActionTime = now + 0.10;
                     return;
                 }
@@ -499,11 +607,19 @@ public final class GameClient {
                             blockId
                     ));
                     nextBlockActionTime = now + 0.15;
+                    heldItemAnimation.place(now);
                 } else {
                     if (world.placeBlock(hit, blockId, eyePosition)) {
                         hotbar.consumeSelectedOne();
+                        String placedKey = blockKey(blockId);
+                        setStatus(earlyGameMilestones.placeBlock(placedKey)
+                                .orElse("Placed " + cozyName(placedKey)));
                         nextBlockActionTime = now + 0.12;
+                        heldItemAnimation.place(now);
                         audio.play(AudioCue.BLOCK_PLACE);
+                    } else {
+                        setStatus("Can't place there");
+                        nextBlockActionTime = now + 0.10;
                     }
                 }
             });
@@ -532,6 +648,7 @@ public final class GameClient {
             return;
         }
         double duration = gameMode == GameMode.CREATIVE ? 0.08 : Math.max(0.16, breakDelay(block, multiplier));
+        heldItemAnimation.breakSwing(now, multiplier);
         blockBreakAnimation.startOrContinue(hit, block, duration, now);
         if (!blockBreakAnimation.complete(now)) {
             return;
@@ -554,7 +671,6 @@ public final class GameClient {
                     Blocks.AIR
             ));
             nextBlockActionTime = now + 0.12;
-            blockBreakAnimation.hit(now);
             return;
         }
         if (world.breakBlock(hit)) {
@@ -564,7 +680,6 @@ public final class GameClient {
             nextBlockActionTime = now + 0.10;
             announceNewRecipeUnlocks();
             audio.play(breakCueFor(target));
-            blockBreakAnimation.hit(now);
         }
     }
 
@@ -580,8 +695,9 @@ public final class GameClient {
                     : OptionalDouble.empty();
             if (fuelSeconds.isPresent() && world.fuelCampfire(hit, now, fuelSeconds.getAsDouble())) {
                 hotbar.consumeSelectedOne();
-                setStatus("Campfire fueled");
+                setStatus(earlyGameMilestones.lightCampfire().orElse("Campfire fueled"));
                 nextBlockActionTime = now + 0.25;
+                heldItemAnimation.use(now);
                 audio.play(AudioCue.CRAFT);
                 updateWindowTitle();
             } else {
@@ -594,9 +710,11 @@ public final class GameClient {
         InteractionRules.blockInteraction(target.get()).ifPresent(interaction -> {
             if (hotbar.addItem(interaction.itemKey(), interaction.count())) {
                 particleSystem.spawnHarvestSparkle(hit, now);
-                setStatus(interaction.message());
+                setStatus(earlyGameMilestones.collectItem(interaction.itemKey(), cozyName(interaction.itemKey()))
+                        .orElse(interaction.message()));
                 announceNewRecipeUnlocks();
                 nextBlockActionTime = now + interaction.cooldownSeconds();
+                heldItemAnimation.use(now);
                 audio.play(AudioCue.COLLECT_ITEM);
                 updateWindowTitle();
             } else {
@@ -609,7 +727,7 @@ public final class GameClient {
     private void openStorageCrate(dev.voxelgame.common.math.Raycast.Hit hit, double now) {
         hotbar.openStorage(hit.x(), hit.y(), hit.z());
         if (onlineMode) {
-            connection.send(new GamePacket.StorageOpenRequest(hit.x(), hit.y(), hit.z()));
+            connection.send(new GamePacket.StorageOpenRequest(hit.x(), hit.y(), hit.z(), nextClientTransactionId()));
             setStatus("Opening storage crate");
         } else {
             setStatus("Storage crate opened");
@@ -657,6 +775,7 @@ public final class GameClient {
                     : cozyName(target.typeKey()));
         }
         nextBlockActionTime = now + 0.22;
+        heldItemAnimation.use(now);
         updateWindowTitle();
     }
 
@@ -732,6 +851,7 @@ public final class GameClient {
         }
         if (comfort >= 5 && lastComfortFeedbackValue < 5) {
             setStatus("You feel cozy");
+            comfortPop.trigger("comfort", currentTimeSeconds());
         }
         lastComfortFeedbackValue = comfort;
     }
@@ -741,10 +861,26 @@ public final class GameClient {
             return;
         }
         nextRecipeUnlockScanTime = now + 1.0;
-        CraftingStationType stationType = currentCraftingStation();
-        if (stationType != CraftingStationType.INVENTORY && discoveredRecipeStations.add(stationType)) {
-            setStatus("New recipe unlocked");
+        announceNewRecipeUnlocks();
+        for (CraftingStationType stationType : currentCraftingStations()) {
+            if (stationType != CraftingStationType.INVENTORY && discoveredRecipeStations.add(stationType)) {
+                setStatus(CraftingFeedback.stationUnlockMessage(stationType));
+                recipeUnlockPop.trigger(stationType.name(), now);
+            }
         }
+    }
+
+    private void emitNightSafetyFeedback(double now) {
+        if (world == null || gameMode != GameMode.SURVIVAL) {
+            return;
+        }
+        boolean activeCampfireNearby = world.hasActiveCampfireWithin(camera.position(), 10, now);
+        nightSafetyPrompts.update(localDayNumber(), localDayMinutes(), activeCampfireNearby).ifPresent(message -> {
+            setStatus(message);
+            if (activeCampfireNearby) {
+                comfortPop.trigger("night-campfire", now);
+            }
+        });
     }
 
     private static String articleFor(ToolType toolType) {
@@ -778,9 +914,9 @@ public final class GameClient {
         }
         int count = InteractionRules.dropCount(target, multiplier);
         if (hotbar.addItem(drop, count)) {
-            pickupAnimationItemKey = drop;
-            pickupAnimationUntil = now + 0.48;
-            setStatus("Gathered " + cozyName(drop));
+            pickupPop.trigger(drop, now);
+            setStatus(earlyGameMilestones.collectItem(drop, cozyName(drop))
+                    .orElse("Gathered " + cozyName(drop)));
             audio.play(AudioCue.COLLECT_ITEM);
         } else {
             setStatus("Inventory full");
@@ -882,8 +1018,37 @@ public final class GameClient {
         return AudioCueRules.breakCueFor(target);
     }
 
-    private CraftingStationType currentCraftingStation() {
-        if (world != null && world.hasActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds)) {
+    private EnumSet<CraftingStationType> currentCraftingStations() {
+        EnumSet<CraftingStationType> stations = EnumSet.of(CraftingStationType.INVENTORY);
+        if (world == null) {
+            return stations;
+        }
+        if (world.hasActiveCampfireWithin(camera.position(), CraftingStationRules.STATION_RADIUS_BLOCKS, frameTimeSeconds)) {
+            stations.add(CraftingStationType.CAMPFIRE);
+        }
+        if (world.nearestBlockWithin(camera.position(), Blocks.COOKING_POT, CraftingStationRules.STATION_RADIUS_BLOCKS).isPresent()) {
+            stations.add(CraftingStationType.COOKING_POT);
+        }
+        if (world.nearestBlockWithin(camera.position(), Blocks.WORKBENCH, CraftingStationRules.STATION_RADIUS_BLOCKS).isPresent()) {
+            stations.add(CraftingStationType.WORKBENCH);
+        }
+        if (world.nearestBlockWithin(camera.position(), Blocks.FORGE, CraftingStationRules.STATION_RADIUS_BLOCKS).isPresent()) {
+            stations.add(CraftingStationType.FORGE);
+        }
+        return stations;
+    }
+
+    private static CraftingStationType primaryCraftingStation(EnumSet<CraftingStationType> stations) {
+        if (stations.contains(CraftingStationType.FORGE)) {
+            return CraftingStationType.FORGE;
+        }
+        if (stations.contains(CraftingStationType.WORKBENCH)) {
+            return CraftingStationType.WORKBENCH;
+        }
+        if (stations.contains(CraftingStationType.COOKING_POT)) {
+            return CraftingStationType.COOKING_POT;
+        }
+        if (stations.contains(CraftingStationType.CAMPFIRE)) {
             return CraftingStationType.CAMPFIRE;
         }
         return CraftingStationType.INVENTORY;
@@ -894,6 +1059,7 @@ public final class GameClient {
         boolean slash = glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS;
         boolean f3 = glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS;
         boolean crafting = glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS;
+        boolean journal = glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS;
         boolean hudToggle = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
         boolean modeCycle = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
         boolean settingsKey = glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS;
@@ -916,6 +1082,11 @@ public final class GameClient {
         } else if (gameplayHotkeys && crafting && !previousCrafting) {
             toggleCrafting();
         }
+        if (gameState == GameState.JOURNAL && journal && !previousJournal) {
+            closeJournal();
+        } else if (gameplayHotkeys && journal && !previousJournal) {
+            openJournal();
+        }
         if (!craftingTextInput && f3 && !previousF3) {
             settings.toggleDebugOverlay();
         }
@@ -937,6 +1108,7 @@ public final class GameClient {
         previousSlash = slash;
         previousF3 = f3;
         previousCrafting = crafting;
+        previousJournal = journal;
         previousHudToggle = hudToggle;
         previousModeCycle = modeCycle;
         previousSettingsKey = settingsKey;
@@ -1020,7 +1192,7 @@ public final class GameClient {
         String command = parts[0].toLowerCase(Locale.ROOT);
         try {
             switch (command) {
-                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /fov n /fog /ao /shadows /bloom /hud /debug /debugchunks /debuglight /debugbiome /water /settings /clear /say text");
+                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /meshms n /uploadms n /greedymesh /fov n /fog /ao /shadows /bloom /hud /debug /debugchunks /debugbounds /debuglight /debugbiome /debugmaterial /debugatlas /water /settings /clear /say text");
                 case "keys", "keybinds" -> showKeybinds();
                 case "seed" -> chatLog.add("Seed: " + connectionOptions.seed());
                 case "pos" -> chatLog.add(positionLine());
@@ -1048,6 +1220,21 @@ public final class GameClient {
                     settings.setMeshBuildBudgetChunks(parseInt(parts, 1));
                     chatLog.add("Mesh budget: " + settings.meshBuildBudgetChunks() + " chunks/frame");
                 }
+                case "meshms" -> {
+                    settings.setMeshBuildBudgetMilliseconds(parseDouble(parts, 1));
+                    chatLog.add("Mesh ms budget: " + formatMilliseconds(settings.meshBuildBudgetMilliseconds()));
+                }
+                case "uploadms" -> {
+                    settings.setGpuUploadBudgetMilliseconds(parseDouble(parts, 1));
+                    chatLog.add("GPU upload ms budget: " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()));
+                }
+                case "greedymesh" -> {
+                    settings.toggleGreedyMeshing();
+                    if (world != null) {
+                        world.markAllLoadedDirty();
+                    }
+                    chatLog.add("Greedy mesh: " + onOff(settings.greedyMeshingEnabled()));
+                }
                 case "fog" -> toggleCommand("Fog", settings.fogEnabled(), settings::toggleFog);
                 case "ao" -> {
                     settings.toggleAmbientOcclusion();
@@ -1061,8 +1248,11 @@ public final class GameClient {
                 case "hud" -> toggleCommand("HUD", settings.hudEnabled(), settings::toggleHud);
                 case "debug" -> toggleCommand("Debug overlay", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
                 case "debugchunks" -> toggleCommand("Chunk borders", settings.debugChunkBordersEnabled(), settings::toggleDebugChunkBorders);
+                case "debugbounds" -> toggleCommand("Mesh bounds", settings.debugMeshBoundsEnabled(), settings::toggleDebugMeshBounds);
                 case "debuglight" -> chatLog.add(lightDebugLine());
                 case "debugbiome" -> chatLog.add(biomeDebugLine());
+                case "debugmaterial" -> chatLog.add(materialDebugLine());
+                case "debugatlas" -> chatLog.add(atlasDebugLine());
                 case "water" -> {
                     settings.toggleTransparentWater();
                     if (world != null) {
@@ -1126,12 +1316,7 @@ public final class GameClient {
         int block = world.blockLightAt(x, y, z);
         short blockId = world.blockIdAt(x, y, z);
         BlockRenderProperties properties = BlockRenderProperties.forBlock(blockId);
-        String emissive = properties.emissive() > 0.0f ? String.format(Locale.ROOT, "%.2f", properties.emissive()) : "0";
-        return "Light @ " + x + " " + y + " " + z
-                + ": combined " + Math.max(sky, block)
-                + " sky " + sky
-                + " block " + block
-                + " emissive " + emissive;
+        return new LightDebugInfo(x, y, z, sky, block, properties.emissive()).format();
     }
 
     private String biomeDebugLine() {
@@ -1143,9 +1328,54 @@ public final class GameClient {
         return "Biome @ " + x + " " + z + ": " + biomeLabel(world.biomeKeyAt(x, z));
     }
 
+    private String materialDebugLine() {
+        if (world == null) {
+            return "Material: no world";
+        }
+        Optional<dev.voxelgame.common.math.Raycast.Hit> target = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (target.isEmpty()) {
+            return "Material: no block in reach";
+        }
+        Optional<BlockType> block = world.targetBlock(target.get());
+        if (block.isEmpty()) {
+            return "Material: no renderable block";
+        }
+        RenderMaterial material = RenderMaterial.forBlock(block.get());
+        return String.format(
+                Locale.ROOT,
+                "Material %s id %d layer %s alpha %.2f glow %.2f fluid %s flags %d",
+                block.get().key(),
+                material.materialIndex(),
+                material.renderLayer(),
+                material.alpha(),
+                material.emissive(),
+                onOff(material.animatedFluid()),
+                material.flags()
+        );
+    }
+
+    private String atlasDebugLine() {
+        BlockTextureAtlas.AtlasValidationReport report = BlockTextureAtlas.validationReport(Blocks.createDefaultRegistry());
+        return String.format(
+                Locale.ROOT,
+                "Atlas %dx%d tex %d mat %d/%d pad %d inset %.1f %s missing %d dup %d uv %d",
+                report.atlasWidth(),
+                report.atlasHeight(),
+                report.textureCount(),
+                report.materialCount(),
+                report.materialCapacity(),
+                report.tilePaddingPixels(),
+                report.uvInsetPixels(),
+                report.filterMode(),
+                report.missingTextures().size(),
+                report.duplicateMappings().size(),
+                report.uvRectDebugLines().size()
+        );
+    }
+
     private void showKeybinds() {
         chatLog.add("Keys: WASD move, Space jump/up, Ctrl down, Shift sprint");
-        chatLog.add("Keys: E crafting, O settings, R spawn, F1 HUD, F3 debug, F4 mode");
+        chatLog.add("Keys: E crafting, J journal, O settings, R spawn, F1 HUD, F3 debug, F4 mode");
         chatLog.add("Keys: T chat, / command, 1-9 or mouse wheel hotbar, mouse break/place");
     }
 
@@ -1187,6 +1417,13 @@ public final class GameClient {
         return Integer.parseInt(parts[index]);
     }
 
+    private double parseDouble(String[] parts, int index) {
+        if (parts.length <= index) {
+            throw new IllegalArgumentException("Missing number");
+        }
+        return Double.parseDouble(parts[index]);
+    }
+
     private void toggleCommand(String label, boolean before, Runnable toggle) {
         toggle.run();
         chatLog.add(label + ": " + onOff(!before));
@@ -1219,6 +1456,13 @@ public final class GameClient {
             return "0.0";
         }
         return String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    private static String formatPercent(double value) {
+        if (!Double.isFinite(value) || value < 0.0) {
+            return "0%";
+        }
+        return String.format(Locale.ROOT, "%.0f%%", value * 100.0);
     }
 
     private String positionLine() {
@@ -1294,14 +1538,26 @@ public final class GameClient {
         }
         nextMoveSendTime = now + 0.10;
         org.joml.Vector3f position = camera.position();
+        PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(position);
         connection.send(new GamePacket.PlayerMove(
+                nextMovementSequence++,
                 position.x,
                 position.y,
                 position.z,
                 camera.yaw(),
                 camera.pitch(),
-                false
+                camera.onGround(),
+                water
         ));
+    }
+
+    private void consumeAuthoritativePlayerState() {
+        GamePacket.PlayerPositionSnapshot snapshot = pendingAuthoritativePlayerState.getAndSet(null);
+        if (snapshot == null || snapshot.sequence() < lastAuthoritativeMovementSequence) {
+            return;
+        }
+        lastAuthoritativeMovementSequence = snapshot.sequence();
+        camera.reconcileAuthoritativePosition(snapshot.x(), snapshot.y(), snapshot.z(), snapshot.onGround());
     }
 
     private void updateWindowTitle() {
@@ -1312,6 +1568,7 @@ public final class GameClient {
                 case SETTINGS -> "Settings";
                 case CHAT -> "Chat";
                 case CRAFTING -> "Crafting";
+                case JOURNAL -> "Journal";
                 case STORAGE -> "Storage Crate";
                 case DEAD -> "You Died";
                 case PLAYING -> hotbar.selectedLabel();
@@ -1337,8 +1594,10 @@ public final class GameClient {
                 closeChat();
             } else if (gameState == GameState.CRAFTING) {
                 craftingSearchFocused = false;
-                draggedInventorySlot = -1;
+                clearInventoryDrag();
                 resumeGame();
+            } else if (gameState == GameState.JOURNAL) {
+                closeJournal();
             } else if (gameState == GameState.STORAGE) {
                 closeStorageScreen();
             } else if (gameState == GameState.DEAD) {
@@ -1377,11 +1636,12 @@ public final class GameClient {
         float buttonWidth = Math.min(320.0f, framebufferWidth - 80.0f);
         float buttonHeight = 46.0f;
         float x = framebufferWidth * 0.5f - buttonWidth * 0.5f;
-        float y = framebufferHeight * 0.5f - 78.0f;
+        float y = framebufferHeight * 0.5f - 118.0f;
         drawButton(new UiButton(x, y, buttonWidth, buttonHeight, "RESUME", true), mouse, clicked, this::resumeGame);
-        drawButton(new UiButton(x, y + 58.0f, buttonWidth, buttonHeight, "SETTINGS", true), mouse, clicked, () -> openSettings(GameState.PAUSED));
-        drawButton(new UiButton(x, y + 116.0f, buttonWidth, buttonHeight, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
-        drawButton(new UiButton(x, y + 174.0f, buttonWidth, buttonHeight, "QUIT", true), mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
+        drawButton(new UiButton(x, y + 54.0f, buttonWidth, buttonHeight, "JOURNAL", true), mouse, clicked, () -> openJournal(GameState.PAUSED));
+        drawButton(new UiButton(x, y + 108.0f, buttonWidth, buttonHeight, "SETTINGS", true), mouse, clicked, () -> openSettings(GameState.PAUSED));
+        drawButton(new UiButton(x, y + 162.0f, buttonWidth, buttonHeight, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
+        drawButton(new UiButton(x, y + 216.0f, buttonWidth, buttonHeight, "QUIT", true), mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
     }
 
     private void renderDeathScreen(MousePosition mouse, boolean clicked) {
@@ -1399,6 +1659,371 @@ public final class GameClient {
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, y + 188.0f, buttonWidth, 34.0f, "MAIN MENU", true), mouse, clicked, this::returnToMainMenu);
     }
 
+    private void renderJournalScreen(MousePosition mouse, boolean clicked) {
+        refreshJournalDiscoveries(frameTimeSeconds);
+        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.015f, 0.020f, 0.024f, 0.78f));
+        float uiScale = settings.uiScale();
+        float margin = Math.max(18.0f * uiScale, 28.0f);
+        float panelWidth = Math.min(920.0f * uiScale, framebufferWidth - margin * 2.0f);
+        float panelHeight = Math.min(560.0f * uiScale, framebufferHeight - margin * 2.0f);
+        float x = framebufferWidth * 0.5f - panelWidth * 0.5f;
+        float y = framebufferHeight * 0.5f - panelHeight * 0.5f;
+        drawAssetPanel("panel_journal", x, y, panelWidth, panelHeight, new UiColor(0.035f, 0.045f, 0.040f, 0.92f));
+        uiRenderer.rect(x + 10.0f * uiScale, y + 10.0f * uiScale, panelWidth - 20.0f * uiScale, panelHeight - 20.0f * uiScale, new UiColor(0.020f, 0.030f, 0.028f, 0.46f));
+        uiRenderer.rect(x + 18.0f * uiScale, y + 58.0f * uiScale, panelWidth - 36.0f * uiScale, Math.max(2.0f, 3.0f * uiScale), UiColor.ACCENT);
+        uiRenderer.text("JOURNAL", x + 24.0f * uiScale, y + 23.0f * uiScale, 2.7f * uiScale, UiColor.WHITE);
+        uiRenderer.text(journalHeaderLine(), x + 220.0f * uiScale, y + 31.0f * uiScale, 1.05f * uiScale, UiColor.MUTED);
+        drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y + 20.0f * uiScale, 76.0f * uiScale, 30.0f * uiScale, "CLOSE", true), mouse, clicked, this::closeJournal);
+
+        float tabY = y + 74.0f * uiScale;
+        float tabGap = 7.0f * uiScale;
+        float tabWidth = Math.min(126.0f * uiScale, (panelWidth - 48.0f * uiScale - tabGap * (JournalTab.values().length - 1)) / JournalTab.values().length);
+        float tabX = x + 24.0f * uiScale;
+        for (JournalTab tab : JournalTab.values()) {
+            drawJournalTab(mouse, clicked, tabX, tabY, tabWidth, 30.0f * uiScale, tab);
+            tabX += tabWidth + tabGap;
+        }
+
+        float contentX = x + 24.0f * uiScale;
+        float contentY = tabY + 44.0f * uiScale;
+        float contentWidth = panelWidth - 48.0f * uiScale;
+        float contentHeight = panelHeight - (contentY - y) - 24.0f * uiScale;
+        uiRenderer.rect(contentX, contentY, contentWidth, contentHeight, new UiColor(0.010f, 0.016f, 0.015f, 0.42f));
+        uiRenderer.rect(contentX, contentY, Math.max(2.0f, 3.0f * uiScale), contentHeight, withAlpha(interactionHintAccent(journalTone()), 0.72f));
+        switch (journalTab) {
+            case NOTES -> renderJournalNotes(contentX, contentY, contentWidth, uiScale);
+            case BIOMES -> renderJournalBiomes(contentX, contentY, contentWidth, uiScale);
+            case STRUCTURES -> renderJournalStructures(contentX, contentY, contentWidth, uiScale);
+            case CREATURES -> renderJournalCreatures(contentX, contentY, contentWidth, uiScale);
+            case RECIPES -> renderJournalRecipes(contentX, contentY, contentWidth, uiScale);
+            case COLLECTIBLES -> renderJournalCollectibles(contentX, contentY, contentWidth, uiScale);
+        }
+    }
+
+    private void drawJournalTab(MousePosition mouse, boolean clicked, float x, float y, float width, float height, JournalTab tab) {
+        boolean selected = journalTab == tab;
+        boolean hovered = contains(mouse, x, y, width, height);
+        UiColor fill = selected ? UiColor.SLOT_ACTIVE : hovered ? UiColor.BUTTON_HOVER : UiColor.SLOT;
+        uiRenderer.rect(x, y, width, height, fill);
+        uiRenderer.rect(x, y, width, Math.max(2.0f, height * 0.08f), selected ? UiColor.ACCENT : UiColor.MUTED);
+        float scale = Math.min(1.0f * settings.uiScale(), (width - 10.0f * settings.uiScale()) / Math.max(1.0f, BitmapFont.textWidth(tab.label(), 1.0f)));
+        uiRenderer.centeredText(tab.label(), x + width * 0.5f, y + height * 0.5f - BitmapFont.textHeight(scale) * 0.5f, scale, selected ? UiColor.WHITE : UiColor.MUTED);
+        if (hovered && clicked) {
+            journalTab = tab;
+            audio.play(AudioCue.INVENTORY_CLICK);
+        }
+    }
+
+    private void renderJournalNotes(float x, float y, float width, float uiScale) {
+        float lineY = journalTitle(x, y, "FIELD NOTES", "Session state and nearby stations", uiScale);
+        lineY = journalLine(x, lineY, "World", onlineMode ? "Online" : "Singleplayer", UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Mode", gameMode.name(), UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Day", dayTimeLabel(), UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Comfort", comfortLabel(playerStats.comfort()), UiColor.ENERGY, uiScale);
+        lineY = journalLine(x, lineY, "Station", stationSetLabel(currentCraftingStations()), UiColor.ACCENT, uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("LORE NOTES", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 20.0f * uiScale;
+        uiRenderer.text("No lore notes found", x + 32.0f * uiScale, lineY, 1.1f * uiScale, UiColor.BUTTON_DISABLED);
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "ALPHA FLOW", journalProgressRatio(), uiScale);
+    }
+
+    private void renderJournalBiomes(float x, float y, float width, float uiScale) {
+        Vector3f position = camera.position();
+        String currentBiome = world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z));
+        float lineY = journalTitle(x, y, "BIOMES", "Discovered " + discoveredBiomeKeys.size(), uiScale);
+        lineY = journalLine(x, lineY, "Current", biomeLabel(currentBiome), UiColor.ACCENT, uiScale);
+        lineY = journalLine(x, lineY, "Temperature", temperatureLabel(currentBiome), UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Position", Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z), UiColor.WHITE, uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("KNOWN BIOMES", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 22.0f * uiScale;
+        List<String> biomesList = discoveredBiomeKeys.stream().sorted().limit(8).toList();
+        if (biomesList.isEmpty()) {
+            uiRenderer.text("No biome entries yet", x + 32.0f * uiScale, lineY, 1.1f * uiScale, UiColor.BUTTON_DISABLED);
+            return;
+        }
+        for (String biomeKey : biomesList) {
+            UiColor color = biomeKey.equals(currentBiome) ? UiColor.ACCENT : UiColor.WHITE;
+            uiRenderer.text("- " + biomeLabel(biomeKey), x + 32.0f * uiScale, lineY, 1.08f * uiScale, color);
+            lineY += 18.0f * uiScale;
+        }
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "WORLD", Math.min(1.0f, discoveredBiomeKeys.size() / 8.0f), uiScale);
+    }
+
+    private void renderJournalStructures(float x, float y, float width, float uiScale) {
+        int radius = CraftingStationRules.STATION_RADIUS_BLOCKS;
+        Optional<ClientWorld.BlockPos> storage = nearestStructure(Blocks.STORAGE_CRATE, radius);
+        Optional<ClientWorld.BlockPos> activeCampfire = nearestStructure(Blocks.CAMPFIRE_ACTIVE, radius);
+        Optional<ClientWorld.BlockPos> coldCampfire = nearestStructure(Blocks.CAMPFIRE, radius);
+        Optional<ClientWorld.BlockPos> burnedCampfire = nearestStructure(Blocks.CAMPFIRE_BURNED_OUT, radius);
+        Optional<ClientWorld.BlockPos> campfire = nearestPresent(activeCampfire, coldCampfire, burnedCampfire);
+        Optional<ClientWorld.BlockPos> cookingPot = nearestStructure(Blocks.COOKING_POT, radius);
+        Optional<ClientWorld.BlockPos> workbench = nearestStructure(Blocks.WORKBENCH, radius);
+        Optional<ClientWorld.BlockPos> forge = nearestStructure(Blocks.FORGE, radius);
+        Optional<ClientWorld.BlockPos> sleepingMat = nearestStructure(Blocks.SLEEPING_MAT, radius);
+        int nearby = nearbyCount(storage, campfire, cookingPot, workbench, forge, sleepingMat);
+
+        float lineY = journalTitle(x, y, "STRUCTURES", nearby + "/6 useful nearby", uiScale);
+        lineY = journalLine(x, lineY, "Storage", structureStatus(storage, "E opens crate", "No crate in reach"), structureColor(storage), uiScale);
+        lineY = journalLine(x, lineY, "Campfire", campfireStatus(activeCampfire, coldCampfire, burnedCampfire), campfireColor(activeCampfire, coldCampfire, burnedCampfire), uiScale);
+        lineY = journalLine(x, lineY, "Cooking pot", structureStatus(cookingPot, "Recipes unlocked", "No pot in reach"), structureColor(cookingPot), uiScale);
+        lineY = journalLine(x, lineY, "Workbench", structureStatus(workbench, "Progression recipes", "No bench in reach"), structureColor(workbench), uiScale);
+        lineY = journalLine(x, lineY, "Forge", structureStatus(forge, "Iron and seals", "No forge in reach"), structureColor(forge), uiScale);
+        lineY = journalLine(x, lineY, "Sleep", structureStatus(sleepingMat, "Safe rest spot", "No mat in reach"), structureColor(sleepingMat), uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("NEARBY FLOW", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 22.0f * uiScale;
+        uiRenderer.text("- E uses storage, crafting and rest targets", x + 32.0f * uiScale, lineY, 1.05f * uiScale, UiColor.WHITE);
+        lineY += 18.0f * uiScale;
+        uiRenderer.text("- Campfire, pot, bench and forge unlock station recipes", x + 32.0f * uiScale, lineY, 1.05f * uiScale, UiColor.WHITE);
+        lineY += 18.0f * uiScale;
+        uiRenderer.text("- Missing entries mean move closer or build/place one", x + 32.0f * uiScale, lineY, 1.05f * uiScale, UiColor.MUTED);
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "STRUCTURES", journalStructureRatio(), uiScale);
+    }
+
+    private void renderJournalCreatures(float x, float y, float width, float uiScale) {
+        List<EntitySnapshot> visibleCreatures = world.visibleEntities(frameTimeSeconds).stream()
+                .filter(entity -> !ItemDropType.isTypeKey(entity.typeKey()))
+                .filter(entity -> !"voxel:player".equals(entity.typeKey()))
+                .toList();
+        float lineY = journalTitle(x, y, "CREATURES", "Discovered " + discoveredCreatureKeys.size(), uiScale);
+        lineY = journalLine(x, lineY, "Nearby", String.valueOf(visibleCreatures.size()), UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Feeding", hotbar.selectedItemIsFood() ? "Food ready" : "Select food first", hotbar.selectedItemIsFood() ? UiColor.ACCENT : UiColor.MUTED, uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("NEARBY", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 22.0f * uiScale;
+        if (visibleCreatures.isEmpty()) {
+            uiRenderer.text("No creatures in sight", x + 32.0f * uiScale, lineY, 1.1f * uiScale, UiColor.BUTTON_DISABLED);
+        } else {
+            for (EntitySnapshot entity : visibleCreatures.stream().limit(6).toList()) {
+                String state = entity.stateKey().toLowerCase(Locale.ROOT).replace('_', ' ');
+                uiRenderer.text("- " + labelKey(entity.typeKey()) + "  " + state + "  HP " + entity.health(), x + 32.0f * uiScale, lineY, 1.05f * uiScale, UiColor.WHITE);
+                lineY += 18.0f * uiScale;
+            }
+        }
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "CREATURES", Math.min(1.0f, discoveredCreatureKeys.size() / 8.0f), uiScale);
+    }
+
+    private void renderJournalRecipes(float x, float y, float width, float uiScale) {
+        EnumSet<CraftingStationType> stationTypes = currentCraftingStations();
+        List<CraftingRecipe> recipes = prioritizedRecipes(stationTypes);
+        long unlocked = hotbar.recipes().stream().filter(recipe -> recipeUnlockedForUi(recipe, stationTypes)).count();
+        long craftable = hotbar.recipes().stream().filter(recipe -> canCraftRecipe(recipe, stationTypes)).count();
+        float lineY = journalTitle(x, y, "RECIPES", "Known " + unlocked + "/" + hotbar.recipes().size(), uiScale);
+        lineY = journalLine(x, lineY, "Station", stationSetLabel(stationTypes), UiColor.ACCENT, uiScale);
+        lineY = journalLine(x, lineY, "Ready", craftable + " craftable", craftable > 0 ? UiColor.ACCENT : UiColor.MUTED, uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("RECIPE BOOK", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 22.0f * uiScale;
+        for (CraftingRecipe recipe : recipes.stream().limit(8).toList()) {
+            UiColor color = canCraftRecipe(recipe, stationTypes) ? UiColor.ACCENT : recipeUnlockedForUi(recipe, stationTypes) ? UiColor.WHITE : UiColor.BUTTON_DISABLED;
+            uiRenderer.text("- " + clampText(recipe.label() + "  " + recipeStatusLine(recipe, stationTypes), 58), x + 32.0f * uiScale, lineY, 1.0f * uiScale, color);
+            lineY += 18.0f * uiScale;
+        }
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "RECIPES", hotbar.recipes().isEmpty() ? 0.0f : unlocked / (float) hotbar.recipes().size(), uiScale);
+    }
+
+    private void renderJournalCollectibles(float x, float y, float width, float uiScale) {
+        List<EntitySnapshot> itemDrops = world.visibleEntities(frameTimeSeconds).stream()
+                .filter(entity -> ItemDropType.isTypeKey(entity.typeKey()))
+                .toList();
+        float lineY = journalTitle(x, y, "COLLECTIBLES", "Nearby drops " + itemDrops.size(), uiScale);
+        lineY = journalLine(x, lineY, "Selected", hotbar.selectedLabel(), UiColor.WHITE, uiScale);
+        lineY = journalLine(x, lineY, "Inventory", inventoryFilledSlots() + "/" + hotbar.inventorySlotCount() + " slots", UiColor.WHITE, uiScale);
+        lineY += 10.0f * uiScale;
+        uiRenderer.text("NEARBY DROPS", x + 20.0f * uiScale, lineY, 1.15f * uiScale, UiColor.MUTED);
+        lineY += 22.0f * uiScale;
+        if (itemDrops.isEmpty()) {
+            uiRenderer.text("No loose items in sight", x + 32.0f * uiScale, lineY, 1.1f * uiScale, UiColor.BUTTON_DISABLED);
+        } else {
+            for (EntitySnapshot drop : itemDrops.stream().limit(7).toList()) {
+                String item = ItemDropType.itemKey(drop.typeKey()).map(GameClient::labelKey).orElse("Item");
+                uiRenderer.text("- " + item + "  nearby", x + 32.0f * uiScale, lineY, 1.05f * uiScale, UiColor.WHITE);
+                lineY += 18.0f * uiScale;
+            }
+        }
+        drawJournalProgress(x + width - 226.0f * uiScale, y + 24.0f * uiScale, 186.0f * uiScale, "PACK", inventoryFilledSlots() / (float) Math.max(1, hotbar.inventorySlotCount()), uiScale);
+    }
+
+    private String journalHeaderLine() {
+        if (world == null) {
+            return "NO WORLD";
+        }
+        Vector3f position = camera.position();
+        String biome = biomeLabel(world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z)));
+        return biome + "  " + dayTimeLabel();
+    }
+
+    private InteractionHint.Tone journalTone() {
+        return switch (journalTab) {
+            case NOTES, BIOMES -> InteractionHint.Tone.NEUTRAL;
+            case STRUCTURES, CREATURES, RECIPES, COLLECTIBLES -> InteractionHint.Tone.READY;
+        };
+    }
+
+    private float journalTitle(float x, float y, String title, String meta, float uiScale) {
+        uiRenderer.text(title, x + 20.0f * uiScale, y + 18.0f * uiScale, 1.65f * uiScale, UiColor.WHITE);
+        uiRenderer.text(meta.toUpperCase(Locale.ROOT), x + 20.0f * uiScale, y + 42.0f * uiScale, 0.95f * uiScale, UiColor.MUTED);
+        return y + 72.0f * uiScale;
+    }
+
+    private float journalLine(float x, float y, String label, String value, UiColor valueColor, float uiScale) {
+        uiRenderer.text(label.toUpperCase(Locale.ROOT), x + 20.0f * uiScale, y, 1.02f * uiScale, UiColor.MUTED);
+        uiRenderer.text(clampText(value, 46), x + 148.0f * uiScale, y, 1.08f * uiScale, valueColor);
+        return y + 21.0f * uiScale;
+    }
+
+    private void drawJournalProgress(float x, float y, float width, String label, float ratio, float uiScale) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, ratio));
+        uiRenderer.text(label, x, y, 0.92f * uiScale, UiColor.MUTED);
+        drawProgressBar(x, y + 18.0f * uiScale, width, 10.0f * uiScale, clamped, interactionHintAccent(journalTone()));
+        uiRenderer.text(Math.round(clamped * 100.0f) + "%", x + width - 32.0f * uiScale, y + 34.0f * uiScale, 0.86f * uiScale, UiColor.WHITE);
+    }
+
+    private float journalProgressRatio() {
+        float biome = Math.min(1.0f, discoveredBiomeKeys.size() / 8.0f);
+        float creature = Math.min(1.0f, discoveredCreatureKeys.size() / 8.0f);
+        float recipe = hotbar.recipes().isEmpty() ? 0.0f : hotbar.discoveredRecipes().size() / (float) hotbar.recipes().size();
+        float structures = journalStructureRatio();
+        return (biome + creature + recipe + structures) / 4.0f;
+    }
+
+    private String comfortLabel(int comfort) {
+        if (comfort >= 12) {
+            return "Homey +" + comfort;
+        }
+        if (comfort >= 8) {
+            return "Restful +" + comfort;
+        }
+        if (comfort >= 5) {
+            return "Cozy +" + comfort;
+        }
+        if (comfort > 0) {
+            return "Low +" + comfort;
+        }
+        return "None";
+    }
+
+    private int inventoryFilledSlots() {
+        int filled = 0;
+        for (int slot = 0; slot < hotbar.inventorySlotCount(); slot++) {
+            if (!hotbar.slotView(slot).isEmpty()) {
+                filled++;
+            }
+        }
+        return filled;
+    }
+
+    @SafeVarargs
+    private static int nearbyCount(Optional<ClientWorld.BlockPos>... positions) {
+        int count = 0;
+        for (Optional<ClientWorld.BlockPos> position : positions) {
+            if (position.isPresent()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @SafeVarargs
+    private static Optional<ClientWorld.BlockPos> nearestPresent(Optional<ClientWorld.BlockPos>... positions) {
+        for (Optional<ClientWorld.BlockPos> position : positions) {
+            if (position.isPresent()) {
+                return position;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<ClientWorld.BlockPos> nearestStructure(short blockId, int radius) {
+        if (world == null) {
+            return Optional.empty();
+        }
+        return world.nearestBlockWithin(camera.position(), blockId, radius);
+    }
+
+    private float journalStructureRatio() {
+        int radius = CraftingStationRules.STATION_RADIUS_BLOCKS;
+        Optional<ClientWorld.BlockPos> storage = nearestStructure(Blocks.STORAGE_CRATE, radius);
+        Optional<ClientWorld.BlockPos> campfire = nearestPresent(
+                nearestStructure(Blocks.CAMPFIRE_ACTIVE, radius),
+                nearestStructure(Blocks.CAMPFIRE, radius),
+                nearestStructure(Blocks.CAMPFIRE_BURNED_OUT, radius)
+        );
+        Optional<ClientWorld.BlockPos> cookingPot = nearestStructure(Blocks.COOKING_POT, radius);
+        Optional<ClientWorld.BlockPos> workbench = nearestStructure(Blocks.WORKBENCH, radius);
+        Optional<ClientWorld.BlockPos> forge = nearestStructure(Blocks.FORGE, radius);
+        Optional<ClientWorld.BlockPos> sleepingMat = nearestStructure(Blocks.SLEEPING_MAT, radius);
+        return nearbyCount(storage, campfire, cookingPot, workbench, forge, sleepingMat) / 6.0f;
+    }
+
+    private String structureStatus(Optional<ClientWorld.BlockPos> position, String ready, String missing) {
+        return position.map(pos -> ready + "  " + structureDistanceLabel(pos)).orElse(missing);
+    }
+
+    private String campfireStatus(Optional<ClientWorld.BlockPos> active, Optional<ClientWorld.BlockPos> cold, Optional<ClientWorld.BlockPos> burned) {
+        if (active.isPresent()) {
+            return "Active  " + structureDistanceLabel(active.get());
+        }
+        if (cold.isPresent()) {
+            return "Needs fuel  " + structureDistanceLabel(cold.get());
+        }
+        if (burned.isPresent()) {
+            return "Burned out  " + structureDistanceLabel(burned.get());
+        }
+        return "No campfire in reach";
+    }
+
+    private UiColor campfireColor(Optional<ClientWorld.BlockPos> active, Optional<ClientWorld.BlockPos> cold, Optional<ClientWorld.BlockPos> burned) {
+        if (active.isPresent()) {
+            return UiColor.ACCENT;
+        }
+        if (cold.isPresent()) {
+            return UiColor.ENERGY;
+        }
+        return structureColor(burned);
+    }
+
+    private UiColor structureColor(Optional<ClientWorld.BlockPos> position) {
+        return position.isPresent() ? UiColor.ACCENT : UiColor.BUTTON_DISABLED;
+    }
+
+    private String structureDistanceLabel(ClientWorld.BlockPos position) {
+        return Math.round(structureDistance(position)) + "m";
+    }
+
+    private float structureDistance(ClientWorld.BlockPos position) {
+        Vector3f cameraPosition = camera.position();
+        float dx = cameraPosition.x - (position.x() + 0.5f);
+        float dy = cameraPosition.y - (position.y() + 0.5f);
+        float dz = cameraPosition.z - (position.z() + 0.5f);
+        return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    private void refreshJournalDiscoveries(double now) {
+        if (world == null) {
+            return;
+        }
+        Vector3f position = camera.position();
+        discoveredBiomeKeys.add(world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z)));
+        for (EntitySnapshot entity : world.visibleEntities(now)) {
+            if (!ItemDropType.isTypeKey(entity.typeKey()) && !"voxel:player".equals(entity.typeKey())) {
+                discoveredCreatureKeys.add(entity.typeKey());
+            }
+        }
+    }
+
+    private static String labelKey(String key) {
+        if (key == null || key.isBlank()) {
+            return "Unknown";
+        }
+        int colon = key.indexOf(':');
+        String value = colon >= 0 ? key.substring(colon + 1) : key;
+        String label = value.replace('_', ' ');
+        return label.substring(0, 1).toUpperCase(Locale.ROOT) + label.substring(1);
+    }
+
     private void renderCraftingScreen(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked) {
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.72f));
         uiRenderer.centeredText("CRAFTING", framebufferWidth * 0.5f, 70.0f, 5.0f, UiColor.WHITE);
@@ -1407,22 +2032,26 @@ public final class GameClient {
         float contentWidth = Math.min(980.0f, framebufferWidth - 64.0f);
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
         float y = Math.max(142.0f, framebufferHeight * 0.20f);
+        AnimationSample shake = craftingFailureShake.sample(frameTimeSeconds);
+        float shakeX = shake.value(AnimationChannels.SHAKE_X, 0.0f) * settings.uiScale();
         renderInventoryTabs(x, y - 52.0f, contentWidth);
-        CraftingStationType stationType = currentCraftingStation();
-        renderWorkbenchPreview(previewCraftingRecipe(stationType), x, y, stationType);
-        renderCraftingMenu(mouse, clicked, x + 360.0f, y, stationType);
+        EnumSet<CraftingStationType> stationTypes = currentCraftingStations();
+        renderWorkbenchPreview(previewCraftingRecipe(stationTypes), x + shakeX, y, stationTypes);
+        renderCraftingMenu(mouse, clicked, x + 360.0f + shakeX, y, stationTypes);
         renderInventoryGridCompact(mouse, clicked, released, rightClicked, x, y + 266.0f);
+        renderCraftingPopAnimations();
     }
 
-    private void renderStorageScreen(MousePosition mouse, boolean clicked, boolean rightClicked) {
+    private void renderStorageScreen(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked) {
         if (!hotbar.storageOpen()) {
             resumeGame();
             return;
         }
         uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.02f, 0.025f, 0.03f, 0.74f));
         uiRenderer.centeredText("STORAGE CRATE", framebufferWidth * 0.5f, 62.0f, 4.8f, UiColor.WHITE);
-        uiRenderer.centeredText("CLICK MOVE  RIGHT-CLICK SPLIT  E OR ESC CLOSE", framebufferWidth * 0.5f, 106.0f, 1.55f, UiColor.MUTED);
+        uiRenderer.centeredText("DRAG MOVE  SHIFT-CLICK TRANSFER  RIGHT-CLICK SPLIT  E OR ESC CLOSE", framebufferWidth * 0.5f, 106.0f, 1.55f, UiColor.MUTED);
 
+        float uiScale = settings.uiScale();
         float slot = framebufferWidth < 820 ? 36.0f : 42.0f;
         float gap = 6.0f;
         int columns = 9;
@@ -1430,11 +2059,21 @@ public final class GameClient {
         float panelWidth = Math.min(gridWidth + 56.0f, framebufferWidth - 42.0f);
         float x = framebufferWidth * 0.5f - panelWidth * 0.5f + 28.0f;
         float y = Math.max(132.0f, framebufferHeight * 0.20f);
+        UiColor storageLabel = new UiColor(0.13f, 0.13f, 0.12f, 1.0f);
+        UiColor storageMuted = new UiColor(0.28f, 0.28f, 0.25f, 1.0f);
 
-        drawAssetPanel("panel_inventory", x - 24.0f, y - 40.0f, panelWidth, 130.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
-        uiRenderer.text("CRATE", x, y - 26.0f, 2.2f, UiColor.WHITE);
-        uiRenderer.text("POS " + hotbar.storageX() + " " + hotbar.storageY() + " " + hotbar.storageZ(), x + panelWidth - 194.0f, y - 21.0f, 1.15f, UiColor.MUTED);
-        String hoverHint = "";
+        drawInventoryBackdrop(x - 24.0f, y - 40.0f, panelWidth, 130.0f, uiScale);
+        uiRenderer.text("CRATE", x, y - 26.0f, 2.2f, storageLabel);
+        uiRenderer.text(clampText(storageMetaLine(), 36), x + 82.0f, y - 21.0f, 1.05f, storageMuted);
+        drawInventoryActionButton(new UiButton(x + panelWidth - 136.0f, y - 34.0f, 112.0f, 26.0f, "SORT CRATE", !onlineMode), mouse, clicked, () -> {
+            if (hotbar.sortStorage()) {
+                setStatus("Crate sorted");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            }
+        });
+        Hotbar.SlotView hoveredSlot = null;
+        boolean droppedOnSlot = false;
         for (int i = 0; i < Math.min(hotbar.storageSlotCount(), 18); i++) {
             int slotIndex = i;
             int column = i % columns;
@@ -1442,42 +2081,57 @@ public final class GameClient {
             float sx = x + column * (slot + gap);
             float sy = y + row * (slot + gap);
             Hotbar.SlotView slotView = hotbar.storageSlotView(i);
-            String slotHint = renderTransferSlot(mouse, clicked, rightClicked, sx, sy, slot, slotView, false, false, () -> transferStorageSlot(true, slotIndex, Integer.MAX_VALUE), () -> transferStorageSlot(true, slotIndex, splitCount(slotView)));
-            if (!slotHint.isBlank()) {
-                hoverHint = slotHint;
+            StorageSlotInteraction interaction = renderStorageSlot(mouse, clicked, released, rightClicked, "storage:" + slotIndex, sx, sy, slot, slotView, false, false, InventoryDragSource.STORAGE, slotIndex);
+            if (interaction.hoveredSlot() != null) {
+                hoveredSlot = interaction.hoveredSlot();
             }
+            droppedOnSlot = droppedOnSlot || interaction.droppedOnSlot();
         }
 
         float inventoryY = y + 178.0f;
-        drawAssetPanel("panel_inventory", x - 24.0f, inventoryY - 40.0f, panelWidth, 238.0f, new UiColor(0.04f, 0.06f, 0.055f, 0.78f));
-        uiRenderer.text("BACKPACK", x, inventoryY - 26.0f, 2.2f, UiColor.WHITE);
-        for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), 36); i++) {
-            int slotIndex = i;
-            int column = i % columns;
-            int row = i / columns;
+        drawInventoryBackdrop(x - 24.0f, inventoryY - 40.0f, panelWidth, 252.0f, uiScale);
+        uiRenderer.text("BACKPACK", x, inventoryY - 26.0f, 2.2f, storageLabel);
+        float hotbarGap = 13.0f;
+        for (int displayIndex = 0; displayIndex < Math.min(hotbar.inventorySlotCount(), 36); displayIndex++) {
+            int slotIndex = playerInventorySlotIndex(displayIndex);
+            int column = displayIndex % columns;
+            int row = displayIndex / columns;
             float sx = x + column * (slot + gap);
-            float sy = inventoryY + row * (slot + gap);
-            boolean selected = i == hotbar.selectedIndex();
-            Hotbar.SlotView slotView = hotbar.slotView(i);
-            String slotHint = renderTransferSlot(mouse, clicked, rightClicked, sx, sy, slot, slotView, selected, i < Hotbar.HOTBAR_SLOTS, () -> transferStorageSlot(false, slotIndex, Integer.MAX_VALUE), () -> transferStorageSlot(false, slotIndex, splitCount(slotView)));
-            if (!slotHint.isBlank()) {
-                hoverHint = slotHint;
+            float sy = row < INVENTORY_MAIN_ROWS
+                    ? inventoryY + row * (slot + gap)
+                    : inventoryY + INVENTORY_MAIN_ROWS * (slot + gap) + hotbarGap;
+            boolean selected = slotIndex == hotbar.selectedIndex();
+            Hotbar.SlotView slotView = hotbar.slotView(slotIndex);
+            StorageSlotInteraction interaction = renderStorageSlot(mouse, clicked, released, rightClicked, "storage-inventory:" + slotIndex, sx, sy, slot, slotView, selected, slotIndex < Hotbar.HOTBAR_SLOTS, InventoryDragSource.PLAYER, slotIndex);
+            if (interaction.hoveredSlot() != null) {
+                hoveredSlot = interaction.hoveredSlot();
             }
+            droppedOnSlot = droppedOnSlot || interaction.droppedOnSlot();
         }
 
+        renderDraggedInventoryStack(mouse);
         float buttonWidth = Math.min(220.0f, panelWidth);
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, Math.min(framebufferHeight - 62.0f, inventoryY + 224.0f), buttonWidth, 40.0f, "CLOSE", true), mouse, clicked, this::closeStorageScreen);
-        if (!hoverHint.isBlank()) {
-            renderSlotHoverHint(mouse, hoverHint);
+        if (released && draggedInventorySlot >= 0) {
+            if (!droppedOnSlot) {
+                setStatus("Drag cancelled");
+            }
+            clearInventoryDrag();
+        }
+        if (hoveredSlot != null) {
+            renderSlotHoverHint(mouse, hoveredSlot);
         }
     }
 
-    private String renderTransferSlot(MousePosition mouse, boolean clicked, boolean rightClicked, float x, float y, float size, Hotbar.SlotView slotView, boolean selected, boolean hotbarSlot, Runnable transfer, Runnable splitTransfer) {
+    private StorageSlotInteraction renderStorageSlot(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, String hoverKey, float x, float y, float size, Hotbar.SlotView slotView, boolean selected, boolean hotbarSlot, InventoryDragSource source, int slotIndex) {
         boolean hovered = contains(mouse, x, y, size, size);
-        if (hovered) {
-            uiRenderer.rect(x - 3.0f, y - 3.0f, size + 6.0f, size + 6.0f, UiColor.BUTTON_HOVER);
-        }
         drawAssetSlot(x, y, size, selected, hotbarSlot);
+        if (hovered) {
+            drawInventorySlotHoverFrame(hoverKey, x, y, size, settings.uiScale());
+        }
+        if (draggedInventorySlot == slotIndex && draggedInventorySource == source) {
+            drawInventorySlotDragFrame(x, y, size, settings.uiScale());
+        }
         if (!slotView.isEmpty()) {
             drawItemIcon(slotView.itemKey(), x + 5.0f, y + 4.0f, size - 12.0f);
             if (slotView.count() > 1) {
@@ -1487,12 +2141,19 @@ public final class GameClient {
                 drawDurabilityBar(x + 6.0f, y + size - 6.0f, size - 12.0f, slotView.durabilityLeft(), slotView.maxDurability());
             }
         }
-        if (hovered && clicked && !slotView.isEmpty()) {
-            transfer.run();
+        boolean droppedOnSlot = false;
+        if (hovered && released && draggedInventorySlot >= 0) {
+            droppedOnSlot = true;
+            moveDraggedStorageSlot(source, slotIndex);
+        } else if (hovered && clicked && isShiftDown() && !slotView.isEmpty()) {
+            transferStorageSlot(source == InventoryDragSource.STORAGE, slotIndex, Integer.MAX_VALUE);
+        } else if (hovered && clicked && !slotView.isEmpty()) {
+            draggedInventorySource = source;
+            draggedInventorySlot = slotIndex;
         } else if (hovered && rightClicked && !slotView.isEmpty()) {
-            splitTransfer.run();
+            transferStorageSlot(source == InventoryDragSource.STORAGE, slotIndex, splitCount(slotView));
         }
-        return hovered && !slotView.isEmpty() ? slotHoverText(slotView) : "";
+        return new StorageSlotInteraction(hovered && !slotView.isEmpty() ? slotView : null, droppedOnSlot);
     }
 
     private int splitCount(Hotbar.SlotView slotView) {
@@ -1504,34 +2165,102 @@ public final class GameClient {
             return;
         }
         if (onlineMode && connection != null) {
-            connection.send(new GamePacket.StorageTransfer(
-                    hotbar.storageX(),
-                    hotbar.storageY(),
-                    hotbar.storageZ(),
-                    fromStorage,
-                    slot,
-                    GamePacket.StorageTransfer.AUTO_TARGET_SLOT,
-                    count,
-                    nextStorageTransactionId()
-            ));
-            setStatus("Storage transfer requested");
+            sendStorageTransferPacket(fromStorage, slot, GamePacket.StorageTransfer.AUTO_TARGET_SLOT, count);
         } else if (hotbar.transferStorage(fromStorage, slot, count)) {
             setStatus(fromStorage ? "Moved from crate" : "Stored in crate");
             if (fromStorage) {
                 announceNewRecipeUnlocks();
             }
             audio.play(AudioCue.INVENTORY_CLICK);
+        } else {
+            setStatus(fromStorage ? "Backpack full" : "Crate full");
+            audio.play(AudioCue.CRAFT_FAIL);
         }
         updateWindowTitle();
     }
 
-    private int nextStorageTransactionId() {
-        storageTransactionId = storageTransactionId == Integer.MAX_VALUE ? 1 : storageTransactionId + 1;
-        return storageTransactionId;
+    private void moveDraggedStorageSlot(InventoryDragSource targetSource, int targetSlot) {
+        if (!hotbar.storageOpen() || draggedInventorySlot < 0) {
+            return;
+        }
+        InventoryDragSource source = draggedInventorySource;
+        int sourceSlot = draggedInventorySlot;
+        if (source == targetSource && sourceSlot == targetSlot) {
+            transferStorageSlot(source == InventoryDragSource.STORAGE, sourceSlot, Integer.MAX_VALUE);
+            return;
+        }
+        if (onlineMode && connection != null) {
+            if (source != targetSource) {
+                sendStorageTransferPacket(source == InventoryDragSource.STORAGE, sourceSlot, targetSlot, Integer.MAX_VALUE);
+            } else {
+                setStatus("Server reorder unavailable");
+                audio.play(AudioCue.CRAFT_FAIL);
+            }
+            updateWindowTitle();
+            return;
+        }
+        boolean moved;
+        if (source == InventoryDragSource.STORAGE && targetSource == InventoryDragSource.STORAGE) {
+            moved = hotbar.moveStorageSlot(sourceSlot, targetSlot);
+        } else if (source == InventoryDragSource.PLAYER && targetSource == InventoryDragSource.PLAYER) {
+            moved = hotbar.moveInventorySlot(sourceSlot, targetSlot);
+        } else if (source == InventoryDragSource.STORAGE) {
+            moved = hotbar.moveStorageToInventorySlot(sourceSlot, targetSlot);
+        } else {
+            moved = hotbar.moveInventoryToStorageSlot(sourceSlot, targetSlot);
+        }
+        if (moved) {
+            setStatus(storageMoveMessage(source, targetSource));
+            if (source == InventoryDragSource.STORAGE) {
+                announceNewRecipeUnlocks();
+            }
+            audio.play(AudioCue.INVENTORY_CLICK);
+        } else {
+            setStatus("Target slot full");
+            audio.play(AudioCue.CRAFT_FAIL);
+        }
+        updateWindowTitle();
+    }
+
+    private void sendStorageTransferPacket(boolean fromStorage, int sourceSlot, int targetSlot, int count) {
+        connection.send(new GamePacket.StorageTransfer(
+                hotbar.storageX(),
+                hotbar.storageY(),
+                hotbar.storageZ(),
+                fromStorage,
+                sourceSlot,
+                targetSlot,
+                count,
+                nextClientTransactionId()
+        ));
+        setStatus("Storage transfer requested");
+    }
+
+    private static String storageMoveMessage(InventoryDragSource source, InventoryDragSource target) {
+        if (source == target) {
+            return source == InventoryDragSource.STORAGE ? "Moved inside crate" : "Moved stack";
+        }
+        return source == InventoryDragSource.STORAGE ? "Moved from crate" : "Stored in crate";
+    }
+
+    private String storageMetaLine() {
+        Vector3f position = camera.position();
+        float dx = position.x - (hotbar.storageX() + 0.5f);
+        float dy = position.y - (hotbar.storageY() + 0.5f);
+        float dz = position.z - (hotbar.storageZ() + 0.5f);
+        float distance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return "POS " + hotbar.storageX() + " " + hotbar.storageY() + " " + hotbar.storageZ()
+                + "  DIST " + String.format(Locale.ROOT, "%.1fm", distance);
+    }
+
+    private int nextClientTransactionId() {
+        clientTransactionId = clientTransactionId == Integer.MAX_VALUE ? 1 : clientTransactionId + 1;
+        return clientTransactionId;
     }
 
     private void closeStorageScreen() {
         hotbar.closeStorage();
+        clearInventoryDrag();
         resumeGame();
     }
 
@@ -1619,6 +2348,9 @@ public final class GameClient {
         drawButton(new UiButton(presetX, y + 362.0f, presetButtonWidth, 34.0f, "LOW", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.LOW));
         drawButton(new UiButton(presetX + presetButtonWidth + 10.0f, y + 362.0f, presetButtonWidth, 34.0f, "MEDIUM", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.MEDIUM));
         drawButton(new UiButton(presetX + (presetButtonWidth + 10.0f) * 2.0f, y + 362.0f, presetButtonWidth, 34.0f, "HIGH", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.HIGH));
+        if (framebufferHeight >= 690) {
+            renderSettingsControlsSummary(x, y + 424.0f, panelWidth);
+        }
 
         float buttonWidth = Math.min(280.0f, framebufferWidth - 80.0f);
         drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, framebufferHeight - 86.0f, buttonWidth, 46.0f, "BACK", true), mouse, clicked, () -> {
@@ -1626,6 +2358,23 @@ public final class GameClient {
             setCursorForState();
             updateWindowTitle();
         });
+    }
+
+    private void renderSettingsControlsSummary(float x, float y, float width) {
+        drawAssetPanel("frame_stone", x, y, width, 66.0f, new UiColor(0.035f, 0.052f, 0.048f, 0.72f));
+        uiRenderer.rect(x + 8.0f, y + 8.0f, width - 16.0f, 50.0f, new UiColor(0.02f, 0.032f, 0.030f, 0.26f));
+        uiRenderer.text("CONTROLS", x + 18.0f, y + 16.0f, 1.45f, UiColor.WHITE);
+        float left = x + 132.0f;
+        float right = x + width * 0.55f;
+        settingsControlLine(left, y + 14.0f, "MOVE", "WASD SPACE CTRL SHIFT");
+        settingsControlLine(left, y + 36.0f, "ACT", "MOUSE E J O ESC");
+        settingsControlLine(right, y + 14.0f, "PACK", "DRAG SHIFT-CLICK RIGHT-CLICK");
+        settingsControlLine(right, y + 36.0f, "HUD", "F1 HUD F3 DEBUG F4 MODE");
+    }
+
+    private void settingsControlLine(float x, float y, String label, String value) {
+        uiRenderer.text(label, x, y, 0.95f, UiColor.MUTED);
+        uiRenderer.text(clampText(value, 30), x + 54.0f, y, 1.0f, UiColor.WHITE);
     }
 
     private void settingsSection(float x, float y, float width, float height, String title) {
@@ -1650,57 +2399,62 @@ public final class GameClient {
         drawButton(new UiButton(x + width - 80.0f, y + 7.0f, 68.0f, 30.0f, enabled ? "ON" : "OFF", true), mouse, clicked, toggle);
     }
 
-    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, CraftingStationType stationType) {
+    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, EnumSet<CraftingStationType> stationTypes) {
         float panelWidth = Math.min(560.0f, framebufferWidth - x - 32.0f);
         if (panelWidth < 260.0f) {
             return;
         }
-        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationType);
+        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationTypes);
         int visibleRecipes = Math.min(6, recipes.size());
         float rowHeight = 50.0f;
         float panelHeight = 142.0f + Math.max(1, visibleRecipes) * rowHeight + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
         drawAssetPanel("panel_crafting", x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
         uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, panelHeight - 56.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.20f));
         uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
-        uiRenderer.text("STATION " + Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x + panelWidth - 210.0f, y - 25.0f, 1.2f, UiColor.MUTED);
+        uiRenderer.text("STATION " + stationSetLabel(stationTypes).toUpperCase(Locale.ROOT), x + panelWidth - 210.0f, y - 25.0f, 1.2f, UiColor.MUTED);
         renderCraftingFilters(mouse, clicked, x, y + 2.0f, panelWidth);
         renderCraftingSearchField(mouse, clicked, x, y + 34.0f, panelWidth);
         float buttonHeight = 34.0f;
         for (int index = 0; index < visibleRecipes; index++) {
             CraftingRecipe recipe = recipes.get(index);
-            boolean unlocked = recipeUnlockedForUi(recipe, stationType);
-            boolean canCraft = unlocked && hotbar.canCraft(recipe, stationType);
+            boolean unlocked = recipeUnlockedForUi(recipe, stationTypes);
+            boolean canCraft = canCraftRecipe(recipe, stationTypes);
             float rowY = y + 76.0f + index * rowHeight;
             String buttonLabel = recipe.label().toUpperCase(Locale.ROOT) + " [" + recipe.category().name() + "]";
             UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, buttonLabel, canCraft);
             drawButton(button, mouse, clicked, () -> {
                 if (onlineMode) {
                     connection.send(craftRequestFor(recipe));
-                    setStatus("Crafting requested");
+                    setStatus(craftingRequestMessage(recipe));
                     updateWindowTitle();
-                } else if (hotbar.craft(recipe, stationType)) {
-                    setStatus("Crafted " + recipe.label());
+                } else if (activeStationFor(recipe, stationTypes).map(station -> hotbar.craft(recipe, station)).orElse(false)) {
+                    String craftedKey = itemKey(recipe.result().itemId());
+                    setStatus(earlyGameMilestones.craftItem(
+                                    craftedKey,
+                                    cozyName(craftedKey),
+                                    itemToolType(recipe.result().itemId()))
+                            .orElse("Crafted " + recipe.label()));
+                    craftingSuccessPop.trigger(recipe.key(), currentTimeSeconds());
                     announceNewRecipeUnlocks();
                     audio.play(AudioCue.CRAFT_SUCCESS);
                     updateWindowTitle();
                 }
             });
             if (!canCraft && clicked && button.contains(mouse.x(), mouse.y())) {
-                setStatus(craftFailMessage(recipe, stationType));
-                audio.play(AudioCue.CRAFT_FAIL);
+                emitCraftingFailure(craftFailMessage(recipe, stationTypes));
             }
-            UiColor stationColor = recipe.isAvailableAt(stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED;
-            UiColor statusColor = canCraft ? UiColor.ACCENT : unlocked && recipe.isAvailableAt(stationType) ? UiColor.HEART : UiColor.BUTTON_DISABLED;
+            boolean available = recipeAvailableAtCurrent(recipe, stationTypes);
+            UiColor stationColor = available ? UiColor.MUTED : UiColor.BUTTON_DISABLED;
+            UiColor statusColor = canCraft ? UiColor.ACCENT : unlocked && available ? UiColor.HEART : UiColor.BUTTON_DISABLED;
             uiRenderer.text(clampText(stationRequirementLine(recipe), 42), x + 42.0f, rowY + 23.0f, 0.95f, stationColor);
             uiRenderer.text(clampText(hotbar.recipeSummary(recipe), 42), x + 42.0f, rowY + 36.0f, 0.95f, unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            uiRenderer.text(recipeStatusLine(recipe, stationType).toUpperCase(Locale.ROOT), x + panelWidth - 168.0f, rowY + 36.0f, 0.9f, statusColor);
+            uiRenderer.text(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), x + panelWidth - 168.0f, rowY + 36.0f, 0.9f, statusColor);
             drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, rowY + 4.0f, 26.0f);
         }
         if (recipes.isEmpty()) {
             uiRenderer.text("NO MATCHING RECIPES", x + 12.0f, y + 92.0f, 1.55f, UiColor.MUTED);
             if (clicked && contains(mouse, x, y + 76.0f, panelWidth, 42.0f)) {
-                setStatus("No matching recipe");
-                audio.play(AudioCue.CRAFT_FAIL);
+                emitCraftingFailure("No matching recipe");
             }
         }
         if (recipes.size() > visibleRecipes) {
@@ -1709,44 +2463,139 @@ public final class GameClient {
     }
 
     private GamePacket craftRequestFor(CraftingRecipe recipe) {
-        if (recipe.stationType() == CraftingStationType.CAMPFIRE && world != null) {
-            Optional<ClientWorld.BlockPos> station = world.nearestActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds);
-            Optional<List<Integer>> inputSlots = hotbar.inputSlotsFor(recipe);
-            if (station.isPresent() && inputSlots.isPresent()) {
+        if (recipe.stationType() != CraftingStationType.INVENTORY && world != null) {
+            Optional<ClientWorld.BlockPos> station = nearestStationFor(recipe.stationType());
+            if (station.isPresent() && recipe.craftingTimeTicks() > 0) {
+                Optional<List<Integer>> inputSlots = hotbar.inputSlotsFor(recipe);
+                if (inputSlots.isPresent()) {
+                    ClientWorld.BlockPos pos = station.get();
+                    return new GamePacket.CookRequest(pos.x(), pos.y(), pos.z(), recipe.key(), inputSlots.get(), nextClientTransactionId());
+                }
+            } else if (station.isPresent()) {
                 ClientWorld.BlockPos pos = station.get();
-                return new GamePacket.CookRequest(pos.x(), pos.y(), pos.z(), recipe.key(), inputSlots.get());
+                return GamePacket.CraftRequest.atStation(recipe.key(), 1, pos.x(), pos.y(), pos.z(), nextClientTransactionId());
             }
         }
-        return new GamePacket.CraftRequest(recipe.key());
+        return new GamePacket.CraftRequest(recipe.key(), 1, false, 0, 0, 0, nextClientTransactionId());
     }
 
-    private boolean recipeUnlockedForUi(CraftingRecipe recipe, CraftingStationType stationType) {
+    private String craftingRequestMessage(CraftingRecipe recipe) {
+        if (recipe.craftingTimeTicks() > 0 && recipe.stationType() != CraftingStationType.INVENTORY) {
+            String verb = recipe.stationType() == CraftingStationType.CAMPFIRE
+                    || recipe.stationType() == CraftingStationType.COOKING_POT ? "cooking" : "work";
+            return "Started " + Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT) + " " + verb;
+        }
+        return "Crafting requested";
+    }
+
+    private Optional<ClientWorld.BlockPos> nearestStationFor(CraftingStationType stationType) {
+        if (world == null) {
+            return Optional.empty();
+        }
+        return switch (stationType) {
+            case INVENTORY -> Optional.empty();
+            case CAMPFIRE -> world.nearestActiveCampfireWithin(camera.position(), CraftingStationRules.STATION_RADIUS_BLOCKS, frameTimeSeconds);
+            case COOKING_POT -> world.nearestBlockWithin(camera.position(), Blocks.COOKING_POT, CraftingStationRules.STATION_RADIUS_BLOCKS);
+            case WORKBENCH -> world.nearestBlockWithin(camera.position(), Blocks.WORKBENCH, CraftingStationRules.STATION_RADIUS_BLOCKS);
+            case FORGE -> world.nearestBlockWithin(camera.position(), Blocks.FORGE, CraftingStationRules.STATION_RADIUS_BLOCKS);
+            case CRAFTING_TABLE -> Optional.empty();
+        };
+    }
+
+    private void emitCraftingFailure(String message) {
+        setStatus(message);
+        craftingFailureShake.play(craftingFailureShakeClip, currentTimeSeconds());
+        audio.play(AudioCue.CRAFT_FAIL);
+    }
+
+    private boolean recipeUnlockedForUi(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
         return switch (recipe.unlockCondition()) {
             case ALWAYS -> true;
-            case NEAR_STATION -> recipe.isAvailableAt(stationType);
+            case NEAR_STATION -> recipeAvailableAtCurrent(recipe, stationTypes);
             case DISCOVERED_ITEM, FOUND_LORE_NOTE, BIOME_DISCOVERED -> false;
         };
     }
 
-    private String recipeStatusLine(CraftingRecipe recipe, CraftingStationType stationType) {
-        if (!recipeUnlockedForUi(recipe, stationType)) {
-            return "Locked: " + unlockRequirementLine(recipe);
-        }
-        return hotbar.recipeStatus(recipe, stationType);
+    private boolean recipeAvailableAtCurrent(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        return activeStationFor(recipe, stationTypes).isPresent();
     }
 
-    private String craftFailMessage(CraftingRecipe recipe, CraftingStationType stationType) {
-        if (!recipe.isAvailableAt(stationType)) {
-            return "This needs a " + Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT);
+    private boolean canCraftRecipe(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        return recipeUnlockedForUi(recipe, stationTypes)
+                && activeStationFor(recipe, stationTypes)
+                .map(station -> hotbar.canCraft(recipe, station))
+                .orElse(false);
+    }
+
+    private Optional<CraftingStationType> activeStationFor(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        if (recipe.stationType() == CraftingStationType.INVENTORY) {
+            return Optional.of(CraftingStationType.INVENTORY);
         }
-        if (!recipeUnlockedForUi(recipe, stationType)) {
+        return stationTypes.contains(recipe.stationType()) ? Optional.of(recipe.stationType()) : Optional.empty();
+    }
+
+    private String recipeStatusLine(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        if (!recipeUnlockedForUi(recipe, stationTypes)) {
             return "Locked: " + unlockRequirementLine(recipe);
         }
-        return "Missing ingredients";
+        return activeStationFor(recipe, stationTypes)
+                .map(station -> hotbar.canCraft(recipe, station) ? "Ready" : ingredientOrInventoryMessage(recipe))
+                .orElse("Need " + Hotbar.stationLabel(recipe.stationType()));
+    }
+
+    private String craftFailMessage(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        if (!recipeAvailableAtCurrent(recipe, stationTypes)) {
+            return CraftingFeedback.missingStationMessage(recipe.stationType());
+        }
+        if (!recipeUnlockedForUi(recipe, stationTypes)) {
+            return "Locked: " + unlockRequirementLine(recipe);
+        }
+        return ingredientOrInventoryMessage(recipe);
+    }
+
+    private String ingredientOrInventoryMessage(CraftingRecipe recipe) {
+        return CraftingFeedback.missingIngredientMessage(
+                recipe,
+                itemId -> hotbar.itemCount((short) itemId),
+                itemId -> cozyName(hotbar.itemKey((short) itemId))
+        );
     }
 
     private String stationRequirementLine(CraftingRecipe recipe) {
         return "Station: " + Hotbar.stationLabel(recipe.stationType());
+    }
+
+    private String stationSetLabel(EnumSet<CraftingStationType> stationTypes) {
+        int stationCount = stationCount(stationTypes);
+        if (stationCount > 2) {
+            return Hotbar.stationLabel(primaryCraftingStation(stationTypes)) + " +" + (stationCount - 1);
+        }
+        StringBuilder builder = new StringBuilder();
+        appendStationLabel(builder, stationTypes, CraftingStationType.FORGE);
+        appendStationLabel(builder, stationTypes, CraftingStationType.WORKBENCH);
+        appendStationLabel(builder, stationTypes, CraftingStationType.COOKING_POT);
+        appendStationLabel(builder, stationTypes, CraftingStationType.CAMPFIRE);
+        return builder.length() == 0 ? Hotbar.stationLabel(CraftingStationType.INVENTORY) : builder.toString();
+    }
+
+    private static void appendStationLabel(StringBuilder builder, EnumSet<CraftingStationType> stationTypes, CraftingStationType stationType) {
+        if (!stationTypes.contains(stationType)) {
+            return;
+        }
+        if (builder.length() > 0) {
+            builder.append(" + ");
+        }
+        builder.append(Hotbar.stationLabel(stationType));
+    }
+
+    private static int stationCount(EnumSet<CraftingStationType> stationTypes) {
+        int count = 0;
+        for (CraftingStationType stationType : stationTypes) {
+            if (stationType != CraftingStationType.INVENTORY && stationType != CraftingStationType.CRAFTING_TABLE) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String unlockRequirementLine(CraftingRecipe recipe) {
@@ -1825,13 +2674,22 @@ public final class GameClient {
         }
     }
 
-    private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y, CraftingStationType stationType) {
+    private void renderWorkbenchPreview(CraftingRecipe recipe, float x, float y, EnumSet<CraftingStationType> stationTypes) {
+        CraftingStationType stationType = previewStationFor(recipe, stationTypes);
+        if (stationType == CraftingStationType.CAMPFIRE) {
+            renderCampfirePreview(recipe, x, y);
+            return;
+        }
+        if (stationType == CraftingStationType.COOKING_POT) {
+            renderCookingPotPreview(recipe, x, y, stationTypes);
+            return;
+        }
         float panelWidth = 316.0f;
         float panelHeight = 232.0f;
         String panelSprite = stationType == CraftingStationType.CAMPFIRE ? "panel_campfire" : "panel_crafting";
         drawAssetPanel(panelSprite, x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.76f));
         uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, 136.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
-        uiRenderer.text(Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT), x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text(stationSetLabel(stationTypes).toUpperCase(Locale.ROOT), x, y - 30.0f, 2.6f, UiColor.WHITE);
         uiRenderer.text("3 x 3", x + panelWidth - 62.0f, y - 25.0f, 1.25f, UiColor.MUTED);
 
         float slot = 42.0f;
@@ -1865,22 +2723,192 @@ public final class GameClient {
             uiRenderer.rect(arrowX + 28.0f, arrowY + 4.0f, 10.0f, 15.0f, UiColor.MUTED);
             float outX = x + 222.0f;
             float outY = y + 48.0f;
-            boolean canCraft = hotbar.canCraft(recipe, stationType);
+            boolean canCraft = canCraftRecipe(recipe, stationTypes);
             uiRenderer.rect(outX - 4.0f, outY - 4.0f, 58.0f, 58.0f, canCraft ? UiColor.SLOT_ACTIVE : UiColor.SLOT);
             drawItemIcon(hotbar.itemKey(recipe.result().itemId()), outX + 4.0f, outY + 4.0f, 42.0f);
             if (recipe.result().count() > 1) {
                 uiRenderer.text(String.valueOf(recipe.result().count()), outX + 38.0f, outY + 39.0f, 1.15f, UiColor.WHITE);
             }
             uiRenderer.text(clampText(recipe.label(), 28), x, y + 158.0f, 1.55f, UiColor.WHITE);
-            uiRenderer.text(stationRequirementLine(recipe).toUpperCase(Locale.ROOT), x, y + 178.0f, 1.05f, recipe.isAvailableAt(stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            uiRenderer.text(recipeStatusLine(recipe, stationType).toUpperCase(Locale.ROOT), x, y + 196.0f, 1.1f, canCraft ? UiColor.ACCENT : recipeUnlockedForUi(recipe, stationType) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(stationRequirementLine(recipe).toUpperCase(Locale.ROOT), x, y + 178.0f, 1.05f, recipeAvailableAtCurrent(recipe, stationTypes) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), x, y + 196.0f, 1.1f, canCraft ? UiColor.ACCENT : recipeUnlockedForUi(recipe, stationTypes) ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
         }
     }
 
-    private CraftingRecipe previewCraftingRecipe(CraftingStationType stationType) {
-        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationType);
+    static CraftingStationType previewStationFor(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        return recipe == null ? primaryCraftingStation(stationTypes) : recipe.stationType();
+    }
+
+    private void renderCookingPotPreview(CraftingRecipe recipe, float x, float y, EnumSet<CraftingStationType> stationTypes) {
+        float panelWidth = 316.0f;
+        float panelHeight = 270.0f;
+        boolean stationReady = stationTypes.contains(CraftingStationType.COOKING_POT);
+
+        drawAssetPanel("panel_crafting", x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.055f, 0.052f, 0.78f));
+        uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, 136.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
+        uiRenderer.text("COOKING POT", x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text(stationReady ? "READY" : "MOVE CLOSER", x + panelWidth - 112.0f, y - 25.0f, 1.2f, stationReady ? UiColor.ACCENT : UiColor.HEART);
+
+        float slot = 38.0f;
+        uiRenderer.text("INGREDIENTS", x, y - 4.0f, 0.95f, UiColor.MUTED);
+        if (recipe != null) {
+            for (int i = 0; i < Math.min(6, recipe.ingredients().size()); i++) {
+                CraftingRecipe.Ingredient ingredient = recipe.ingredients().get(i);
+                float sx = x + (i % 3) * 45.0f;
+                float sy = y + 10.0f + (i / 3) * 46.0f;
+                int owned = hotbar.itemCount(ingredient.itemId());
+                boolean hasIngredient = owned >= ingredient.count();
+                drawAssetSlot(sx, sy, slot, hasIngredient, false);
+                if (!hasIngredient) {
+                    uiRenderer.rect(sx + 3.0f, sy + 3.0f, slot - 6.0f, slot - 6.0f, new UiColor(0.55f, 0.10f, 0.12f, 0.34f));
+                }
+                drawItemIcon(hotbar.itemKey(ingredient.itemId()), sx + 5.0f, sy + 4.0f, 28.0f);
+                uiRenderer.text(owned + "/" + ingredient.count(), sx + 6.0f, sy + 26.0f, 0.82f, hasIngredient ? UiColor.WHITE : UiColor.HEART);
+            }
+        }
+
+        float outX = x + 222.0f;
+        float outY = y + 32.0f;
+        uiRenderer.text("OUTPUT", outX, y - 4.0f, 0.95f, UiColor.MUTED);
+        boolean canCraft = recipe != null && canCraftRecipe(recipe, stationTypes);
+        drawAssetSlot(outX, outY, 58.0f, canCraft, false);
+        if (recipe != null) {
+            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), outX + 8.0f, outY + 8.0f, 42.0f);
+            if (recipe.result().count() > 1) {
+                uiRenderer.text(String.valueOf(recipe.result().count()), outX + 42.0f, outY + 43.0f, 1.05f, UiColor.WHITE);
+            }
+        }
+
+        float cookY = y + 124.0f;
+        String needLine = CraftingFeedback.cookingPotNeedLine(recipe, itemId -> hotbar.itemKey((short) itemId)).toUpperCase(Locale.ROOT);
+        uiRenderer.text(needLine, x, cookY, 1.05f, recipe == null ? UiColor.MUTED : UiColor.WHITE);
+        if (recipe != null) {
+            float cookSeconds = Math.max(1, recipe.craftingTimeTicks()) / 20.0f;
+            drawProgressBar(x, cookY + 24.0f, panelWidth, 12.0f, canCraft ? 1.0f : 0.0f, canCraft ? UiColor.ACCENT : UiColor.BUTTON_DISABLED);
+            uiRenderer.text("COOK TIME " + formatSeconds(cookSeconds), x, cookY + 44.0f, 1.05f, UiColor.MUTED);
+            uiRenderer.text(clampText(recipe.label(), 28), x, cookY + 66.0f, 1.45f, UiColor.WHITE);
+            uiRenderer.text(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), x, cookY + 88.0f, 1.05f, canCraft ? UiColor.ACCENT : UiColor.HEART);
+        } else {
+            drawProgressBar(x, cookY + 24.0f, panelWidth, 12.0f, 0.0f, UiColor.BUTTON_DISABLED);
+            uiRenderer.text("SELECT A FOOD RECIPE", x, cookY + 44.0f, 1.05f, UiColor.MUTED);
+        }
+    }
+
+    private void renderCampfirePreview(CraftingRecipe recipe, float x, float y) {
+        float panelWidth = 316.0f;
+        float panelHeight = 232.0f;
+        Optional<ClientWorld.CampfireStatusView> status = nearestCampfireStatus();
+        boolean active = status.map(ClientWorld.CampfireStatusView::active)
+                .orElseGet(() -> world != null && world.hasActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds));
+
+        drawAssetPanel("panel_campfire", x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.05f, 0.052f, 0.045f, 0.78f));
+        uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, 136.0f, new UiColor(0.025f, 0.028f, 0.024f, 0.24f));
+        uiRenderer.text("CAMPFIRE", x, y - 30.0f, 2.6f, UiColor.WHITE);
+        uiRenderer.text(active ? "ACTIVE" : "NEEDS FUEL", x + panelWidth - 106.0f, y - 25.0f, 1.2f, active ? UiColor.ACCENT : UiColor.HEART);
+
+        float slot = 42.0f;
+        float inputY = y + 4.0f;
+        uiRenderer.text("INPUT", x, y - 4.0f, 0.95f, UiColor.MUTED);
+        if (recipe != null) {
+            for (int i = 0; i < Math.min(4, recipe.ingredients().size()); i++) {
+                CraftingRecipe.Ingredient ingredient = recipe.ingredients().get(i);
+                float sx = x + (i % 2) * 48.0f;
+                float sy = inputY + (i / 2) * 48.0f;
+                int owned = hotbar.itemCount(ingredient.itemId());
+                boolean hasIngredient = owned >= ingredient.count();
+                drawAssetSlot(sx, sy, slot, false, false);
+                if (!hasIngredient) {
+                    uiRenderer.rect(sx + 3.0f, sy + 3.0f, slot - 6.0f, slot - 6.0f, new UiColor(0.55f, 0.10f, 0.12f, 0.34f));
+                }
+                drawItemIcon(hotbar.itemKey(ingredient.itemId()), sx + 6.0f, sy + 5.0f, 30.0f);
+                uiRenderer.text(owned + "/" + ingredient.count(), sx + 7.0f, sy + 29.0f, 0.88f, hasIngredient ? UiColor.WHITE : UiColor.HEART);
+            }
+        }
+
+        float fuelX = x + 118.0f;
+        float fuelY = y + 28.0f;
+        uiRenderer.text("FUEL", fuelX, y - 4.0f, 0.95f, UiColor.MUTED);
+        drawAssetSlot(fuelX, fuelY, slot, active, false);
+        selectedFuelItemKey().ifPresent(itemKey -> drawItemIcon(itemKey, fuelX + 6.0f, fuelY + 5.0f, 30.0f));
+
+        float outX = x + 222.0f;
+        float outY = y + 28.0f;
+        uiRenderer.text("OUTPUT", outX, y - 4.0f, 0.95f, UiColor.MUTED);
+        drawAssetSlot(outX, outY, 58.0f, recipe != null && hotbar.canCraft(recipe, CraftingStationType.CAMPFIRE), false);
+        if (recipe != null) {
+            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), outX + 8.0f, outY + 8.0f, 42.0f);
+            if (recipe.result().count() > 1) {
+                uiRenderer.text(String.valueOf(recipe.result().count()), outX + 42.0f, outY + 43.0f, 1.05f, UiColor.WHITE);
+            }
+        }
+        uiRenderer.rect(x + 174.0f, y + 55.0f, 34.0f, 5.0f, active ? UiColor.ACCENT : UiColor.MUTED);
+        uiRenderer.rect(x + 202.0f, y + 50.0f, 10.0f, 15.0f, active ? UiColor.ACCENT : UiColor.MUTED);
+
+        float burnY = y + 142.0f;
+        double fuelSeconds = status.map(ClientWorld.CampfireStatusView::fuelSecondsRemaining).orElse(active ? 1.0 : 0.0);
+        drawProgressBar(x, burnY, panelWidth, 12.0f, (float) Math.min(1.0, fuelSeconds / 180.0), active ? UiColor.HUNGER : UiColor.BUTTON_DISABLED);
+        uiRenderer.text("BURN " + (active ? formatSeconds(fuelSeconds) : "NO FUEL"), x, burnY + 20.0f, 1.05f, active ? UiColor.MUTED : UiColor.HEART);
+
+        float cookY = y + 180.0f;
+        float cookProgress = status.filter(ClientWorld.CampfireStatusView::cooking)
+                .map(ClientWorld.CampfireStatusView::cookProgress)
+                .orElse(0.0f);
+        drawProgressBar(x, cookY, panelWidth, 12.0f, cookProgress, UiColor.ACCENT);
+        String cookLine = campfireCookLine(recipe, status);
+        uiRenderer.text(clampText(cookLine, 42), x, cookY + 20.0f, 1.05f, recipe == null ? UiColor.MUTED : UiColor.WHITE);
+    }
+
+    private Optional<ClientWorld.CampfireStatusView> nearestCampfireStatus() {
+        if (world == null) {
+            return Optional.empty();
+        }
+        return world.nearestActiveCampfireWithin(camera.position(), CampfireRules.STATION_RADIUS_BLOCKS, frameTimeSeconds)
+                .flatMap(pos -> world.campfireStatusAt(pos, frameTimeSeconds));
+    }
+
+    private Optional<String> selectedFuelItemKey() {
+        return hotbar.selectedItemKey()
+                .filter(key -> CampfireRules.fuelSeconds(key).isPresent());
+    }
+
+    private String campfireCookLine(CraftingRecipe recipe, Optional<ClientWorld.CampfireStatusView> status) {
+        if (status.isPresent() && status.get().cooking()) {
+            ClientWorld.CampfireStatusView view = status.get();
+            return "COOKING " + recipeLabel(view.cookingRecipeKey()) + "  " + formatSeconds(view.cookSecondsRemaining()) + " LEFT";
+        }
+        if (recipe == null) {
+            return "NO MATCHING RECIPE";
+        }
+        return "COOK TIME " + formatSeconds(Math.max(1, recipe.craftingTimeTicks()) / 20.0);
+    }
+
+    private String recipeLabel(String recipeKey) {
+        return hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals(recipeKey))
+                .map(CraftingRecipe::label)
+                .findFirst()
+                .orElseGet(() -> cozyName(recipeKey));
+    }
+
+    private static String formatSeconds(double seconds) {
+        if (!Double.isFinite(seconds)) {
+            return "0S";
+        }
+        int rounded = (int) Math.ceil(Math.max(0.0, seconds));
+        return rounded + "S";
+    }
+
+    private void drawProgressBar(float x, float y, float width, float height, float ratio, UiColor fill) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, ratio));
+        uiRenderer.rect(x, y, width, height, new UiColor(0.02f, 0.024f, 0.022f, 0.86f));
+        uiRenderer.rect(x + 2.0f, y + 2.0f, Math.max(0.0f, (width - 4.0f) * clamped), height - 4.0f, fill);
+        uiRenderer.rect(x, y, width, 2.0f, new UiColor(0.78f, 0.76f, 0.64f, 0.28f));
+    }
+
+    private CraftingRecipe previewCraftingRecipe(EnumSet<CraftingStationType> stationTypes) {
+        List<CraftingRecipe> recipes = filteredCraftingRecipes(stationTypes);
         for (CraftingRecipe recipe : recipes) {
-            if (hotbar.canCraft(recipe, stationType)) {
+            if (canCraftRecipe(recipe, stationTypes)) {
                 return recipe;
             }
         }
@@ -1890,10 +2918,10 @@ public final class GameClient {
         return null;
     }
 
-    private List<CraftingRecipe> filteredCraftingRecipes(CraftingStationType stationType) {
-        return prioritizedRecipes(stationType).stream()
+    private List<CraftingRecipe> filteredCraftingRecipes(EnumSet<CraftingStationType> stationTypes) {
+        return prioritizedRecipes(stationTypes).stream()
                 .filter(recipe -> craftingCategoryFilter == null || recipe.category() == craftingCategoryFilter)
-                .filter(recipe -> !craftableRecipesOnly || recipeUnlockedForUi(recipe, stationType) && hotbar.canCraft(recipe, stationType))
+                .filter(recipe -> !craftableRecipesOnly || canCraftRecipe(recipe, stationTypes))
                 .filter(recipe -> craftingSearch.isEmpty() || recipeMatchesSearch(recipe))
                 .toList();
     }
@@ -1907,15 +2935,27 @@ public final class GameClient {
                 || Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT).contains(search);
     }
 
-    private List<CraftingRecipe> prioritizedRecipes(CraftingStationType stationType) {
+    private List<CraftingRecipe> prioritizedRecipes(EnumSet<CraftingStationType> stationTypes) {
+        CraftingStationType primaryStation = primaryCraftingStation(stationTypes);
         return hotbar.recipes().stream()
                 .sorted(Comparator
-                        .comparingInt((CraftingRecipe recipe) -> recipeUnlockedForUi(recipe, stationType) ? 0 : 1)
-                        .thenComparingInt(recipe -> hotbar.canCraft(recipe, stationType) ? 0 : 1)
-                        .thenComparingInt(recipe -> recipe.isAvailableAt(stationType) ? 0 : 1)
+                        .comparingInt((CraftingRecipe recipe) -> recipeUnlockedForUi(recipe, stationTypes) ? 0 : 1)
+                        .thenComparingInt(recipe -> stationPriority(recipe, primaryStation))
+                        .thenComparingInt(recipe -> canCraftRecipe(recipe, stationTypes) ? 0 : 1)
+                        .thenComparingInt(recipe -> recipeAvailableAtCurrent(recipe, stationTypes) ? 0 : 1)
                         .thenComparing(CraftingRecipe::category)
                         .thenComparing(CraftingRecipe::label))
                 .toList();
+    }
+
+    private static int stationPriority(CraftingRecipe recipe, CraftingStationType primaryStation) {
+        if (recipe.stationType() == primaryStation) {
+            return 0;
+        }
+        if (recipe.stationType() == CraftingStationType.INVENTORY) {
+            return 1;
+        }
+        return 2;
     }
 
     private void renderInventoryGrid(float x, float y) {
@@ -1946,87 +2986,97 @@ public final class GameClient {
         }
     }
 
-    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
+    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, float x, float y) {
         float uiScale = settings.uiScale();
-        float slot = 42.0f * uiScale;
-        float gap = 6.0f * uiScale;
-        int columns = 9;
-        int rows = 4;
-        float gridWidth = columns * slot + (columns - 1) * gap;
-        float panelWidth = Math.min(gridWidth + 28.0f * uiScale, framebufferWidth - 48.0f * uiScale);
-        if (x + panelWidth > framebufferWidth - 24.0f * uiScale) {
-            x = Math.max(24.0f * uiScale, framebufferWidth * 0.5f - panelWidth * 0.5f);
+        InventoryPanelLayout layout = inventoryPanelLayout(x, y);
+        drawInventoryBackdrop(layout.panelX(), layout.panelY(), layout.panelWidth(), layout.panelHeight(), uiScale);
+        drawInventoryShelf(layout.x() - 5.0f * uiScale, layout.y() - 5.0f * uiScale, layout.gridWidth() + 10.0f * uiScale, layout.mainRowsHeight() + 10.0f * uiScale, uiScale);
+        drawInventoryShelf(layout.x() - 5.0f * uiScale, layout.hotbarY() - 5.0f * uiScale, layout.gridWidth() + 10.0f * uiScale, layout.slot() + 10.0f * uiScale, uiScale);
+
+        UiColor labelColor = new UiColor(0.13f, 0.13f, 0.12f, 1.0f);
+        uiRenderer.text("INVENTORY", layout.x(), layout.panelY() + 14.0f * uiScale, 1.35f * uiScale, labelColor);
+        uiRenderer.text("HOTBAR", layout.x(), layout.hotbarY() - 14.0f * uiScale, 0.9f * uiScale, labelColor);
+
+        boolean trashEnabled = gameMode == GameMode.CREATIVE;
+        if (!trashEnabled) {
+            inventoryTrashMode = false;
         }
-        drawAssetPanel("panel_inventory", x - 14.0f * uiScale, y - 42.0f * uiScale, panelWidth, rows * (slot + gap) + 48.0f * uiScale, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
-        uiRenderer.rect(x + 2.0f * uiScale, y - 2.0f * uiScale, gridWidth - 4.0f * uiScale, rows * (slot + gap) - gap + 4.0f * uiScale, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
-        uiRenderer.text("INVENTORY", x, y - 28.0f * uiScale, 2.4f * uiScale, UiColor.WHITE);
-        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 76.0f * uiScale, 28.0f * uiScale, "SORT", true), mouse, clicked, () -> {
+        float buttonHeight = 26.0f * uiScale;
+        float sortWidth = 96.0f * uiScale;
+        float trashWidth = 104.0f * uiScale;
+        float buttonY = layout.panelY() + 9.0f * uiScale;
+        float sortX = layout.panelX() + layout.panelWidth() - sortWidth - 14.0f * uiScale;
+        if (trashEnabled) {
+            sortX -= trashWidth + 8.0f * uiScale;
+        }
+        drawInventoryActionButton(new UiButton(sortX, buttonY, sortWidth, buttonHeight, "SORT BAG", true), mouse, clicked, () -> {
             if (hotbar.sortBackpack()) {
                 setStatus("Backpack sorted");
                 audio.play(AudioCue.INVENTORY_CLICK);
                 updateWindowTitle();
             }
         });
-        boolean trashEnabled = gameMode == GameMode.CREATIVE;
-        if (!trashEnabled) {
-            inventoryTrashMode = false;
+        if (trashEnabled) {
+            drawInventoryActionButton(new UiButton(layout.panelX() + layout.panelWidth() - trashWidth - 14.0f * uiScale, buttonY, trashWidth, buttonHeight, inventoryTrashMode ? "TRASH ON" : "TRASH", true), mouse, clicked, () -> {
+                inventoryTrashMode = !inventoryTrashMode;
+                setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
+                audio.play(AudioCue.INVENTORY_CLICK);
+                updateWindowTitle();
+            });
         }
-        drawButton(new UiButton(x + panelWidth - 104.0f * uiScale, y - 36.0f * uiScale, 90.0f * uiScale, 28.0f * uiScale, inventoryTrashMode ? "TRASH ON" : "TRASH", trashEnabled), mouse, clicked, () -> {
-            inventoryTrashMode = !inventoryTrashMode;
-            setStatus(inventoryTrashMode ? "Trash mode enabled" : "Trash mode disabled");
-            audio.play(AudioCue.INVENTORY_CLICK);
-            updateWindowTitle();
-        });
-        String hoverHint = "";
+        Hotbar.SlotView hoveredSlot = null;
         boolean droppedOnSlot = false;
-        for (int i = 0; i < Math.min(hotbar.inventorySlotCount(), columns * rows); i++) {
-            int column = i % columns;
-            int row = i / columns;
-            float sx = x + column * (slot + gap);
-            float sy = y + row * (slot + gap);
-            boolean selected = i == hotbar.selectedIndex();
-            Hotbar.SlotView slotView = hotbar.slotView(i);
-            boolean hovered = contains(mouse, sx, sy, slot, slot);
+        for (int displayIndex = 0; displayIndex < INVENTORY_COLUMNS * INVENTORY_ROWS; displayIndex++) {
+            int slotIndex = playerInventorySlotIndex(displayIndex);
+            if (slotIndex >= hotbar.inventorySlotCount()) {
+                continue;
+            }
+            float sx = inventorySlotX(layout, displayIndex);
+            float sy = inventorySlotY(layout, displayIndex);
+            boolean selected = slotIndex == hotbar.selectedIndex();
+            Hotbar.SlotView slotView = hotbar.slotView(slotIndex);
+            boolean hovered = contains(mouse, sx, sy, layout.slot(), layout.slot());
+            drawAssetSlot(sx, sy, layout.slot(), selected, slotIndex < Hotbar.HOTBAR_SLOTS);
             if (hovered) {
-                uiRenderer.rect(sx - 3.0f * uiScale, sy - 3.0f * uiScale, slot + 6.0f * uiScale, slot + 6.0f * uiScale, UiColor.BUTTON_HOVER);
+                drawInventorySlotHoverFrame("inventory:" + slotIndex, sx, sy, layout.slot(), uiScale);
             }
-            if (draggedInventorySlot == i) {
-                uiRenderer.rect(sx - 2.0f * uiScale, sy - 2.0f * uiScale, slot + 4.0f * uiScale, slot + 4.0f * uiScale, new UiColor(0.45f, 0.74f, 0.42f, 0.36f));
+            if (draggedInventorySlot == slotIndex) {
+                drawInventorySlotDragFrame(sx, sy, layout.slot(), uiScale);
             }
-            drawAssetSlot(sx, sy, slot, selected, i < Hotbar.HOTBAR_SLOTS);
             if (!slotView.isEmpty()) {
-                drawItemIcon(slotView.itemKey(), sx + 6.0f * uiScale, sy + 5.0f * uiScale, 30.0f * uiScale);
+                drawItemIcon(slotView.itemKey(), sx + 6.0f * uiScale, sy + 5.0f * uiScale, Math.max(18.0f * uiScale, layout.slot() - 12.0f * uiScale));
                 if (slotView.count() > 1) {
-                    uiRenderer.text(String.valueOf(slotView.count()), sx + 27.0f * uiScale, sy + 28.0f * uiScale, 1.05f * uiScale, UiColor.WHITE);
+                    uiRenderer.text(String.valueOf(slotView.count()), sx + layout.slot() - 15.0f * uiScale, sy + layout.slot() - 14.0f * uiScale, 1.05f * uiScale, UiColor.WHITE);
                 }
                 if (slotView.hasDurability()) {
-                    drawDurabilityBar(sx + 7.0f * uiScale, sy + 36.0f * uiScale, 28.0f * uiScale, slotView.durabilityLeft(), slotView.maxDurability());
+                    drawDurabilityBar(sx + 7.0f * uiScale, sy + layout.slot() - 6.0f * uiScale, layout.slot() - 14.0f * uiScale, slotView.durabilityLeft(), slotView.maxDurability());
                 }
                 if (hovered) {
-                    hoverHint = slotHoverText(slotView);
+                    hoveredSlot = slotView;
                 }
             }
             if (hovered && released && draggedInventorySlot >= 0) {
                 droppedOnSlot = true;
-                if (draggedInventorySlot != i && hotbar.moveInventorySlot(draggedInventorySlot, i)) {
+                if (draggedInventorySlot != slotIndex && hotbar.moveInventorySlot(draggedInventorySlot, slotIndex)) {
                     setStatus("Moved stack");
                     audio.play(AudioCue.INVENTORY_CLICK);
                     updateWindowTitle();
                 }
-            } else if (hovered && rightClicked && hotbar.splitInventorySlot(i)) {
+            } else if (hovered && rightClicked && hotbar.splitInventorySlot(slotIndex)) {
                 setStatus("Split stack");
                 audio.play(AudioCue.INVENTORY_CLICK);
                 updateWindowTitle();
-            } else if (hovered && clicked && inventoryTrashMode && hotbar.trashInventorySlot(i)) {
+            } else if (hovered && clicked && inventoryTrashMode && hotbar.trashInventorySlot(slotIndex)) {
                 setStatus("Item trashed");
                 audio.play(AudioCue.INVENTORY_CLICK);
                 updateWindowTitle();
-            } else if (hovered && clicked && isShiftDown() && hotbar.quickMoveInventorySlot(i)) {
-                setStatus(i < Hotbar.HOTBAR_SLOTS ? "Moved to backpack" : "Moved to hotbar");
+            } else if (hovered && clicked && isShiftDown() && hotbar.quickMoveInventorySlot(slotIndex)) {
+                setStatus(slotIndex < Hotbar.HOTBAR_SLOTS ? "Moved to backpack" : "Moved to hotbar");
                 audio.play(AudioCue.INVENTORY_CLICK);
                 updateWindowTitle();
             } else if (hovered && clicked && !slotView.isEmpty()) {
-                draggedInventorySlot = i;
+                draggedInventorySource = InventoryDragSource.PLAYER;
+                draggedInventorySlot = slotIndex;
             }
         }
         renderDraggedInventoryStack(mouse);
@@ -2034,108 +3084,433 @@ public final class GameClient {
             if (!droppedOnSlot) {
                 setStatus("Drag cancelled");
             }
-            draggedInventorySlot = -1;
+            clearInventoryDrag();
         }
-        if (!hoverHint.isBlank()) {
-            renderSlotHoverHint(mouse, hoverHint);
+        if (hoveredSlot != null) {
+            renderSlotHoverHint(mouse, hoveredSlot);
         }
     }
 
+    private InventoryPanelLayout inventoryPanelLayout(float requestedX, float requestedY) {
+        float uiScale = settings.uiScale();
+        float sidePad = 14.0f * uiScale;
+        float topPad = 42.0f * uiScale;
+        float bottomPad = 18.0f * uiScale;
+        float gap = 6.0f * uiScale;
+        float hotbarGap = 14.0f * uiScale;
+        float slot = 42.0f * uiScale;
+        float margin = Math.min(24.0f * uiScale, Math.max(8.0f * uiScale, framebufferWidth * 0.04f));
+        float maxPanelWidth = Math.max(220.0f * uiScale, framebufferWidth - margin * 2.0f);
+        float gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
+        if (gridWidth + sidePad * 2.0f > maxPanelWidth) {
+            slot = Math.min(slot, (maxPanelWidth - sidePad * 2.0f - (INVENTORY_COLUMNS - 1) * gap) / INVENTORY_COLUMNS);
+        }
+        float maxPanelHeight = Math.max(180.0f * uiScale, framebufferHeight - margin * 2.0f);
+        float maxSlotByHeight = (maxPanelHeight - topPad - bottomPad - hotbarGap - (INVENTORY_MAIN_ROWS - 1) * gap) / (INVENTORY_MAIN_ROWS + 1);
+        slot = Math.max(24.0f * uiScale, Math.min(slot, maxSlotByHeight));
+        gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
+        float mainRowsHeight = INVENTORY_MAIN_ROWS * slot + (INVENTORY_MAIN_ROWS - 1) * gap;
+        float panelWidth = gridWidth + sidePad * 2.0f;
+        float panelHeight = topPad + mainRowsHeight + hotbarGap + slot + bottomPad;
+        float panelX = requestedX - sidePad;
+        panelX = Math.min(panelX, framebufferWidth - panelWidth - margin);
+        panelX = Math.max(margin, panelX);
+        float panelY = requestedY - topPad;
+        panelY = Math.min(panelY, framebufferHeight - panelHeight - margin);
+        panelY = Math.max(margin, panelY);
+        return new InventoryPanelLayout(
+                panelX + sidePad,
+                panelY + topPad,
+                slot,
+                gap,
+                hotbarGap,
+                gridWidth,
+                mainRowsHeight,
+                panelX,
+                panelY,
+                panelWidth,
+                panelHeight
+        );
+    }
+
+    private static int playerInventorySlotIndex(int displayIndex) {
+        int mainInventorySlots = INVENTORY_COLUMNS * INVENTORY_MAIN_ROWS;
+        if (displayIndex < mainInventorySlots) {
+            return Hotbar.HOTBAR_SLOTS + displayIndex;
+        }
+        return displayIndex - mainInventorySlots;
+    }
+
+    private static float inventorySlotX(InventoryPanelLayout layout, int displayIndex) {
+        int column = displayIndex % INVENTORY_COLUMNS;
+        return layout.x() + column * (layout.slot() + layout.gap());
+    }
+
+    private static float inventorySlotY(InventoryPanelLayout layout, int displayIndex) {
+        int row = displayIndex / INVENTORY_COLUMNS;
+        if (row < INVENTORY_MAIN_ROWS) {
+            return layout.y() + row * (layout.slot() + layout.gap());
+        }
+        return layout.hotbarY();
+    }
+
+    private void drawInventoryBackdrop(float x, float y, float width, float height, float uiScale) {
+        uiRenderer.rect(x, y, width, height, new UiColor(0.09f, 0.09f, 0.085f, 0.96f));
+        uiRenderer.rect(x + 2.0f * uiScale, y + 2.0f * uiScale, width - 4.0f * uiScale, height - 4.0f * uiScale, new UiColor(0.80f, 0.79f, 0.73f, 0.98f));
+        uiRenderer.rect(x + 5.0f * uiScale, y + 5.0f * uiScale, width - 10.0f * uiScale, height - 10.0f * uiScale, new UiColor(0.48f, 0.48f, 0.45f, 0.98f));
+        uiRenderer.rect(x + 7.0f * uiScale, y + 7.0f * uiScale, width - 14.0f * uiScale, height - 14.0f * uiScale, new UiColor(0.64f, 0.63f, 0.58f, 0.98f));
+        uiRenderer.rect(x + 7.0f * uiScale, y + 7.0f * uiScale, width - 14.0f * uiScale, 2.0f * uiScale, new UiColor(0.92f, 0.91f, 0.84f, 0.72f));
+        uiRenderer.rect(x + 7.0f * uiScale, y + height - 9.0f * uiScale, width - 14.0f * uiScale, 2.0f * uiScale, new UiColor(0.18f, 0.18f, 0.16f, 0.48f));
+    }
+
+    private void drawInventoryShelf(float x, float y, float width, float height, float uiScale) {
+        uiRenderer.rect(x, y, width, height, new UiColor(0.34f, 0.34f, 0.32f, 0.50f));
+        uiRenderer.rect(x + 2.0f * uiScale, y + 2.0f * uiScale, width - 4.0f * uiScale, height - 4.0f * uiScale, new UiColor(0.72f, 0.71f, 0.65f, 0.28f));
+    }
+
+    private void drawInventorySlotHoverFrame(String hoverKey, float x, float y, float size, float uiScale) {
+        SlotHoverAnimation.Sample hover = slotHoverAnimation.sample(hoverKey, frameTimeSeconds);
+        float inset = hover.inset() * uiScale;
+        float grow = Math.max(0.0f, (hover.scale() - 1.0f) * size * 0.5f);
+        float left = x - inset - grow;
+        float top = y - inset - grow;
+        float hoveredSize = size + (inset + grow) * 2.0f;
+        float thickness = Math.max(2.0f * uiScale, 2.0f);
+        UiColor border = new UiColor(0.96f, 0.95f, 0.82f, 0.52f + hover.alpha() * 0.45f);
+        UiColor glow = new UiColor(1.0f, 0.98f, 0.72f, hover.alpha() * 0.20f);
+        uiRenderer.rect(left, top, hoveredSize, hoveredSize, glow);
+        uiRenderer.rect(left, top, hoveredSize, thickness, border);
+        uiRenderer.rect(left, top + hoveredSize - thickness, hoveredSize, thickness, border);
+        uiRenderer.rect(left, top, thickness, hoveredSize, border);
+        uiRenderer.rect(left + hoveredSize - thickness, top, thickness, hoveredSize, border);
+    }
+
+    private void drawInventorySlotDragFrame(float x, float y, float size, float uiScale) {
+        UiColor border = new UiColor(0.45f, 0.74f, 0.42f, 0.86f);
+        uiRenderer.rect(x - 3.0f * uiScale, y - 3.0f * uiScale, size + 6.0f * uiScale, 3.0f * uiScale, border);
+        uiRenderer.rect(x - 3.0f * uiScale, y + size, size + 6.0f * uiScale, 3.0f * uiScale, border);
+        uiRenderer.rect(x - 3.0f * uiScale, y - 3.0f * uiScale, 3.0f * uiScale, size + 6.0f * uiScale, border);
+        uiRenderer.rect(x + size, y - 3.0f * uiScale, 3.0f * uiScale, size + 6.0f * uiScale, border);
+    }
+
+    private void drawInventoryActionButton(UiButton button, MousePosition mouse, boolean clicked, Runnable action) {
+        float uiScale = settings.uiScale();
+        boolean hovered = button.contains(mouse.x(), mouse.y());
+        UiColor outer = button.enabled() ? new UiColor(0.16f, 0.17f, 0.15f, 0.96f) : new UiColor(0.22f, 0.22f, 0.20f, 0.62f);
+        UiColor fill = button.enabled()
+                ? hovered ? new UiColor(0.31f, 0.40f, 0.28f, 0.96f) : new UiColor(0.22f, 0.29f, 0.22f, 0.94f)
+                : new UiColor(0.34f, 0.34f, 0.31f, 0.50f);
+        uiRenderer.rect(button.x(), button.y(), button.width(), button.height(), outer);
+        uiRenderer.rect(button.x() + 2.0f * uiScale, button.y() + 2.0f * uiScale, button.width() - 4.0f * uiScale, button.height() - 4.0f * uiScale, fill);
+        uiRenderer.rect(button.x() + 2.0f * uiScale, button.y() + 2.0f * uiScale, button.width() - 4.0f * uiScale, 2.0f * uiScale, new UiColor(0.86f, 0.90f, 0.76f, button.enabled() ? 0.36f : 0.14f));
+        float textScale = Math.min(1.14f * uiScale, Math.min(
+                (button.width() - 10.0f * uiScale) / Math.max(1.0f, BitmapFont.textWidth(button.label(), 1.0f)),
+                (button.height() - 8.0f * uiScale) / BitmapFont.textHeight(1.0f)
+        ));
+        uiRenderer.centeredText(
+                button.label(),
+                button.x() + button.width() * 0.5f,
+                button.y() + button.height() * 0.5f - BitmapFont.textHeight(textScale) * 0.5f,
+                textScale,
+                button.enabled() ? UiColor.WHITE : UiColor.MUTED
+        );
+        if (button.enabled() && hovered && clicked) {
+            action.run();
+        }
+    }
+
+    private record InventoryPanelLayout(
+            float x,
+            float y,
+            float slot,
+            float gap,
+            float hotbarGap,
+            float gridWidth,
+            float mainRowsHeight,
+            float panelX,
+            float panelY,
+            float panelWidth,
+            float panelHeight
+    ) {
+        private float hotbarY() {
+            return y + mainRowsHeight + hotbarGap;
+        }
+    }
+
+    private record StorageSlotInteraction(Hotbar.SlotView hoveredSlot, boolean droppedOnSlot) {
+    }
+
+    private enum InventoryDragSource {
+        PLAYER,
+        STORAGE
+    }
+
     private void renderDraggedInventoryStack(MousePosition mouse) {
-        if (draggedInventorySlot < 0 || draggedInventorySlot >= hotbar.inventorySlotCount()) {
+        if (draggedInventorySlot < 0) {
             return;
         }
-        Hotbar.SlotView slotView = hotbar.slotView(draggedInventorySlot);
+        Hotbar.SlotView slotView = draggedInventorySource == InventoryDragSource.STORAGE && gameState == GameState.STORAGE
+                ? hotbar.storageSlotView(draggedInventorySlot)
+                : hotbar.slotView(draggedInventorySlot);
         if (slotView.isEmpty()) {
-            draggedInventorySlot = -1;
+            clearInventoryDrag();
             return;
         }
         float size = 38.0f;
         float x = (float) mouse.x() + 14.0f;
         float y = (float) mouse.y() + 14.0f;
-        drawAssetSlot(x, y, size, false, draggedInventorySlot < Hotbar.HOTBAR_SLOTS);
+        drawAssetSlot(x, y, size, false, draggedInventorySource == InventoryDragSource.PLAYER && draggedInventorySlot < Hotbar.HOTBAR_SLOTS);
         drawItemIcon(slotView.itemKey(), x + 5.0f, y + 4.0f, size - 10.0f);
         if (slotView.count() > 1) {
             uiRenderer.text(String.valueOf(slotView.count()), x + size - 15.0f, y + size - 14.0f, 0.95f, UiColor.WHITE);
         }
     }
 
-    private String slotHoverText(Hotbar.SlotView slotView) {
-        StringBuilder text = new StringBuilder(slotView.label());
-        if (!slotView.category().isBlank()) {
-            text.append(" | ").append(slotView.category());
+    private void renderSlotHoverHint(MousePosition mouse, Hotbar.SlotView slotView) {
+        List<TooltipLine> lines = tooltipLines(slotView);
+        float scale = 1.08f * settings.uiScale();
+        float lineHeight = 15.0f * settings.uiScale();
+        float width = 0.0f;
+        for (TooltipLine line : lines) {
+            width = Math.max(width, BitmapFont.textWidth(line.text(), scale));
         }
-        if (!slotView.description().isBlank()) {
-            text.append(" | ").append(slotView.description());
-        }
-        if (!slotView.rarity().isBlank()) {
-            text.append(" | ").append(slotView.rarity());
-        }
-        if (slotView.count() > 1) {
-            text.append(" x").append(slotView.count());
-        }
-        if (!slotView.toolTypeLabel().isBlank()) {
-            text.append(" | ").append(slotView.toolTypeLabel()).append(" Level ").append(slotView.toolLevel());
-        }
-        if (slotView.foodValue() > 0) {
-            text.append(" | Food +").append(slotView.foodValue());
-        }
-        if (slotView.healValue() > 0) {
-            text.append(" | Heal +").append(slotView.healValue());
-        }
-        if (slotView.comfortValue() > 0) {
-            text.append(" | Comfort +").append(slotView.comfortValue());
-        }
-        if (slotView.hasDurability()) {
-            text.append(" | Durability ").append(slotView.durabilityLeft()).append("/").append(slotView.maxDurability());
-        }
-        if (slotView.placeable()) {
-            text.append(" | Placeable");
-        }
-        return text.toString();
-    }
-
-    private void renderSlotHoverHint(MousePosition mouse, String text) {
-        String label = clampText(text, 52);
-        float scale = 1.2f;
-        float width = BitmapFont.textWidth(label, scale) + 16.0f;
-        float height = BitmapFont.textHeight(scale) + 14.0f;
+        float maxWidth = Math.max(120.0f * settings.uiScale(), framebufferWidth - 24.0f * settings.uiScale());
+        width = Math.min(Math.max(220.0f * settings.uiScale(), width + 18.0f * settings.uiScale()), maxWidth);
+        float height = lines.size() * lineHeight + 16.0f * settings.uiScale();
         float maxX = Math.max(12.0f, framebufferWidth - width - 12.0f);
         float maxY = Math.max(12.0f, framebufferHeight - height - 12.0f);
         float x = Math.max(12.0f, Math.min((float) mouse.x() + 16.0f, maxX));
         float y = Math.max(12.0f, Math.min((float) mouse.y() - height - 10.0f, maxY));
-        uiRenderer.rect(x, y, width, height, new UiColor(0.035f, 0.045f, 0.042f, 0.96f));
-        uiRenderer.rect(x, y, width, 2.0f, UiColor.ACCENT);
-        uiRenderer.text(label, x + 8.0f, y + 8.0f, scale, UiColor.WHITE);
+        uiRenderer.rect(x, y, width, height, new UiColor(0.035f, 0.035f, 0.032f, 0.97f));
+        uiRenderer.rect(x, y, width, 2.0f * settings.uiScale(), rarityColor(slotView.rarity()));
+        float textY = y + 8.0f * settings.uiScale();
+        for (TooltipLine line : lines) {
+            uiRenderer.text(clampText(line.text(), 54), x + 9.0f * settings.uiScale(), textY, scale, line.color());
+            textY += lineHeight;
+        }
+    }
+
+    private List<TooltipLine> tooltipLines(Hotbar.SlotView slotView) {
+        java.util.ArrayList<TooltipLine> lines = new java.util.ArrayList<>();
+        String title = slotView.count() > 1 ? slotView.label() + " x" + slotView.count() : slotView.label();
+        lines.add(new TooltipLine(title, UiColor.WHITE));
+        if (!slotView.rarity().isBlank() || !slotView.category().isBlank()) {
+            String meta = (slotView.rarity().isBlank() ? "" : slotView.rarity())
+                    + (slotView.category().isBlank() ? "" : " " + slotView.category());
+            lines.add(new TooltipLine(meta.trim(), rarityColor(slotView.rarity())));
+        }
+        if (!slotView.description().isBlank()) {
+            lines.add(new TooltipLine(slotView.description(), UiColor.MUTED));
+        }
+        if (!slotView.toolTypeLabel().isBlank()) {
+            lines.add(new TooltipLine(slotView.toolTypeLabel() + " Level " + slotView.toolLevel()
+                    + "  Speed x" + formatToolSpeed(slotView.toolSpeed()), UiColor.WHITE));
+        }
+        if (slotView.hasDurability()) {
+            lines.add(new TooltipLine("Durability " + slotView.durabilityLeft() + "/" + slotView.maxDurability(), durabilityTextColor(slotView)));
+            lines.add(new TooltipLine("Repair: " + slotView.repairMaterialLabel(), UiColor.MUTED));
+            toolComparisonLine(slotView).ifPresent(lines::add);
+        }
+        if (slotView.foodValue() > 0 || slotView.healValue() > 0) {
+            String food = "Food +" + slotView.foodValue() + (slotView.healValue() > 0 ? "  Heal +" + slotView.healValue() : "");
+            lines.add(new TooltipLine(food, UiColor.HUNGER));
+        }
+        if (slotView.comfortValue() > 0) {
+            lines.add(new TooltipLine("Comfort +" + slotView.comfortValue(), UiColor.ENERGY));
+        }
+        if (slotView.placeable()) {
+            lines.add(new TooltipLine("Placeable", UiColor.ACCENT));
+        }
+        return lines;
+    }
+
+    private Optional<TooltipLine> toolComparisonLine(Hotbar.SlotView slotView) {
+        Hotbar.SlotView selected = hotbar.slotView(hotbar.selectedIndex());
+        if (selected.isEmpty() || selected.itemKey().equals(slotView.itemKey()) || selected.toolTypeLabel().isBlank()) {
+            return Optional.empty();
+        }
+        if (!selected.toolTypeLabel().equals(slotView.toolTypeLabel())) {
+            return Optional.of(new TooltipLine("Selected: " + selected.toolTypeLabel() + " tool", UiColor.MUTED));
+        }
+        int levelDelta = slotView.toolLevel() - selected.toolLevel();
+        float hoveredDurability = slotView.maxDurability() <= 0 ? 0.0f : slotView.durabilityLeft() / (float) slotView.maxDurability();
+        float selectedDurability = selected.maxDurability() <= 0 ? 0.0f : selected.durabilityLeft() / (float) selected.maxDurability();
+        int durabilityDelta = Math.round((hoveredDurability - selectedDurability) * 100.0f);
+        int speedDelta = Math.round((slotView.toolSpeed() - selected.toolSpeed()) * 100.0f);
+        String level = signed(levelDelta) + " level";
+        String durability = signed(durabilityDelta) + "% durability";
+        String speed = signed(speedDelta) + "% speed";
+        UiColor color = levelDelta > 0 || durabilityDelta > 10 || speedDelta > 5
+                ? UiColor.ACCENT
+                : levelDelta < 0 || durabilityDelta < -10 || speedDelta < -5 ? UiColor.HEART : UiColor.MUTED;
+        return Optional.of(new TooltipLine("Vs selected: " + level + ", " + durability + ", " + speed, color));
+    }
+
+    private static String signed(int value) {
+        return value > 0 ? "+" + value : String.valueOf(value);
+    }
+
+    private static String formatToolSpeed(float speed) {
+        if (speed == Math.round(speed)) {
+            return Integer.toString(Math.round(speed));
+        }
+        String text = String.format(Locale.ROOT, "%.2f", speed);
+        while (text.endsWith("0")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return text.endsWith(".") ? text.substring(0, text.length() - 1) : text;
+    }
+
+    private static UiColor rarityColor(String rarity) {
+        return switch (rarity) {
+            case "Legendary" -> UiColor.ENERGY;
+            case "Rare" -> UiColor.WATER;
+            case "Uncommon" -> UiColor.ACCENT;
+            default -> UiColor.MUTED;
+        };
+    }
+
+    private static UiColor durabilityTextColor(Hotbar.SlotView slotView) {
+        if (!slotView.hasDurability()) {
+            return UiColor.MUTED;
+        }
+        float ratio = slotView.durabilityLeft() / (float) slotView.maxDurability();
+        return ratio < 0.22f ? UiColor.HEART : ratio < 0.50f ? UiColor.HUNGER : UiColor.ACCENT;
+    }
+
+    private record TooltipLine(String text, UiColor color) {
     }
 
     private void renderFeedbackOverlay(float centerX, float bottomY) {
-        List<String> messages = feedbackLog.visible(frameTimeSeconds);
-        if (messages.isEmpty()) {
+        List<FeedbackLog.VisibleEntry> entries = feedbackLog.visibleEntries(frameTimeSeconds);
+        if (entries.isEmpty()) {
             return;
         }
         float uiScale = settings.uiScale();
         float scale = 1.15f * uiScale;
         float lineHeight = 18.0f * uiScale;
         float width = 0.0f;
-        for (String message : messages) {
-            width = Math.max(width, BitmapFont.textWidth(clampText(message, 48), scale));
+        float maxAlpha = 0.0f;
+        for (FeedbackLog.VisibleEntry entry : entries) {
+            width = Math.max(width, BitmapFont.textWidth(clampText(entry.message(), 48), scale));
+            maxAlpha = Math.max(maxAlpha, entry.alpha());
         }
         width = Math.min(width + 24.0f * uiScale, Math.max(240.0f * uiScale, framebufferWidth - 48.0f * uiScale));
-        float height = messages.size() * lineHeight + 14.0f * uiScale;
+        float height = entries.size() * lineHeight + 14.0f * uiScale;
         float margin = 18.0f * uiScale;
         float x = Math.max(margin, Math.min(centerX - width * 0.5f, framebufferWidth - width - margin));
         float y = Math.max(24.0f * uiScale, bottomY - height);
-        uiRenderer.rect(x, y, width, height, new UiColor(0.025f, 0.035f, 0.032f, 0.68f));
-        uiRenderer.rect(x, y, width, 2.0f * uiScale, UiColor.ACCENT);
+        uiRenderer.rect(x, y, width, height, new UiColor(0.025f, 0.035f, 0.032f, 0.46f + maxAlpha * 0.22f));
+        uiRenderer.rect(x, y, width, 2.0f * uiScale, new UiColor(UiColor.ACCENT.r(), UiColor.ACCENT.g(), UiColor.ACCENT.b(), maxAlpha));
         float textY = y + 9.0f * uiScale;
-        for (String message : messages) {
-            uiRenderer.centeredText(clampText(message, 48), x + width * 0.5f, textY, scale, UiColor.WHITE);
+        for (FeedbackLog.VisibleEntry entry : entries) {
+            UiColor textColor = new UiColor(UiColor.WHITE.r(), UiColor.WHITE.g(), UiColor.WHITE.b(), entry.alpha());
+            uiRenderer.centeredText(clampText(entry.message(), 48), x + width * 0.5f, textY, scale, textColor);
             textY += lineHeight;
         }
     }
 
-    private void renderHud() {
+    private void renderInteractionHud(float uiScale) {
+        Optional<dev.voxelgame.common.math.Raycast.Hit> picked = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (picked.isEmpty()) {
+            return;
+        }
+        dev.voxelgame.common.math.Raycast.Hit hit = picked.get();
+        Optional<BlockType> target = world.targetBlock(hit);
+        if (target.isEmpty()) {
+            return;
+        }
+        if (!CampfireRules.isCampfire(target.get().id())) {
+            if (target.get().id() == Blocks.COOKING_POT) {
+                renderCookingPotInteractionHud(uiScale);
+            } else if (target.get().id() == Blocks.WORKBENCH) {
+                renderCraftingStationInteractionHud(CraftingStationType.WORKBENCH, "WORKBENCH READY", "PRESS E TO CRAFT", uiScale);
+            } else if (target.get().id() == Blocks.FORGE) {
+                renderCraftingStationInteractionHud(CraftingStationType.FORGE, "FORGE READY", "PRESS E TO FORGE", uiScale);
+            }
+            return;
+        }
+
+        Optional<ClientWorld.CampfireStatusView> status = world.campfireStatusAt(hit.x(), hit.y(), hit.z(), frameTimeSeconds);
+        boolean active = status.map(ClientWorld.CampfireStatusView::active)
+                .orElseGet(() -> CampfireRules.isActiveCampfire(target.get().id()));
+        double fuelSeconds = status.map(ClientWorld.CampfireStatusView::fuelSecondsRemaining).orElse(0.0);
+        String title = active ? "CAMPFIRE ACTIVE" : "CAMPFIRE INACTIVE";
+        String detail = active && fuelSeconds > 0.0
+                ? "BURN " + formatSeconds(fuelSeconds)
+                : selectedFuelItemKey()
+                .map(key -> "ADD FUEL +" + formatSeconds(CampfireRules.fuelSeconds(key).orElse(0.0)))
+                .orElse("ADD FUEL");
+        String cooking = status.filter(ClientWorld.CampfireStatusView::cooking)
+                .map(view -> "COOKING " + recipeLabel(view.cookingRecipeKey()) + " " + Math.round(view.cookProgress() * 100.0f) + "%")
+                .orElse("");
+
+        renderInteractionStatusCard(title, detail, cooking, active ? UiColor.ACCENT : UiColor.HEART, active ? UiColor.WHITE : UiColor.HEART, uiScale);
+    }
+
+    private void renderCookingPotInteractionHud(float uiScale) {
+        EnumSet<CraftingStationType> stationTypes = EnumSet.of(CraftingStationType.INVENTORY, CraftingStationType.COOKING_POT);
+        long readyRecipes = hotbar.recipes().stream()
+                .filter(recipe -> recipe.stationType() == CraftingStationType.COOKING_POT)
+                .filter(recipe -> canCraftRecipe(recipe, stationTypes))
+                .count();
+        String detail = readyRecipes > 0
+                ? readyRecipes + (readyRecipes == 1 ? " RECIPE READY" : " RECIPES READY")
+                : "NEEDS WATER, BOWL, HERBS OR BERRIES";
+        renderInteractionStatusCard("COOKING POT READY", detail, "PRESS E TO COOK", UiColor.ACCENT, UiColor.WHITE, uiScale);
+    }
+
+    private void renderCraftingStationInteractionHud(CraftingStationType stationType, String title, String action, float uiScale) {
+        EnumSet<CraftingStationType> stationTypes = EnumSet.of(CraftingStationType.INVENTORY, stationType);
+        long readyRecipes = hotbar.recipes().stream()
+                .filter(recipe -> recipe.stationType() == stationType)
+                .filter(recipe -> canCraftRecipe(recipe, stationTypes))
+                .count();
+        String detail = readyRecipes > 0
+                ? readyRecipes + (readyRecipes == 1 ? " RECIPE READY" : " RECIPES READY")
+                : "NEEDS " + Hotbar.stationLabel(stationType).toUpperCase(Locale.ROOT) + " MATERIALS";
+        renderInteractionStatusCard(title, detail, action, UiColor.ACCENT, UiColor.WHITE, uiScale);
+    }
+
+    private void renderInteractionStatusCard(String title, String detail, String extra, UiColor accent, UiColor titleColor, float uiScale) {
+        float lineScale = 1.08f * uiScale;
+        float titleWidth = BitmapFont.textWidth(title, lineScale);
+        float detailWidth = BitmapFont.textWidth(detail, lineScale);
+        float extraWidth = extra.isBlank() ? 0.0f : BitmapFont.textWidth(extra, lineScale);
+        float width = Math.max(190.0f * uiScale, Math.max(titleWidth, Math.max(detailWidth, extraWidth)) + 24.0f * uiScale);
+        float height = extra.isBlank() ? 48.0f * uiScale : 66.0f * uiScale;
+        float x = framebufferWidth * 0.5f - width * 0.5f;
+        float y = framebufferHeight * 0.5f + 28.0f * uiScale;
+        uiRenderer.rect(x, y, width, height, new UiColor(0.02f, 0.028f, 0.025f, 0.62f));
+        uiRenderer.rect(x, y, width, 2.0f * uiScale, accent);
+        uiRenderer.centeredText(title, framebufferWidth * 0.5f, y + 8.0f * uiScale, lineScale, titleColor);
+        uiRenderer.centeredText(detail, framebufferWidth * 0.5f, y + 27.0f * uiScale, 0.96f * uiScale, UiColor.MUTED);
+        if (!extra.isBlank()) {
+            uiRenderer.centeredText(extra, framebufferWidth * 0.5f, y + 45.0f * uiScale, 0.96f * uiScale, accent);
+        }
+    }
+
+    private void renderInteractionReticle(float uiScale) {
+        if (gameState != GameState.PLAYING) {
+            return;
+        }
+        Optional<InteractionHint> hint = currentInteractionHint();
+        if (hint.isEmpty()) {
+            return;
+        }
+        UiColor accent = withAlpha(interactionHintAccent(hint.get().tone()), 0.74f);
+        float centerX = framebufferWidth * 0.5f;
+        float centerY = framebufferHeight * 0.5f;
+        float gap = 15.0f * uiScale;
+        float length = 7.0f * uiScale;
+        float thickness = Math.max(1.0f, 1.5f * uiScale);
+        uiRenderer.rect(centerX - gap - length, centerY - gap, length, thickness, accent);
+        uiRenderer.rect(centerX + gap, centerY - gap, length, thickness, accent);
+        uiRenderer.rect(centerX - gap - length, centerY + gap, length, thickness, accent);
+        uiRenderer.rect(centerX + gap, centerY + gap, length, thickness, accent);
+    }
+
+    private void renderHud(MousePosition mouse) {
         if ((gameState != GameState.PLAYING && gameState != GameState.CHAT) || world == null || !settings.hudEnabled()) {
             return;
         }
@@ -2145,6 +3520,8 @@ public final class GameClient {
         uiRenderer.rect(framebufferWidth * 0.5f - crosshairLength * 0.5f, framebufferHeight * 0.5f - crosshairThickness * 0.5f, crosshairLength, crosshairThickness, UiColor.WHITE);
         uiRenderer.rect(framebufferWidth * 0.5f - crosshairThickness * 0.5f, framebufferHeight * 0.5f - crosshairLength * 0.5f, crosshairThickness, crosshairLength, UiColor.WHITE);
         renderBreakOverlay();
+        renderInteractionHud(uiScale);
+        renderInteractionReticle(uiScale);
 
         float hotbarSlotSize = 58.0f * uiScale;
         float hotbarGap = 6.0f * uiScale;
@@ -2152,6 +3529,7 @@ public final class GameClient {
         float hotbarX = Math.max(20.0f * uiScale, framebufferWidth * 0.5f - hotbarWidth * 0.5f);
         float hotbarY = framebufferHeight - 86.0f * uiScale;
         float statsY = hotbarY - 44.0f * uiScale;
+        renderInteractionHint(statsY - 76.0f * uiScale);
         uiRenderer.centeredText(clampText(hotbar.selectedTooltip(), 64), framebufferWidth * 0.5f, statsY - 42.0f * uiScale, 1.45f * uiScale, UiColor.WHITE);
         float statWidth = Math.min(188.0f * uiScale, hotbarWidth * 0.31f);
         drawStatStrip("HEALTH", "heart_full", "heart_half", "heart_empty", playerStats.health(), 20, hotbarX + 4.0f * uiScale, statsY, statWidth, 11.0f * uiScale, UiColor.HEART);
@@ -2181,6 +3559,9 @@ public final class GameClient {
             Hotbar.SlotView slot = hotbar.slotView(i);
             boolean selected = i == hotbar.selectedIndex();
             drawAssetSlot(x, y, hotbarSlotSize, selected, true);
+            if (contains(mouse, x, y, hotbarSlotSize, hotbarSlotSize)) {
+                drawInventorySlotHoverFrame("hotbar:" + i, x, y, hotbarSlotSize, uiScale);
+            }
             uiRenderer.text(String.valueOf(i + 1), x + 7.0f * uiScale, y + 8.0f * uiScale, 1.05f * uiScale, UiColor.MUTED);
             if (!slot.isEmpty()) {
                 drawItemIcon(slot.itemKey(), x + 14.0f * uiScale, y + 10.0f * uiScale, 34.0f * uiScale);
@@ -2195,24 +3576,136 @@ public final class GameClient {
         if (gameState == GameState.PLAYING || gameState == GameState.CHAT) {
             renderHeldItem();
         }
-        renderPickupAnimation();
+        renderPopAnimations();
         if (settings.debugOverlayEnabled()) {
             renderDebugOverlay();
         }
     }
 
+    private void renderInteractionHint(float bottomLimitY) {
+        if (gameState != GameState.PLAYING) {
+            return;
+        }
+        if (lookingAtReachableCampfire()) {
+            return;
+        }
+        Optional<InteractionHint> hint = currentInteractionHint();
+        if (hint.isEmpty()) {
+            return;
+        }
+        float uiScale = settings.uiScale();
+        String title = clampText(hint.get().title(), 28).toUpperCase(Locale.ROOT);
+        String action = clampText(hint.get().action(), 32);
+        String detail = clampText(hint.get().detail(), 42);
+        float titleScale = 0.86f * uiScale;
+        float actionScale = 1.08f * uiScale;
+        float detailScale = 0.78f * uiScale;
+        float width = Math.max(BitmapFont.textWidth(title, titleScale), BitmapFont.textWidth(action, actionScale));
+        if (!detail.isBlank()) {
+            width = Math.max(width, BitmapFont.textWidth(detail, detailScale));
+        }
+        width = Math.min(width + 28.0f * uiScale, Math.min(360.0f * uiScale, framebufferWidth - 32.0f * uiScale));
+        float height = detail.isBlank() ? 38.0f * uiScale : 54.0f * uiScale;
+        float x = framebufferWidth * 0.5f - width * 0.5f;
+        float preferredY = framebufferHeight * 0.5f + 42.0f * uiScale;
+        float y = Math.min(preferredY, bottomLimitY - height);
+        y = Math.max(framebufferHeight * 0.5f + 20.0f * uiScale, y);
+        UiColor accent = interactionHintAccent(hint.get().tone());
+        uiRenderer.rect(x - 2.0f * uiScale, y - 2.0f * uiScale, width + 4.0f * uiScale, height + 4.0f * uiScale, new UiColor(0.004f, 0.006f, 0.006f, 0.54f));
+        uiRenderer.rect(x, y, width, height, new UiColor(0.022f, 0.030f, 0.028f, 0.74f));
+        uiRenderer.rect(x, y, width, Math.max(2.0f, 2.0f * uiScale), withAlpha(accent, 0.88f));
+        uiRenderer.rect(x + 7.0f * uiScale, y + 8.0f * uiScale, Math.max(2.0f, 3.0f * uiScale), height - 16.0f * uiScale, withAlpha(accent, 0.62f));
+        float textX = x + 17.0f * uiScale;
+        uiRenderer.text(title, textX, y + 8.0f * uiScale, titleScale, UiColor.MUTED);
+        uiRenderer.text(action, textX, y + 21.0f * uiScale, actionScale, hint.get().tone() == InteractionHint.Tone.WARNING ? UiColor.HEART : UiColor.WHITE);
+        if (!detail.isBlank()) {
+            uiRenderer.text(detail, textX, y + 38.0f * uiScale, detailScale, UiColor.MUTED);
+        }
+    }
+
+    private boolean lookingAtReachableCampfire() {
+        Optional<dev.voxelgame.common.math.Raycast.Hit> picked = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (picked.isEmpty()) {
+            return false;
+        }
+        return world.targetBlock(picked.get())
+                .map(block -> CampfireRules.isCampfire(block.id()))
+                .orElse(false);
+    }
+
+    private Optional<InteractionHint> currentInteractionHint() {
+        Optional<dev.voxelgame.common.math.Raycast.Hit> reachableBlock = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (reachableBlock.isPresent() && targetIsPriorityInteractionBlock(reachableBlock.get())) {
+            return blockInteractionHint(reachableBlock.get(), true);
+        }
+        Optional<EntitySnapshot> entity = nearestEntityTarget(
+                world.visibleEntities(frameTimeSeconds),
+                camera.position(),
+                camera.forward(),
+                reachableBlock.map(dev.voxelgame.common.math.Raycast.Hit::distance).orElse(InteractionRules.BLOCK_REACH)
+        );
+        if (entity.isPresent()) {
+            return Optional.of(InteractionHint.forEntity(entity.get().typeKey(), hotbar.selectedItemIsFood()));
+        }
+        if (reachableBlock.isPresent()) {
+            return blockInteractionHint(reachableBlock.get(), true);
+        }
+        Optional<dev.voxelgame.common.math.Raycast.Hit> farBlock = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH + 3.0);
+        if (farBlock.isEmpty()) {
+            return Optional.empty();
+        }
+        return blockInteractionHint(farBlock.get(), false);
+    }
+
+    private boolean targetIsPriorityInteractionBlock(dev.voxelgame.common.math.Raycast.Hit hit) {
+        return world.targetBlock(hit)
+                .map(block -> block.id() == Blocks.STORAGE_CRATE || block.id() == Blocks.SLEEPING_MAT)
+                .orElse(false);
+    }
+
+    private Optional<InteractionHint> blockInteractionHint(dev.voxelgame.common.math.Raycast.Hit hit, boolean inReach) {
+        Optional<BlockType> block = world.targetBlock(hit);
+        if (block.isEmpty()) {
+            return Optional.empty();
+        }
+        BlockType target = block.get();
+        boolean canHarvest = gameMode == GameMode.CREATIVE || hotbar.canHarvestSelected(target);
+        float breakMultiplier = hotbar.selectedBreakMultiplier(target);
+        float miningProgress = blockBreakAnimation.active() ? blockBreakAnimation.progress(frameTimeSeconds) : 0.0f;
+        return Optional.of(InteractionHint.forBlock(target, new InteractionHint.Context(
+                inReach,
+                selectedItemIsCampfireFuel(),
+                hotbar.selectedItemIsFood(),
+                hotbar.selectedPlaceBlockId().isPresent(),
+                canHarvest,
+                breakMultiplier,
+                gameMode,
+                miningProgress
+        )));
+    }
+
+    private static UiColor interactionHintAccent(InteractionHint.Tone tone) {
+        return switch (tone) {
+            case READY -> UiColor.ACCENT;
+            case WARNING -> UiColor.HEART;
+            case NEUTRAL -> UiColor.MUTED;
+        };
+    }
+
+    private static UiColor withAlpha(UiColor color, float alpha) {
+        return new UiColor(color.r(), color.g(), color.b(), alpha);
+    }
+
     private void renderHeldItem() {
         hotbar.selectedItemKey().ifPresent(itemKey -> {
             float uiScale = settings.uiScale();
-            float size = Math.max(78.0f * uiScale, Math.min(116.0f * uiScale, framebufferHeight * 0.15f * uiScale));
-            float bob = (float) Math.sin(frameTimeSeconds * 5.0) * 1.4f * uiScale;
-            float swingPhase = 1.0f - blockBreakAnimation.handSwing(frameTimeSeconds);
-            float punch = (float) Math.sin(swingPhase * Math.PI);
-            float x = framebufferWidth - size - 50.0f * uiScale - punch * 8.0f * uiScale;
-            float y = framebufferHeight - size - 28.0f * uiScale + bob + punch * 6.0f * uiScale;
+            HeldItemAnimation.Sample motion = heldItemAnimation.sample(frameTimeSeconds);
+            float size = Math.max(78.0f * uiScale, Math.min(116.0f * uiScale, framebufferHeight * 0.15f * uiScale)) * motion.scale();
+            float x = framebufferWidth - size - 50.0f * uiScale + motion.handX() * uiScale;
+            float y = framebufferHeight - size - 28.0f * uiScale + motion.handY() * uiScale;
             uiRenderer.rect(x + size * 0.55f, y + size * 0.62f, size * 0.16f, size * 0.34f, new UiColor(0.70f, 0.50f, 0.34f, 0.90f));
             uiRenderer.rect(x + size * 0.49f, y + size * 0.56f, size * 0.28f, size * 0.14f, new UiColor(0.82f, 0.62f, 0.42f, 0.92f));
-            drawItemIcon(itemKey, x - punch * 3.0f * uiScale, y - punch * 3.0f * uiScale, size);
+            drawItemIcon(itemKey, x + motion.itemX() * uiScale, y + motion.itemY() * uiScale, size);
         });
     }
 
@@ -2232,12 +3725,16 @@ public final class GameClient {
     }
 
     private String dayTimeLabel() {
-        double elapsed = Math.max(0.0, frameTimeSeconds - worldStartTimeSeconds);
-        int day = (int) (elapsed / LOCAL_DAY_LENGTH_SECONDS) + 1;
+        int day = localDayNumber();
         int totalMinutes = localDayMinutes();
         int hour = totalMinutes / 60;
         int minute = totalMinutes % 60;
         return "DAY " + day + " " + dayPhaseLabel(totalMinutes) + " " + String.format(Locale.ROOT, "%02d:%02d", hour, minute);
+    }
+
+    private int localDayNumber() {
+        double elapsed = Math.max(0.0, frameTimeSeconds - worldStartTimeSeconds);
+        return (int) (elapsed / LOCAL_DAY_LENGTH_SECONDS) + 1;
     }
 
     private int localDayMinutes() {
@@ -2395,8 +3892,13 @@ public final class GameClient {
         int skyLight = world == null ? 0 : world.skyLightAt(blockX, blockY, blockZ);
         int blockLight = world == null ? 0 : world.blockLightAt(blockX, blockY, blockZ);
         int combinedLight = Math.max(skyLight, blockLight);
-        RenderResourceTracker.Snapshot resources = RenderResourceTracker.snapshot();
-        ClientNetworkStats.Snapshot network = connection == null ? ClientNetworkStats.Snapshot.offline() : connection.stats();
+        EngineFrameStats.Frame frame = engineFrameStats.frame();
+        EngineFrameStats.Chunks chunks = engineFrameStats.chunks();
+        EngineFrameStats.Rendering rendering = engineFrameStats.rendering();
+        EngineFrameStats.Entities entities = engineFrameStats.entities();
+        EngineFrameStats.Particles particles = engineFrameStats.particles();
+        EngineFrameStats.Network network = engineFrameStats.network();
+        EngineFrameStats.GpuResources resources = engineFrameStats.gpuResources();
         String selectedItem = hotbar.selectedLabel();
         String lookingAt = "none";
         if (world != null) {
@@ -2408,28 +3910,30 @@ public final class GameClient {
                         .orElse("none");
             }
         }
-        uiRenderer.rect(12.0f, 12.0f, 570.0f, 256.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
-        uiRenderer.text("FPS " + lastFps + " FRAME " + formatMilliseconds(lastFrameMilliseconds) + " RENDER " + formatMilliseconds(lastWorldRenderMilliseconds), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
+        uiRenderer.rect(12.0f, 12.0f, 860.0f, 338.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
+        uiRenderer.text("FPS " + frame.fps() + " FRAME " + formatMilliseconds(frame.frameMilliseconds()) + " UPD " + formatMilliseconds(frame.updateMilliseconds()) + " RENDER " + formatMilliseconds(frame.renderMilliseconds()) + " UI " + formatMilliseconds(frame.uiMilliseconds()), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome), 22.0f, 64.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("RD " + settings.renderDistanceChunks() + " MB " + settings.meshBuildBudgetChunks() + " DIRTY " + (world == null ? 0 : world.dirtyChunkCount()) + " BUILT " + lastMeshBuilds, 22.0f, 84.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("LOADED " + (world == null ? 0 : world.loadedChunkCount()) + " GPU MESH " + lastRenderStats.loadedGpuMeshes() + " GPU CHUNK " + lastRenderStats.loadedChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + lastRenderStats.drawCalls() + " SOLID " + lastRenderStats.renderedOpaqueChunks() + " CUTOUT " + lastRenderStats.renderedCutoutChunks() + " WATER " + lastRenderStats.renderedTransparentChunks() + " CULLM " + lastRenderStats.culledMeshes() + " CULLC " + lastRenderStats.culledChunkPositions(), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("TRIS " + formatCount(lastRenderStats.triangles()) + " VRAM " + formatMegabytes(lastRenderStats.meshBytes()) + " ENT " + lastRenderedEntities + " EDC " + lastEntityRenderStats.drawCalls() + " EP " + lastEntityRenderStats.modelParts() + " EMDL " + lastEntityRenderStats.cachedModels() + " ECULL " + lastEntityRenderStats.culledEntities() + " HITBOX " + lastRenderedEntityHitboxes, 22.0f, 144.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()) + " BORDERS " + lastChunkBorderDebugChunks, 22.0f, 164.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("PART " + lastParticleRenderStats.liveParticles() + " PDC " + lastParticleRenderStats.drawCalls() + " PTRI " + lastParticleRenderStats.triangles() + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 184.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("NET " + onOff(onlineMode) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " TX/s " + formatRate(network.sentPacketsPerSecond()) + " RX/s " + formatRate(network.receivedPacketsPerSecond()) + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("SEL " + clampText(selectedItem, 52), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("LOOK " + clampText(lookingAt, 52), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("RD " + chunks.renderDistanceChunks() + " PRE " + chunks.previewRadiusChunks() + " RET " + chunks.retentionRadiusChunks() + " MB " + chunks.meshBuildBudgetChunks() + "/" + formatMilliseconds(chunks.meshBuildBudgetMilliseconds()) + " UP " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()) + " GREEDY " + onOff(settings.greedyMeshingEnabled()) + " DIRTY " + chunks.dirtyChunks() + " BUILT " + chunks.builtChunks(), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOADED " + chunks.loadedChunks() + " VIS " + chunks.visibleChunks() + " UNLD " + chunks.unloadedChunks() + "/" + formatCount(chunks.totalUnloadedChunks()) + " FREED " + chunks.releasedGpuMeshLayers() + " GPU MESH " + rendering.loadedGpuMeshes() + " GPU CHUNK " + rendering.loadedGpuChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("QUEUE " + chunks.queuedChunks() + " REP " + formatCount(chunks.replacedChunkBuilds()) + " CAN " + formatCount(chunks.canceledChunkBuilds()) + " WAIT " + formatMilliseconds(chunks.averageChunkBuildWaitMilliseconds()) + " GEN " + formatMilliseconds(chunks.chunkGenerationMilliseconds()) + " MESH " + formatMilliseconds(chunks.meshingMilliseconds()) + " LIGHT " + formatMilliseconds(chunks.lightingMilliseconds()) + " UP " + formatMilliseconds(chunks.gpuUploadMilliseconds()) + " B/s " + formatRate(chunks.chunksBuiltPerSecond()), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SECTIONS " + chunks.nonEmptySections() + "/" + chunks.totalSections() + " EMPTY " + chunks.emptySections() + " BOUNDS " + chunks.chunksWithSectionBounds(), 22.0f, 144.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + rendering.drawCalls() + " SOLID " + rendering.solidMeshCount() + " CUTOUT " + rendering.cutoutMeshCount() + " WATER " + rendering.transparentMeshCount() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " EVAO " + resources.liveEntityVertexArrays() + " EBUF " + resources.liveEntityBuffers() + " TEX " + resources.liveTextures() + " SHD " + resources.liveShaderPrograms() + " PVAO " + resources.liveParticleVertexArrays() + " PBUF " + resources.liveParticleBuffers() + " FB " + resources.liveFramebuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " BORDERS " + rendering.debugChunkBorders() + " MBOUNDS " + rendering.debugMeshBounds(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PART " + particles.particleCount() + " SPAWN/s " + formatRate(particles.spawnRate()) + " BUD " + formatPercent(particles.budgetUsage()) + " EVICT " + particles.evictedParticles() + " PDC " + particles.drawCalls() + " PTRI " + particles.triangles() + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 244.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("NET " + onOff(network.online()) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " TX/s " + formatRate(network.sentPacketsPerSecond()) + " RX/s " + formatRate(network.receivedPacketsPerSecond()) + " AVG " + formatCount(Math.round(network.averagePacketBytes())) + "B BAD " + formatCount(network.invalidPacketsDropped()) + " Q " + network.chunkStreamQueueLength() + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 264.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SEL " + clampText(selectedItem, 72), 22.0f, 284.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOOK " + clampText(lookingAt, 72), 22.0f, 304.0f, 1.65f, UiColor.MUTED);
     }
 
     private void renderBreakOverlay() {
         if (!blockBreakAnimation.active()) {
             return;
         }
-        float progress = blockBreakAnimation.progress(frameTimeSeconds);
         float uiScale = settings.uiScale();
-        float eased = progress * progress * (3.0f - 2.0f * progress);
+        float eased = blockBreakAnimation.easedProgress(frameTimeSeconds);
         float size = (24.0f + eased * 22.0f) * uiScale;
         float cx = framebufferWidth * 0.5f;
         float cy = framebufferHeight * 0.5f;
@@ -2453,18 +3957,48 @@ public final class GameClient {
         uiRenderer.rect(cx - barWidth * 0.5f, barY, barWidth * eased, Math.max(2.0f, 3.0f * uiScale), UiColor.ACCENT);
     }
 
-    private void renderPickupAnimation() {
-        if (pickupAnimationItemKey.isBlank() || frameTimeSeconds >= pickupAnimationUntil) {
+    private void renderPopAnimations() {
+        renderPickupPop();
+        float uiScale = settings.uiScale();
+        renderTextPop(craftingSuccessPop, "CRAFTED", framebufferWidth * 0.5f, framebufferHeight * 0.5f - 154.0f * uiScale, 1.10f * uiScale, UiColor.ACCENT);
+        renderTextPop(comfortPop, "COZY", framebufferWidth * 0.5f, framebufferHeight * 0.5f - 86.0f * uiScale, 1.22f * uiScale, UiColor.ENERGY);
+        renderTextPop(recipeUnlockPop, "NEW RECIPE", framebufferWidth * 0.5f, framebufferHeight * 0.5f - 122.0f * uiScale, 1.12f * uiScale, UiColor.ACCENT);
+    }
+
+    private void renderCraftingPopAnimations() {
+        float uiScale = settings.uiScale();
+        float y = Math.max(142.0f, framebufferHeight * 0.5f - 158.0f * uiScale);
+        renderTextPop(craftingSuccessPop, "CRAFTED", framebufferWidth * 0.5f, y, 1.18f * uiScale, UiColor.ACCENT);
+        renderTextPop(recipeUnlockPop, "NEW RECIPE", framebufferWidth * 0.5f, y + 34.0f * uiScale, 1.05f * uiScale, UiColor.ACCENT);
+    }
+
+    private void renderPickupPop() {
+        if (!pickupPop.active(frameTimeSeconds)) {
             return;
         }
-        float remaining = (float) Math.max(0.0, pickupAnimationUntil - frameTimeSeconds);
-        float t = Math.max(0.0f, Math.min(1.0f, remaining / 0.48f));
+        PopAnimation.Sample pop = pickupPop.sample(frameTimeSeconds);
         float uiScale = settings.uiScale();
-        float size = (34.0f + (1.0f - t) * 16.0f) * uiScale;
+        float size = 36.0f * pop.scale() * uiScale;
         float x = framebufferWidth * 0.5f - size * 0.5f;
-        float y = framebufferHeight * 0.5f + 36.0f * uiScale - (1.0f - t) * 46.0f * uiScale;
-        drawItemIcon(pickupAnimationItemKey, x, y, size);
-        uiRenderer.centeredText("+", x - 8.0f * uiScale, y + 8.0f * uiScale, 1.5f * uiScale, UiColor.ACCENT);
+        float y = framebufferHeight * 0.5f + 40.0f * uiScale - pop.lift() * 50.0f * uiScale;
+        drawItemIcon(pickupPop.key(), x, y, size);
+        uiRenderer.centeredText("+", x - 8.0f * uiScale, y + 8.0f * uiScale, 1.5f * pop.scale() * uiScale, new UiColor(UiColor.ACCENT.r(), UiColor.ACCENT.g(), UiColor.ACCENT.b(), pop.alpha()));
+    }
+
+    private void renderTextPop(PopAnimation animation, String label, float centerX, float y, float baseScale, UiColor color) {
+        if (!animation.active(frameTimeSeconds)) {
+            return;
+        }
+        PopAnimation.Sample pop = animation.sample(frameTimeSeconds);
+        float uiScale = settings.uiScale();
+        float scale = baseScale * pop.scale();
+        float textY = y - pop.lift() * 22.0f * uiScale;
+        float textWidth = BitmapFont.textWidth(label, scale);
+        float panelHeight = BitmapFont.textHeight(scale) + 8.0f * uiScale;
+        float padX = 10.0f * uiScale;
+        float alpha = pop.alpha();
+        uiRenderer.rect(centerX - textWidth * 0.5f - padX, textY - 4.0f * uiScale, textWidth + padX * 2.0f, panelHeight, new UiColor(0.025f, 0.035f, 0.032f, alpha * 0.34f));
+        uiRenderer.centeredText(label, centerX, textY, scale, new UiColor(color.r(), color.g(), color.b(), alpha));
     }
 
     private void drawAssetSlot(float x, float y, float size, boolean selected, boolean hotbarSlot) {
@@ -2473,16 +4007,18 @@ public final class GameClient {
         }
         UiColor outer = selected
                 ? UiColor.ACCENT
-                : hotbarSlot ? new UiColor(0.11f, 0.17f, 0.15f, 0.96f) : new UiColor(0.075f, 0.095f, 0.092f, 0.95f);
+                : hotbarSlot ? new UiColor(0.40f, 0.40f, 0.36f, 0.98f) : new UiColor(0.36f, 0.36f, 0.33f, 0.98f);
         UiColor fill = selected
-                ? UiColor.SLOT_ACTIVE
-                : hotbarSlot ? new UiColor(0.055f, 0.075f, 0.070f, 0.95f) : UiColor.SLOT;
-        uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, new UiColor(0.012f, 0.016f, 0.015f, 0.88f));
+                ? new UiColor(0.44f, 0.54f, 0.38f, 0.98f)
+                : hotbarSlot ? new UiColor(0.30f, 0.30f, 0.27f, 0.98f) : new UiColor(0.28f, 0.28f, 0.26f, 0.98f);
+        uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, new UiColor(0.10f, 0.10f, 0.09f, 0.92f));
         uiRenderer.rect(x - 1.0f, y - 1.0f, size + 2.0f, size + 2.0f, outer);
         uiRenderer.rect(x, y, size, size, fill);
-        uiRenderer.rect(x + 4.0f, y + 4.0f, size - 8.0f, size - 8.0f, new UiColor(0.018f, 0.026f, 0.024f, 0.62f));
-        uiRenderer.rect(x + 3.0f, y + 3.0f, size - 6.0f, 2.0f, selected ? UiColor.WHITE : new UiColor(0.20f, 0.28f, 0.25f, 0.55f));
-        uiRenderer.rect(x + 3.0f, y + size - 5.0f, size - 6.0f, 2.0f, new UiColor(0.01f, 0.014f, 0.014f, 0.70f));
+        uiRenderer.rect(x + 3.0f, y + 3.0f, size - 6.0f, size - 6.0f, new UiColor(0.17f, 0.17f, 0.16f, 0.72f));
+        uiRenderer.rect(x + 2.0f, y + 2.0f, size - 4.0f, 2.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.42f));
+        uiRenderer.rect(x + 2.0f, y + 2.0f, 2.0f, size - 4.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.32f));
+        uiRenderer.rect(x + 2.0f, y + size - 4.0f, size - 4.0f, 2.0f, new UiColor(0.08f, 0.08f, 0.075f, 0.72f));
+        uiRenderer.rect(x + size - 4.0f, y + 2.0f, 2.0f, size - 4.0f, new UiColor(0.08f, 0.08f, 0.075f, 0.70f));
     }
 
     private void drawHotbarPanel(float x, float y, float width, float height) {
@@ -2493,9 +4029,9 @@ public final class GameClient {
     }
 
     private void drawSelectedSlotPulse(float x, float y, float size) {
-        float pulse = 0.5f + 0.5f * (float) Math.sin(frameTimeSeconds * 5.8f);
-        float inset = 4.0f + pulse * 2.0f;
-        UiColor glow = new UiColor(0.55f, 0.86f, 0.48f, 0.18f + pulse * 0.18f);
+        UiPulse.Sample pulse = SELECTED_SLOT_PULSE.sample(frameTimeSeconds);
+        float inset = pulse.inset();
+        UiColor glow = new UiColor(0.55f, 0.86f, 0.48f, pulse.alpha());
         uiRenderer.rect(x - inset, y - inset, size + inset * 2.0f, 2.0f, glow);
         uiRenderer.rect(x - inset, y + size + inset - 2.0f, size + inset * 2.0f, 2.0f, glow);
         uiRenderer.rect(x - inset, y - inset, 2.0f, size + inset * 2.0f, glow);
@@ -2647,12 +4183,18 @@ public final class GameClient {
             }
         }
         if (firstNewRecipe != null) {
-            setStatus("New recipe unlocked: " + firstNewRecipe.label());
+            setStatus(earlyGameMilestones.unlockRecipe(firstNewRecipe.label()));
+            recipeUnlockPop.trigger(firstNewRecipe.key(), currentTimeSeconds());
         }
     }
 
     private boolean isShiftDown() {
         return glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    }
+
+    private void clearInventoryDrag() {
+        draggedInventorySlot = -1;
+        draggedInventorySource = InventoryDragSource.PLAYER;
     }
 
     private void openSettings(GameState returnState) {
@@ -2665,24 +4207,70 @@ public final class GameClient {
     private void toggleCrafting() {
         if (gameState == GameState.CRAFTING) {
             craftingSearchFocused = false;
-            draggedInventorySlot = -1;
+            clearInventoryDrag();
             resumeGame();
             return;
         }
         gameState = GameState.CRAFTING;
         craftingSearchFocused = false;
-        draggedInventorySlot = -1;
+        clearInventoryDrag();
         previousEnter = false;
         previousBackspace = false;
         setCursorForState();
         updateWindowTitle();
     }
 
+    private void openJournal() {
+        openJournal(GameState.PLAYING);
+    }
+
+    private void openJournal(GameState returnState) {
+        if (world == null) {
+            return;
+        }
+        refreshJournalDiscoveries(currentTimeSeconds());
+        craftingSearchFocused = false;
+        clearInventoryDrag();
+        journalReturnState = returnState == GameState.PAUSED ? GameState.PAUSED : GameState.PLAYING;
+        gameState = GameState.JOURNAL;
+        setCursorForState();
+        updateWindowTitle();
+    }
+
+    private void closeJournal() {
+        if (journalReturnState == GameState.PAUSED && world != null) {
+            gameState = GameState.PAUSED;
+            setCursorForState();
+            updateWindowTitle();
+            return;
+        }
+        resumeGame();
+    }
+
     private void refreshPreview() {
         if (!onlineMode && world != null) {
             world.ensurePreviewAround(camera.position(), settings.previewRadiusChunks());
-            worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), Integer.MAX_VALUE);
+            List<ChunkPos> unloadedChunks = world.unloadOutside(camera.position(), chunkRetentionRadiusChunks());
+            WorldRenderer.MeshReleaseStats releaseStats = worldRenderer.releaseChunks(unloadedChunks);
+            lastUnloadedChunks = unloadedChunks.size();
+            lastReleasedGpuMeshLayers = releaseStats.releasedLayers();
+            worldRenderer.rebuildDirty(
+                    world,
+                    settings.ambientOcclusionEnabled(),
+                    settings.transparentWaterEnabled(),
+                    Integer.MAX_VALUE,
+                    camera.position(),
+                    Double.POSITIVE_INFINITY,
+                    Double.POSITIVE_INFINITY,
+                    settings.renderDistanceChunks(),
+                    settings.previewRadiusChunks(),
+                    settings.greedyMeshingEnabled()
+            );
         }
+    }
+
+    private int chunkRetentionRadiusChunks() {
+        return Math.max(settings.previewRadiusChunks(), settings.renderDistanceChunks()) + 2;
     }
 
     private RenderSettings currentRenderSettings() {
@@ -2712,6 +4300,24 @@ public final class GameClient {
         return value.replace('_', ' ').toUpperCase(Locale.ROOT);
     }
 
+    private String itemKey(short itemId) {
+        return items.findById(itemId)
+                .map(ItemType::key)
+                .orElse("unknown:" + itemId);
+    }
+
+    private ToolType itemToolType(short itemId) {
+        return items.findById(itemId)
+                .map(ItemType::toolType)
+                .orElse(ToolType.NONE);
+    }
+
+    private String blockKey(short blockId) {
+        return blocks.findById(blockId)
+                .map(BlockType::key)
+                .orElse("unknown:" + blockId);
+    }
+
     private void startSingleplayer() {
         closeGameSession();
         onlineMode = false;
@@ -2721,7 +4327,18 @@ public final class GameClient {
         syncKnownRecipeUnlocks();
         world.generatePreview(settings.previewRadiusChunks());
         setCameraToSpawn();
-        worldRenderer.rebuildDirty(world, settings.ambientOcclusionEnabled(), settings.transparentWaterEnabled(), Integer.MAX_VALUE);
+        worldRenderer.rebuildDirty(
+                world,
+                settings.ambientOcclusionEnabled(),
+                settings.transparentWaterEnabled(),
+                Integer.MAX_VALUE,
+                camera.position(),
+                Double.POSITIVE_INFINITY,
+                Double.POSITIVE_INFINITY,
+                settings.renderDistanceChunks(),
+                settings.previewRadiusChunks(),
+                settings.greedyMeshingEnabled()
+        );
         gameState = GameState.PLAYING;
         setStatus("Singleplayer world loaded");
         setCursorForState();
@@ -2737,9 +4354,21 @@ public final class GameClient {
         hotbar.resetForNewGame();
         syncKnownRecipeUnlocks();
         setCameraToSpawn();
+        nextMovementSequence = 1L;
+        lastAuthoritativeMovementSequence = 0L;
+        pendingAuthoritativePlayerState.set(null);
         String host = connectionOptions.host() == null ? "127.0.0.1" : connectionOptions.host();
         try {
-            connection = new GameClientConnection(host, connectionOptions.port(), connectionOptions.username(), world, hotbar, playerStats, chatLog);
+            connection = new GameClientConnection(
+                    host,
+                    connectionOptions.port(),
+                    connectionOptions.username(),
+                    world,
+                    hotbar,
+                    playerStats,
+                    chatLog,
+                    pendingAuthoritativePlayerState::set
+            );
             connection.connect();
             gameState = GameState.PLAYING;
             setStatus("Connected to " + host + ":" + connectionOptions.port());
@@ -2782,6 +4411,10 @@ public final class GameClient {
         hotbar.closeStorage();
         feedbackLog.clear();
         announcedRecipeUnlocks.clear();
+        discoveredBiomeKeys.clear();
+        discoveredCreatureKeys.clear();
+        earlyGameMilestones.reset();
+        nightSafetyPrompts.reset();
         playerStats.respawn();
         world = null;
         onlineMode = false;
@@ -2789,7 +4422,11 @@ public final class GameClient {
         nextComfortScanTime = 0.0;
         nextRecipeUnlockScanTime = 0.0;
         nextToolHintTime = 0.0;
+        clientTransactionId = 0;
+        lastUnloadedChunks = 0;
+        lastReleasedGpuMeshLayers = 0;
         lastComfortFeedbackValue = -1;
+        journalReturnState = GameState.PLAYING;
         discoveredRecipeStations.clear();
         discoveredRecipeStations.add(CraftingStationType.INVENTORY);
     }
@@ -2807,6 +4444,25 @@ public final class GameClient {
         }
     }
 
+    private enum JournalTab {
+        NOTES("NOTES"),
+        BIOMES("BIOMES"),
+        STRUCTURES("STRUCT"),
+        CREATURES("CREATURES"),
+        RECIPES("RECIPES"),
+        COLLECTIBLES("ITEMS");
+
+        private final String label;
+
+        JournalTab(String label) {
+            this.label = label;
+        }
+
+        private String label() {
+            return label;
+        }
+    }
+
     private enum GameState {
         MAIN_MENU,
         PLAYING,
@@ -2814,6 +4470,7 @@ public final class GameClient {
         SETTINGS,
         CHAT,
         CRAFTING,
+        JOURNAL,
         STORAGE,
         DEAD
     }

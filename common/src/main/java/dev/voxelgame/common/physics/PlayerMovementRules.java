@@ -5,6 +5,16 @@ public final class PlayerMovementRules {
     private static final double MAX_DELTA_SECONDS = 0.5;
     private static final double HORIZONTAL_GRACE_BLOCKS = 1.25;
     private static final double VERTICAL_GRACE_BLOCKS = 2.0;
+    private static final double UPWARD_START_EPSILON = 0.05;
+    private static final double SURVIVAL_ACCELERATION_BLOCKS_PER_SECOND_SQUARED = 65.0;
+    private static final double FLYING_ACCELERATION_BLOCKS_PER_SECOND_SQUARED = 220.0;
+    private static final double ACCELERATION_GRACE_BLOCKS_PER_SECOND = 5.0;
+
+    public enum MovementMode {
+        SURVIVAL,
+        FLYING,
+        SPECTATOR
+    }
 
     private PlayerMovementRules() {
     }
@@ -20,6 +30,40 @@ public final class PlayerMovementRules {
     public static boolean withinVerticalBounds(double eyeY, PlayerPhysicsConfig config, int minY, int maxYExclusive) {
         PlayerBounds bounds = config.bounds();
         return bounds.minY(eyeY) >= minY && bounds.maxY(eyeY) < maxYExclusive;
+    }
+
+    public static boolean groundedClaimPlausible(boolean claimedOnGround, boolean hasGroundSupport) {
+        return !claimedOnGround || hasGroundSupport;
+    }
+
+    public static boolean waterStateClaimPlausible(PlayerWaterState claimed, PlayerWaterState actual) {
+        if (claimed == null || actual == null) {
+            return false;
+        }
+        return (!claimed.feetInWater() || actual.feetInWater())
+                && (!claimed.bodyInWater() || actual.bodyInWater())
+                && (!claimed.headUnderwater() || actual.headUnderwater());
+    }
+
+    public static boolean waterMovementAssist(PlayerWaterState water) {
+        return water != null && water.movementAffected();
+    }
+
+    public static boolean upwardMovementPlausible(
+            double fromY,
+            double toY,
+            boolean previousGrounded,
+            double previousDeltaY,
+            boolean movementAssist
+    ) {
+        if (!Double.isFinite(fromY) || !Double.isFinite(toY) || !Double.isFinite(previousDeltaY)) {
+            return false;
+        }
+        double deltaY = toY - fromY;
+        if (deltaY <= UPWARD_START_EPSILON) {
+            return true;
+        }
+        return previousGrounded || previousDeltaY > UPWARD_START_EPSILON || movementAssist;
     }
 
     public static boolean withinInitialSyncDistance(
@@ -61,6 +105,89 @@ public final class PlayerMovementRules {
         double maxHorizontalDistance = config.flySprintSpeed() * seconds + HORIZONTAL_GRACE_BLOCKS;
         double maxVerticalDistance = Math.max(config.maxFallSpeed(), config.flySprintSpeed()) * seconds + VERTICAL_GRACE_BLOCKS;
         return horizontalDistance <= maxHorizontalDistance && Math.abs(dy) <= maxVerticalDistance;
+    }
+
+    public static boolean isPlausibleSurvivalDelta(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double deltaSeconds,
+            PlayerPhysicsConfig config,
+            PlayerWaterState water
+    ) {
+        if (!Double.isFinite(deltaSeconds) || deltaSeconds < 0.0) {
+            return false;
+        }
+        double seconds = validationDeltaSeconds(deltaSeconds);
+        double dx = toX - fromX;
+        double dy = toY - fromY;
+        double dz = toZ - fromZ;
+        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+        double maxHorizontalDistance = config.sprintSpeed() * seconds + HORIZONTAL_GRACE_BLOCKS;
+        double maxVerticalSpeed = waterMovementAssist(water) ? config.maxWaterFallSpeed() : config.maxFallSpeed();
+        double maxVerticalDistance = maxVerticalSpeed * seconds + VERTICAL_GRACE_BLOCKS;
+        return horizontalDistance <= maxHorizontalDistance && Math.abs(dy) <= maxVerticalDistance;
+    }
+
+    public static boolean isPlausibleModeDelta(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double deltaSeconds,
+            PlayerPhysicsConfig config,
+            PlayerWaterState water,
+            MovementMode mode
+    ) {
+        if (mode == null) {
+            return false;
+        }
+        return switch (mode) {
+            case SURVIVAL -> isPlausibleSurvivalDelta(fromX, fromY, fromZ, toX, toY, toZ, deltaSeconds, config, water);
+            case FLYING, SPECTATOR -> isPlausibleDelta(fromX, fromY, fromZ, toX, toY, toZ, deltaSeconds, config);
+        };
+    }
+
+    public static boolean isPlausibleHorizontalAcceleration(
+            double previousDeltaX,
+            double previousDeltaZ,
+            double previousDeltaSeconds,
+            double currentDeltaX,
+            double currentDeltaZ,
+            double currentDeltaSeconds,
+            PlayerPhysicsConfig config,
+            MovementMode mode
+    ) {
+        if (config == null || mode == null
+                || !Double.isFinite(previousDeltaX)
+                || !Double.isFinite(previousDeltaZ)
+                || !Double.isFinite(previousDeltaSeconds)
+                || !Double.isFinite(currentDeltaX)
+                || !Double.isFinite(currentDeltaZ)
+                || !Double.isFinite(currentDeltaSeconds)
+                || previousDeltaSeconds < 0.0
+                || currentDeltaSeconds < 0.0) {
+            return false;
+        }
+        double previousSeconds = validationDeltaSeconds(previousDeltaSeconds);
+        double currentSeconds = validationDeltaSeconds(currentDeltaSeconds);
+        double previousSpeed = Math.sqrt(previousDeltaX * previousDeltaX + previousDeltaZ * previousDeltaZ) / previousSeconds;
+        double currentSpeed = Math.sqrt(currentDeltaX * currentDeltaX + currentDeltaZ * currentDeltaZ) / currentSeconds;
+        double acceleration = switch (mode) {
+            case SURVIVAL -> SURVIVAL_ACCELERATION_BLOCKS_PER_SECOND_SQUARED;
+            case FLYING, SPECTATOR -> FLYING_ACCELERATION_BLOCKS_PER_SECOND_SQUARED;
+        };
+        double modeSpeed = switch (mode) {
+            case SURVIVAL -> config.sprintSpeed();
+            case FLYING, SPECTATOR -> config.flySprintSpeed();
+        };
+        double maxSpeedAfterAcceleration = previousSpeed + acceleration * currentSeconds + ACCELERATION_GRACE_BLOCKS_PER_SECOND;
+        return currentSpeed <= Math.max(modeSpeed + ACCELERATION_GRACE_BLOCKS_PER_SECOND, maxSpeedAfterAcceleration);
     }
 
     private static double validationDeltaSeconds(double deltaSeconds) {

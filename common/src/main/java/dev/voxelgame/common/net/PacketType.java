@@ -23,7 +23,9 @@ public enum PacketType {
     PLAYER_STATS_SNAPSHOT(17),
     STORAGE_OPEN_REQUEST(18),
     SLEEP_REQUEST(19),
-    COOK_REQUEST(20);
+    COOK_REQUEST(20),
+    CAMPFIRE_STATUS(21),
+    PLAYER_POSITION_SNAPSHOT(22);
 
     private static final Map<Integer, PacketType> BY_ID = new HashMap<>();
 

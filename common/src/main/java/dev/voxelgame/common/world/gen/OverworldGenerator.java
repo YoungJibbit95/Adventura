@@ -13,6 +13,23 @@ import java.util.Optional;
 
 public final class OverworldGenerator implements WorldGenerator {
     private static final int SEA_LEVEL = 63;
+    private static final StarterResource[] STARTER_RESOURCES = {
+            new StarterResource(4, 6, Blocks.TWIG_PILE),
+            new StarterResource(6, 3, Blocks.TWIG_PILE),
+            new StarterResource(8, 13, Blocks.TWIG_PILE),
+            new StarterResource(3, 8, Blocks.SMALL_STONE),
+            new StarterResource(5, 12, Blocks.SMALL_STONE),
+            new StarterResource(15, 13, Blocks.SMALL_STONE),
+            new StarterResource(5, 5, Blocks.WILD_GRASS),
+            new StarterResource(7, 12, Blocks.WILD_GRASS),
+            new StarterResource(2, 10, Blocks.WILD_GRASS),
+            new StarterResource(4, 13, Blocks.BERRY_BUSH),
+            new StarterResource(7, 4, Blocks.BERRY_BUSH),
+            new StarterResource(2, 6, Blocks.HERB_PLANTER),
+            new StarterResource(6, 14, Blocks.SUN_BLOOM),
+            new StarterResource(10, 13, Blocks.RED_MUSHROOM),
+            new StarterResource(14, 14, Blocks.MUSHROOM_CLUSTER)
+    };
 
     private final long seed;
     private final Registry<BiomeType> biomes;
@@ -42,6 +59,7 @@ public final class OverworldGenerator implements WorldGenerator {
             }
         }
         decorateChunkStructures(chunk);
+        decorateStarterResources(chunk);
     }
 
     public BiomeType biomeAt(int x, int z) {
@@ -202,10 +220,40 @@ public final class OverworldGenerator implements WorldGenerator {
                 .placeIntoChunk(chunk, structure.originX(), structure.originY(), structure.originZ()));
     }
 
+    private void decorateStarterResources(Chunk chunk) {
+        if (!new ChunkPos(0, 0).equals(chunk.pos())) {
+            return;
+        }
+        for (StarterResource resource : STARTER_RESOURCES) {
+            placeStarterResource(chunk, resource.x(), resource.z(), resource.blockId());
+        }
+    }
+
+    private void placeStarterResource(Chunk chunk, int x, int z, short blockId) {
+        if (!ChunkPos.fromBlock(x, z).equals(chunk.pos())) {
+            return;
+        }
+        int y = terrainHeight(x, z, biomeAt(x, z)) + 1;
+        if (!chunk.dimension().containsY(y) || !chunk.dimension().containsY(y - 1)) {
+            return;
+        }
+        short support = chunk.blockId(x, y - 1, z);
+        if (support == Blocks.AIR || support == Blocks.WATER) {
+            return;
+        }
+        chunk.setBlockId(x, y, z, blockId);
+    }
+
     public Optional<GeneratedStructure> structureAtChunk(ChunkPos pos) {
         int centerX = pos.x() * ChunkPos.SIZE + 8;
         int centerZ = pos.z() * ChunkPos.SIZE + 8;
         BiomeType biome = biomeAt(centerX, centerZ);
+        if (pos.x() == 0 && pos.z() == 0) {
+            int campX = centerX + 4;
+            int campZ = centerZ;
+            int groundY = terrainHeight(campX, campZ, biomeAt(campX, campZ)) + 1;
+            return Optional.of(new GeneratedStructure(Structures.campsite(), campX, groundY, campZ));
+        }
         if (pos.x() == 1 && pos.z() == 1) {
             int groundY = terrainHeight(centerX, centerZ, biome) + 1;
             return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
@@ -242,6 +290,9 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     public record GeneratedStructure(StructureTemplate template, int originX, int originY, int originZ) {
+    }
+
+    private record StarterResource(int x, int z, short blockId) {
     }
 
     private boolean canPlaceTree(Chunk chunk, int x, int y, int z) {
@@ -344,10 +395,13 @@ public final class OverworldGenerator implements WorldGenerator {
                 if (roll < 0.014) {
                     yield Blocks.CLAY_DEPOSIT;
                 }
-                if (roll < 0.022) {
+                if (roll < 0.028) {
+                    yield Blocks.REEDS;
+                }
+                if (roll < 0.036) {
                     yield Blocks.BERRY_BUSH;
                 }
-                if (roll < 0.030) {
+                if (roll < 0.044) {
                     yield Blocks.SMALL_STONE;
                 }
                 yield Blocks.AIR;

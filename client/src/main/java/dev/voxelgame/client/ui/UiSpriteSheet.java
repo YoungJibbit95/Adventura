@@ -1,5 +1,7 @@
 package dev.voxelgame.client.ui;
 
+import dev.voxelgame.client.render.RenderResourceTracker;
+
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -25,6 +27,8 @@ public final class UiSpriteSheet implements AutoCloseable {
     private final int textureId;
     private final int width;
     private final int height;
+    private final long textureBytes;
+    private boolean closed;
 
     public enum BackgroundMode {
         OPAQUE,
@@ -32,10 +36,11 @@ public final class UiSpriteSheet implements AutoCloseable {
         EDGE_CHECKER
     }
 
-    private UiSpriteSheet(int textureId, int width, int height) {
+    private UiSpriteSheet(int textureId, int width, int height, long textureBytes) {
         this.textureId = textureId;
         this.width = width;
         this.height = height;
+        this.textureBytes = textureBytes;
     }
 
     public static UiSpriteSheet load(String resourcePath, boolean keyBlackTransparent) {
@@ -59,7 +64,9 @@ public final class UiSpriteSheet implements AutoCloseable {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.getWidth(), image.getHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, toRgbaBuffer(image, backgroundMode));
             glBindTexture(GL_TEXTURE_2D, 0);
-            return new UiSpriteSheet(textureId, image.getWidth(), image.getHeight());
+            long textureBytes = (long) image.getWidth() * image.getHeight() * 4L;
+            RenderResourceTracker.registerTexture(textureBytes);
+            return new UiSpriteSheet(textureId, image.getWidth(), image.getHeight(), textureBytes);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to load UI sprite sheet: " + resourcePath, e);
         }
@@ -83,7 +90,12 @@ public final class UiSpriteSheet implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         glDeleteTextures(textureId);
+        RenderResourceTracker.releaseTexture(textureBytes);
     }
 
     private static ByteBuffer toRgbaBuffer(BufferedImage image, BackgroundMode backgroundMode) {

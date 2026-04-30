@@ -1,7 +1,7 @@
 #version 330 core
 
 in float vLight;
-in float vBlockId;
+in float vMaterialIndex;
 in float vShade;
 in float vDistance;
 in float vAo;
@@ -17,27 +17,36 @@ uniform float uBloomStrength;
 uniform float uGlobalBrightness;
 uniform vec3 uFogColor;
 uniform sampler2D uBlockAtlas;
-uniform vec4 uSideUv[64];
-uniform vec4 uTopUv[64];
-uniform vec4 uBottomUv[64];
-uniform vec4 uBlockColorAlpha[64];
-uniform vec4 uBlockEffects[64];
+uniform sampler2D uMaterialLut;
+uniform int uMaterialCount;
 out vec4 fragColor;
 
-int safeBlockId(int id) {
-    return clamp(id, 0, 63);
+int materialIndex() {
+    return clamp(int(vMaterialIndex + 0.5), 0, max(uMaterialCount - 1, 0));
 }
 
-vec3 blockColor(int id) {
-    return uBlockColorAlpha[safeBlockId(id)].rgb;
+vec4 materialTexel(int row) {
+    return texelFetch(uMaterialLut, ivec2(materialIndex(), row), 0);
 }
 
-float blockAlpha(int id) {
-    return uBlockColorAlpha[safeBlockId(id)].a;
+vec3 materialColor() {
+    return materialTexel(0).rgb;
 }
 
-bool fillsTextureGaps(int id) {
-    return uBlockEffects[safeBlockId(id)].w > 0.5;
+float materialAlpha() {
+    return materialTexel(0).a;
+}
+
+bool flagSet(float flags, float flag) {
+    return mod(floor(flags / flag), 2.0) >= 1.0;
+}
+
+float materialFlags() {
+    return materialTexel(1).z;
+}
+
+bool fillsTextureGaps() {
+    return flagSet(materialFlags(), 8.0);
 }
 
 vec2 faceUv() {
@@ -51,53 +60,51 @@ vec2 faceUv() {
     return uv;
 }
 
-vec4 atlasRect(int id) {
-    int safeId = safeBlockId(id);
-    if (vNormal.y > 0.5) return uTopUv[safeId];
-    if (vNormal.y < -0.5) return uBottomUv[safeId];
-    return uSideUv[safeId];
+vec4 atlasRect() {
+    if (vNormal.y > 0.5) return materialTexel(3);
+    if (vNormal.y < -0.5) return materialTexel(4);
+    return materialTexel(2);
 }
 
-vec4 blockSurface(int id) {
-    vec4 color = vec4(blockColor(id), 1.0);
+vec4 materialSurface() {
+    vec4 color = vec4(materialColor(), 1.0);
     if (uAtlasEnabled == 0) {
         return color;
     }
-    vec4 rect = atlasRect(id);
+    vec4 rect = atlasRect();
     if (rect.z <= rect.x || rect.w <= rect.y) {
         return color;
     }
     vec2 uv = mix(rect.xy, rect.zw, faceUv());
     vec4 sampled = texture(uBlockAtlas, uv);
-    if (sampled.a < 0.05) {
-        if (fillsTextureGaps(id)) {
+    if (sampled.a < materialTexel(1).w) {
+        if (fillsTextureGaps()) {
             return vec4(color.rgb, 1.0);
         }
         discard;
     }
-    if (fillsTextureGaps(id)) {
+    if (fillsTextureGaps()) {
         return vec4(mix(color.rgb, sampled.rgb, sampled.a), 1.0);
     }
     return vec4(mix(color.rgb, sampled.rgb, sampled.a), sampled.a);
 }
 
-float emissiveStrength(int id) {
-    return uBlockEffects[safeBlockId(id)].x;
+float emissiveStrength() {
+    return materialTexel(1).x;
 }
 
-bool animatedFluid(int id) {
-    return uBlockEffects[safeBlockId(id)].y > 0.5;
+bool animatedFluid() {
+    return materialTexel(1).y > 0.5;
 }
 
 void main() {
-    int id = int(vBlockId + 0.5);
-    vec4 surface = blockSurface(id);
+    vec4 surface = materialSurface();
     vec3 lit = surface.rgb * vLight * vShade * vAo * uGlobalBrightness;
     if (uBloomEnabled == 1) {
-        float glow = emissiveStrength(id);
+        float glow = emissiveStrength();
         lit += surface.rgb * glow * uBloomStrength * (1.0 + vLight * 0.35);
     }
-    if (animatedFluid(id)) {
+    if (animatedFluid()) {
         lit = max(lit, surface.rgb * 0.18);
         lit = mix(lit, lit + vec3(0.03, 0.06, 0.10), 0.25);
     }
@@ -108,5 +115,5 @@ void main() {
         float fog = smoothstep(fogStart, uFogEnd, vDistance);
         lit = mix(lit, uFogColor, fog);
     }
-    fragColor = vec4(lit, blockAlpha(id) * surface.a);
+    fragColor = vec4(lit, materialAlpha() * surface.a);
 }

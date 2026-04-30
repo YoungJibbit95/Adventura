@@ -8,6 +8,8 @@ import dev.voxelgame.common.net.GamePacket;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 
+import java.util.function.Consumer;
+
 public final class ClientConnectionHandler extends SimpleChannelInboundHandler<GamePacket> {
     private final String username;
     private final ClientWorld world;
@@ -15,18 +17,34 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
     private final PlayerStats playerStats;
     private final ChatLog chatLog;
     private final ClientNetworkStats stats;
+    private final Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler;
 
     public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog) {
         this(username, world, hotbar, new PlayerStats(), chatLog, new ClientNetworkStats());
     }
 
     public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, PlayerStats playerStats, ChatLog chatLog, ClientNetworkStats stats) {
+        this(username, world, hotbar, playerStats, chatLog, stats, snapshot -> {
+        });
+    }
+
+    public ClientConnectionHandler(
+            String username,
+            ClientWorld world,
+            Hotbar hotbar,
+            PlayerStats playerStats,
+            ChatLog chatLog,
+            ClientNetworkStats stats,
+            Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler
+    ) {
         this.username = username;
         this.world = world;
         this.hotbar = hotbar;
         this.playerStats = playerStats;
         this.chatLog = chatLog;
         this.stats = stats;
+        this.playerPositionHandler = playerPositionHandler == null ? snapshot -> {
+        } : playerPositionHandler;
     }
 
     @Override
@@ -65,6 +83,7 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
                 System.out.println("<server> " + chat.message());
             }
             case GamePacket.EntitySnapshots snapshots -> world.applyEntitySnapshots(snapshots.snapshots());
+            case GamePacket.PlayerPositionSnapshot snapshot -> playerPositionHandler.accept(snapshot);
             case GamePacket.InventorySnapshot inventory -> hotbar.applySnapshot(inventory.slots());
             case GamePacket.PlayerStatsSnapshot snapshot -> playerStats.applySnapshot(
                     snapshot.health(),
@@ -74,6 +93,7 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
                     snapshot.armor(),
                     snapshot.comfort()
             );
+            case GamePacket.CampfireStatus status -> world.applyCampfireStatus(status);
             case GamePacket.StorageOpen storage -> hotbar.applyStorageSnapshot(storage.x(), storage.y(), storage.z(), storage.slots());
             default -> {
             }

@@ -35,9 +35,11 @@ import static org.lwjgl.opengl.GL20.glUseProgram;
 
 public final class ShaderProgram implements AutoCloseable {
     private final int programId;
+    private boolean closed;
 
     private ShaderProgram(int programId) {
         this.programId = programId;
+        RenderResourceTracker.registerShaderProgram();
     }
 
     public static ShaderProgram fromResources(String vertexPath, String fragmentPath) {
@@ -92,7 +94,12 @@ public final class ShaderProgram implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         glDeleteProgram(programId);
+        RenderResourceTracker.releaseShaderProgram();
     }
 
     private static int compile(int type, String source) {

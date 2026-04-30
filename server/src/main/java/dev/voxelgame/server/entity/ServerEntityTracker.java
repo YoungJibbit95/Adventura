@@ -1,30 +1,52 @@
 package dev.voxelgame.server.entity;
 
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
+import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.item.ItemStack;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 public final class ServerEntityTracker {
     public static final double SLEEP_DANGER_RADIUS = 8.0;
+    private static final double ACTIVE_AMBIENT_RADIUS = 128.0;
+    private static final double LOCAL_AVOIDANCE_PADDING = 0.08;
 
     private final Map<UUID, EntitySnapshot> players = new ConcurrentHashMap<>();
     private final Map<Long, EntitySnapshot> ambientEntities = new ConcurrentHashMap<>();
     private final Map<Long, EntitySnapshot> ambientAnchors = new ConcurrentHashMap<>();
     private final Map<Long, FollowTarget> followTargets = new ConcurrentHashMap<>();
+    private final Map<Long, DroppedItemEntity> itemDrops = new ConcurrentHashMap<>();
+    private long nextItemDropEntityId = -1L;
 
     public ServerEntityTracker() {
     }
 
     public ServerEntityTracker(long seed) {
+        this(seed, snapshot -> true);
+    }
+
+    public ServerEntityTracker(long seed, Predicate<EntitySnapshot> spawnValidator) {
+        Objects.requireNonNull(spawnValidator, "spawnValidator");
         for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnAroundSpawn(seed, 5)) {
-            addAmbient(snapshot);
+            if (spawnValidator.test(snapshot)) {
+                addAmbient(snapshot);
+            }
         }
+    }
+
+    @FunctionalInterface
+    public interface MovementValidator {
+        boolean canMove(EntitySnapshot current, EntitySnapshot candidate);
     }
 
     public EntitySnapshot registerPlayer(UUID playerId) {
@@ -60,6 +82,9 @@ public final class ServerEntityTracker {
     public List<EntitySnapshot> snapshots() {
         List<EntitySnapshot> snapshots = new ArrayList<>(players.values());
         snapshots.addAll(ambientEntities.values());
+        itemDrops.values().stream()
+                .map(DroppedItemEntity::snapshot)
+                .forEach(snapshots::add);
         return snapshots;
     }
 
@@ -71,7 +96,49 @@ public final class ServerEntityTracker {
         if (player != null) {
             return Optional.of(player);
         }
-        return Optional.ofNullable(ambientEntities.get(entityId));
+        EntitySnapshot ambient = ambientEntities.get(entityId);
+        if (ambient != null) {
+            return Optional.of(ambient);
+        }
+        return Optional.ofNullable(itemDrops.get(entityId)).map(DroppedItemEntity::snapshot);
+    }
+
+    public DroppedItemEntity spawnItemDrop(String itemKey, ItemStack stack, double x, double y, double z, long tick) {
+        if (itemKey == null || itemKey.isBlank()) {
+            throw new IllegalArgumentException("Dropped item key is required");
+        }
+        DroppedItemEntity drop = new DroppedItemEntity(
+                nextItemDropEntityId--,
+                itemKey,
+                stack,
+                x,
+                y + 0.18,
+                z,
+                y + 0.05,
+                launchVelocity(itemKey, 0),
+                0.26,
+                launchVelocity(itemKey, 1),
+                tick
+        );
+        itemDrops.put(drop.entityId(), drop);
+        return drop;
+    }
+
+    public List<DroppedItemEntity> itemDropsNear(double x, double y, double z, double radius, long tick) {
+        double maxDistanceSquared = Math.max(0.0, radius) * Math.max(0.0, radius);
+        return itemDrops.values().stream()
+                .filter(drop -> drop.canPickup(tick))
+                .filter(drop -> drop.distanceSquared(x, y, z) <= maxDistanceSquared)
+                .sorted(Comparator.comparingDouble(drop -> drop.distanceSquared(x, y, z)))
+                .toList();
+    }
+
+    public Optional<DroppedItemEntity> claimItemDrop(long entityId) {
+        return Optional.ofNullable(itemDrops.remove(entityId));
+    }
+
+    public int itemDropCount() {
+        return itemDrops.size();
     }
 
     public Optional<EntitySnapshot> feedAmbient(long entityId, int healAmount) {
@@ -96,7 +163,10 @@ public final class ServerEntityTracker {
                 current.yaw(),
                 current.pitch(),
                 Math.min(20, current.health() + healAmount),
-                targetPlayerId == null ? current.stateKey() : EntitySnapshot.STATE_FOLLOW
+                targetPlayerId == null ? current.stateKey() : EntitySnapshot.STATE_FOLLOW,
+                0.0,
+                0.0,
+                0.0
         );
         ambientEntities.put(entityId, updated);
         if (targetPlayerId != null) {
@@ -108,21 +178,175 @@ public final class ServerEntityTracker {
         return Optional.of(updated);
     }
 
-    public List<EntitySnapshot> tickAmbient(long tick) {
-        if (ambientEntities.isEmpty()) {
-            return List.of();
+    public Optional<EntitySnapshot> damageAmbient(long entityId, int damageAmount, UUID attackerPlayerId) {
+        return damageAmbient(entityId, damageAmount, attackerPlayerId, 0.3);
+    }
+
+    public Optional<EntitySnapshot> damageAmbient(long entityId, int damageAmount, UUID attackerPlayerId, double knockbackStrength) {
+        if (damageAmount <= 0) {
+            return Optional.empty();
         }
-        List<EntitySnapshot> updated = new ArrayList<>(ambientEntities.size());
+        EntitySnapshot current = ambientEntities.get(entityId);
+        if (current == null) {
+            return Optional.empty();
+        }
+        int newHealth = Math.max(0, current.health() - damageAmount);
+        EntitySnapshot attacker = players.get(attackerPlayerId);
+
+        double knockbackX = 0.0;
+        double knockbackZ = 0.0;
+        if (attacker != null) {
+            double dx = current.x() - attacker.x();
+            double dz = current.z() - attacker.z();
+            double distance = Math.sqrt(dx * dx + dz * dz);
+            if (distance > 0.0001) {
+                knockbackX = (dx / distance) * knockbackStrength;
+                knockbackZ = (dz / distance) * knockbackStrength;
+            }
+        }
+
+        EntitySnapshot updated = new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                current.x(),
+                current.y(),
+                current.z(),
+                current.yaw(),
+                current.pitch(),
+                newHealth,
+                newHealth <= 0 ? EntitySnapshot.STATE_IDLE : EntitySnapshot.STATE_FLEE,
+                knockbackX,
+                0.1,
+                knockbackZ
+        );
+
+        if (newHealth <= 0) {
+            ambientEntities.remove(entityId);
+            ambientAnchors.remove(entityId);
+            followTargets.remove(entityId);
+        } else {
+            ambientEntities.put(entityId, updated);
+        }
+
+        return Optional.of(updated);
+    }
+
+    public List<EntitySnapshot> tickAmbient(long tick) {
+        return tickAmbient(tick, (current, candidate) -> true);
+    }
+
+    public List<EntitySnapshot> tickAmbient(long tick, MovementValidator movementValidator) {
+        Objects.requireNonNull(movementValidator, "movementValidator");
+        if (ambientEntities.isEmpty()) {
+            return tickItemDrops(tick);
+        }
+        List<EntitySnapshot> updated = new ArrayList<>(ambientEntities.size() + itemDrops.size());
         for (Map.Entry<Long, EntitySnapshot> entry : ambientEntities.entrySet()) {
             EntitySnapshot current = entry.getValue();
             EntitySnapshot anchor = ambientAnchors.getOrDefault(entry.getKey(), current);
             FollowTarget followTarget = followTargets.get(entry.getKey());
+            if (followTarget == null && parkedOutsideActiveRadius(current)) {
+                continue;
+            }
             FleeThreat fleeThreat = followTarget == null ? fleeThreatFor(current).orElse(null) : null;
             EntitySnapshot moved = moveAmbient(anchor, current, followTarget, fleeThreat, tick);
+
+            // Apply knockback velocity
+            if (current.velocityX() != 0.0 || current.velocityY() != 0.0 || current.velocityZ() != 0.0) {
+                moved = new EntitySnapshot(
+                        moved.entityId(),
+                        moved.typeKey(),
+                        moved.ownerPlayerId(),
+                        moved.x() + current.velocityX(),
+                        moved.y() + current.velocityY(),
+                        moved.z() + current.velocityZ(),
+                        moved.yaw(),
+                        moved.pitch(),
+                        moved.health(),
+                        moved.stateKey(),
+                        current.velocityX() * 0.9,
+                        Math.max(current.velocityY() - 0.05, -0.3),
+                        current.velocityZ() * 0.9
+                );
+            } else {
+                moved = moved.withVelocity(0.0, 0.0, 0.0);
+            }
+
+            moved = validateAmbientMove(current, moved, movementValidator);
             ambientEntities.put(entry.getKey(), moved);
             updated.add(moved);
         }
+        updated.addAll(tickItemDrops(tick));
         return updated;
+    }
+
+    private boolean parkedOutsideActiveRadius(EntitySnapshot current) {
+        if (players.isEmpty()) {
+            return false;
+        }
+        double maxDistanceSquared = ACTIVE_AMBIENT_RADIUS * ACTIVE_AMBIENT_RADIUS;
+        for (EntitySnapshot player : players.values()) {
+            double dx = current.x() - player.x();
+            double dy = current.y() - player.y();
+            double dz = current.z() - player.z();
+            if (dx * dx + dy * dy + dz * dz <= maxDistanceSquared) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private EntitySnapshot validateAmbientMove(EntitySnapshot current, EntitySnapshot candidate, MovementValidator movementValidator) {
+        if (!movementValidator.canMove(current, candidate) || locallyBlocked(current, candidate)) {
+            return blockedAmbientMove(current, candidate);
+        }
+        return candidate;
+    }
+
+    private boolean locallyBlocked(EntitySnapshot current, EntitySnapshot candidate) {
+        for (EntitySnapshot player : players.values()) {
+            if (overlaps(candidate, player, LOCAL_AVOIDANCE_PADDING)) {
+                return true;
+            }
+        }
+        for (EntitySnapshot other : ambientEntities.values()) {
+            if (other.entityId() != current.entityId() && overlaps(candidate, other, LOCAL_AVOIDANCE_PADDING)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static EntitySnapshot blockedAmbientMove(EntitySnapshot current, EntitySnapshot candidate) {
+        return new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                current.x(),
+                current.y(),
+                current.z(),
+                candidate.yaw(),
+                candidate.pitch(),
+                candidate.health(),
+                candidate.stateKey(),
+                0.0,
+                0.0,
+                0.0
+        );
+    }
+
+    private static boolean overlaps(EntitySnapshot first, EntitySnapshot second, double padding) {
+        EntityBounds firstBounds = EntityBounds.forType(first.typeKey());
+        EntityBounds secondBounds = EntityBounds.forType(second.typeKey());
+        double firstBaseY = EntityBounds.baseY(first);
+        double secondBaseY = EntityBounds.baseY(second);
+        return firstBounds.minX(first.x()) < secondBounds.maxX(second.x()) + padding
+                && firstBounds.maxX(first.x()) > secondBounds.minX(second.x()) - padding
+                && firstBounds.minY(firstBaseY) < secondBounds.maxY(secondBaseY) + padding
+                && firstBounds.maxY(firstBaseY) > secondBounds.minY(secondBaseY) - padding
+                && firstBounds.minZ(first.z()) < secondBounds.maxZ(second.z()) + padding
+                && firstBounds.maxZ(first.z()) > secondBounds.minZ(second.z()) - padding;
     }
 
     public int playerCount() {
@@ -145,9 +369,31 @@ public final class ServerEntityTracker {
         return false;
     }
 
-    private void addAmbient(EntitySnapshot snapshot) {
+    public void addAmbient(EntitySnapshot snapshot) {
+        if (ItemDropType.isTypeKey(snapshot.typeKey())) {
+            throw new IllegalArgumentException("Use spawnItemDrop for item drop entities");
+        }
         ambientEntities.put(snapshot.entityId(), snapshot);
         ambientAnchors.put(snapshot.entityId(), snapshot);
+    }
+
+    private List<EntitySnapshot> tickItemDrops(long tick) {
+        if (itemDrops.isEmpty()) {
+            return List.of();
+        }
+        List<EntitySnapshot> updated = new ArrayList<>(itemDrops.size());
+        for (Map.Entry<Long, DroppedItemEntity> entry : itemDrops.entrySet()) {
+            DroppedItemEntity moved = entry.getValue().tick(tick);
+            itemDrops.put(entry.getKey(), moved);
+            updated.add(moved.snapshot());
+        }
+        return updated;
+    }
+
+    private static double launchVelocity(String itemKey, int axis) {
+        long hash = itemKey.hashCode() * 31L + axis * 17L;
+        double normalized = Math.floorMod(hash, 200L) / 100.0 - 1.0;
+        return normalized * 0.38;
     }
 
     private static EntitySnapshot moveAmbient(EntitySnapshot anchor, EntitySnapshot current, long tick) {
@@ -177,7 +423,10 @@ public final class ServerEntityTracker {
                 yaw,
                 current.pitch(),
                 current.health(),
-                stateFor(anchor.typeKey(), tick, anchor.entityId())
+                stateFor(anchor.typeKey(), tick, anchor.entityId()),
+                0.0,
+                0.0,
+                0.0
         );
     }
 
@@ -218,7 +467,10 @@ public final class ServerEntityTracker {
                 yaw,
                 current.pitch(),
                 current.health(),
-                EntitySnapshot.STATE_FOLLOW
+                EntitySnapshot.STATE_FOLLOW,
+                0.0,
+                0.0,
+                0.0
         );
     }
 
@@ -251,7 +503,10 @@ public final class ServerEntityTracker {
                 yaw,
                 current.pitch(),
                 current.health(),
-                EntitySnapshot.STATE_FLEE
+                EntitySnapshot.STATE_FLEE,
+                0.0,
+                0.0,
+                0.0
         );
     }
 

@@ -44,6 +44,28 @@ class ClientWorldEntityTest {
         assertEquals(0.0f, interpolated.yaw(), 0.001f);
         assertEquals(8, interpolated.health());
         assertEquals(EntitySnapshot.STATE_FOLLOW, interpolated.stateKey());
+        assertEquals(100.0, interpolated.velocityX(), 0.001);
+        assertEquals(20.0, interpolated.velocityY(), 0.001);
+        assertEquals(-40.0, interpolated.velocityZ(), 0.001);
+    }
+
+    @Test
+    void interpolatesExplicitEntityVelocityForAnimationSignals() {
+        ClientWorld world = new ClientWorld(1L);
+
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(1L, "voxel:bunny", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10)
+                        .withVelocity(0.2, 0.0, 0.0)
+        ), 0.0);
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(1L, "voxel:bunny", null, 0.2, 80.0, 0.0, 0.0f, 0.0f, 10)
+                        .withVelocity(1.0, 0.0, 0.4)
+        ), 0.10);
+
+        EntitySnapshot interpolated = world.visibleEntities(0.15).getFirst();
+
+        assertEquals(0.6, interpolated.velocityX(), 0.001);
+        assertEquals(0.2, interpolated.velocityZ(), 0.001);
     }
 
     @Test

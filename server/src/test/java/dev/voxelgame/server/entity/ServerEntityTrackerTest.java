@@ -1,6 +1,8 @@
 package dev.voxelgame.server.entity;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.item.ItemStack;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -120,6 +122,91 @@ class ServerEntityTrackerTest {
         assertEquals(updates.size(), tracker.snapshots().stream().filter(snapshot -> snapshot.ownerPlayerId() == null).count());
         assertNotEquals(EntitySnapshot.STATE_IDLE, moved.stateKey());
         assertTrue(moved.x() != ambient.x() || moved.z() != ambient.z());
+    }
+
+    @Test
+    void spawnValidatorFiltersInvalidAmbientEntities() {
+        ServerEntityTracker tracker = new ServerEntityTracker(123L, snapshot -> false);
+
+        assertEquals(0, tracker.snapshots().stream().filter(snapshot -> snapshot.ownerPlayerId() == null).count());
+    }
+
+    @Test
+    void movementValidatorKeepsBlockedAmbientEntityInPlace() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot ambient = new EntitySnapshot(500L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        tracker.addAmbient(ambient);
+
+        List<EntitySnapshot> updates = tracker.tickAmbient(80L, (current, candidate) -> false);
+        EntitySnapshot moved = tracker.snapshot(ambient.entityId()).orElseThrow();
+
+        assertEquals(1, updates.size());
+        assertEquals(ambient.x(), moved.x(), 0.001);
+        assertEquals(ambient.z(), moved.z(), 0.001);
+        assertEquals(0.0, moved.velocityX(), 0.001);
+        assertEquals(0.0, moved.velocityZ(), 0.001);
+        assertNotEquals(EntitySnapshot.STATE_IDLE, moved.stateKey());
+    }
+
+    @Test
+    void ambientEntitiesAvoidPlayerBoundsLocally() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        tracker.registerPlayer(playerId);
+        tracker.updatePlayer(playerId, 0.9, 81.62, 0.0, 0.0f, 0.0f);
+        EntitySnapshot crawler = new EntitySnapshot(0L, "voxel:dune_crawler", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(crawler);
+
+        tracker.tickAmbient(0L);
+        EntitySnapshot moved = tracker.snapshot(crawler.entityId()).orElseThrow();
+
+        assertEquals(crawler.x(), moved.x(), 0.001);
+        assertEquals(crawler.z(), moved.z(), 0.001);
+        assertEquals(EntitySnapshot.STATE_WANDER, moved.stateKey());
+    }
+
+    @Test
+    void ambientEntitiesParkOutsideActivePlayerRadius() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        tracker.registerPlayer(playerId);
+        tracker.updatePlayer(playerId, 500.0, 80.0, 500.0, 0.0f, 0.0f);
+        EntitySnapshot ambient = new EntitySnapshot(700L, "voxel:cozy_sheep", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(ambient);
+
+        List<EntitySnapshot> updates = tracker.tickAmbient(80L);
+        EntitySnapshot parked = tracker.snapshot(ambient.entityId()).orElseThrow();
+
+        assertFalse(updates.stream().anyMatch(snapshot -> snapshot.entityId() == ambient.entityId()));
+        assertEquals(ambient.x(), parked.x(), 0.001);
+        assertEquals(ambient.z(), parked.z(), 0.001);
+    }
+
+    @Test
+    void itemDropsUseEntitySnapshotsAndPickupDelay() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        DroppedItemEntity drop = tracker.spawnItemDrop("voxel:moss_clump", new ItemStack((short) 68, 1), 4.5, 80.0, 4.5, 0L);
+
+        EntitySnapshot spawned = tracker.snapshot(drop.entityId()).orElseThrow();
+        assertTrue(ItemDropType.isTypeKey(spawned.typeKey()));
+        assertTrue(tracker.itemDropsNear(4.5, 80.0, 4.5, 2.0, 7L).isEmpty());
+        assertEquals(1, tracker.itemDropsNear(4.5, 80.0, 4.5, 2.0, 8L).size());
+
+        tracker.tickAmbient(1L);
+        EntitySnapshot moved = tracker.snapshot(drop.entityId()).orElseThrow();
+
+        assertTrue(moved.y() < spawned.y());
+        assertTrue(moved.velocityY() < drop.velocityY());
+    }
+
+    @Test
+    void itemDropClaimRemovesDropOnlyOnce() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        DroppedItemEntity drop = tracker.spawnItemDrop("voxel:moss_clump", new ItemStack((short) 68, 1), 4.5, 80.0, 4.5, 0L);
+
+        assertEquals(drop.entityId(), tracker.claimItemDrop(drop.entityId()).orElseThrow().entityId());
+        assertTrue(tracker.claimItemDrop(drop.entityId()).isEmpty());
+        assertEquals(0, tracker.itemDropCount());
     }
 
     private static double distanceSquared(double x, double z, double targetX, double targetZ) {

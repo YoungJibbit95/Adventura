@@ -35,6 +35,10 @@ public final class InMemoryWorld implements WorldView {
         return Optional.ofNullable(chunks.get(pos));
     }
 
+    public Optional<Chunk> removeChunk(ChunkPos pos) {
+        return Optional.ofNullable(chunks.remove(pos));
+    }
+
     public Collection<Chunk> loadedChunks() {
         return chunks.values();
     }

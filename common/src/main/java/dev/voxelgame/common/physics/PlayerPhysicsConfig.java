@@ -9,6 +9,7 @@ public record PlayerPhysicsConfig(
         float flySpeed,
         float flySprintSpeed,
         float waterSpeedMultiplier,
+        float waterHorizontalDrag,
         float waterGravityMultiplier,
         float waterVerticalDrag,
         float swimRiseSpeed,
@@ -27,6 +28,7 @@ public record PlayerPhysicsConfig(
                 18.0f,
                 44.0f,
                 0.58f,
+                0.82f,
                 0.18f,
                 0.88f,
                 3.6f,
@@ -45,7 +47,8 @@ public record PlayerPhysicsConfig(
                 || flySpeed <= 0.0f || flySprintSpeed <= 0.0f) {
             throw new IllegalArgumentException("Movement speeds must be positive");
         }
-        if (waterSpeedMultiplier <= 0.0f || waterGravityMultiplier <= 0.0f || waterVerticalDrag <= 0.0f) {
+        if (waterSpeedMultiplier <= 0.0f || waterHorizontalDrag <= 0.0f
+                || waterGravityMultiplier <= 0.0f || waterVerticalDrag <= 0.0f) {
             throw new IllegalArgumentException("Water physics factors must be positive");
         }
         if (swimRiseSpeed <= 0.0f || maxFallSpeed <= 0.0f || maxWaterFallSpeed <= 0.0f) {

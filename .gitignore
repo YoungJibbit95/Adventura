@@ -6,3 +6,6 @@ out/
 *.tmp
 run/
 saves/
+node_modules/
+launcher-electron/dist/
+launcher-electron/release/

@@ -204,6 +204,127 @@ class HotbarTest {
     }
 
     @Test
+    void toolSlotViewExposesComparisonAndRepairData() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(itemId("voxel:stone_pickaxe"), 1, 20));
+        slots.set(1, new ItemStack(itemId("voxel:copper_pickaxe"), 1, 12));
+        slots.set(2, new ItemStack(itemId("voxel:iron_pickaxe"), 1, 18));
+        hotbar.applySnapshot(slots);
+
+        Hotbar.SlotView stone = hotbar.slotView(0);
+        Hotbar.SlotView copper = hotbar.slotView(1);
+        Hotbar.SlotView iron = hotbar.slotView(2);
+
+        assertEquals("Pickaxe", stone.toolTypeLabel());
+        assertEquals(1, stone.toolLevel());
+        assertEquals(1.0f, stone.toolSpeed(), 0.001f);
+        assertEquals("stone or pebble", stone.repairMaterialLabel());
+        assertEquals(112, stone.durabilityLeft());
+
+        assertEquals("Pickaxe", copper.toolTypeLabel());
+        assertEquals(2, copper.toolLevel());
+        assertTrue(copper.toolSpeed() > stone.toolSpeed());
+        assertEquals("copper ingot", copper.repairMaterialLabel());
+        assertTrue(copper.durabilityLeft() > stone.durabilityLeft());
+
+        assertEquals(3, iron.toolLevel());
+        assertTrue(iron.toolSpeed() > copper.toolSpeed());
+        assertEquals("iron ingot", iron.repairMaterialLabel());
+    }
+
+    @Test
+    void selectedTooltipIncludesToolSpeedAndRepairMaterial() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(itemId("voxel:copper_pickaxe"), 1, 12));
+        hotbar.applySnapshot(slots);
+
+        String tooltip = hotbar.selectedTooltip();
+
+        assertTrue(tooltip.contains("Pickaxe Level 2"));
+        assertTrue(tooltip.contains("Speed x1.25"));
+        assertTrue(tooltip.contains("Durability 228/240"));
+        assertTrue(tooltip.contains("Repair: copper ingot"));
+    }
+
+    @Test
+    void waterContainerRecipeNamesLakesideReeds() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe waterContainer = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:water_container"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(waterContainer);
+
+        assertTrue(summary.contains("Clay pot x1"));
+        assertTrue(summary.contains("Reed bundle x1"));
+    }
+
+    @Test
+    void copperToolRecipesNamePineForestMaterials() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe copperPickaxe = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:copper_pickaxe"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(copperPickaxe);
+
+        assertTrue(summary.contains("Copper ingot x3"));
+        assertTrue(summary.contains("Tool handle x2"));
+        assertTrue(summary.contains("Resin x1"));
+    }
+
+    @Test
+    void ancientLanternRecipeConnectsRuinLootToComfortLight() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe ancientLantern = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:ancient_lantern"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(ancientLantern);
+
+        assertTrue(summary.contains("Ancient fragment x2"));
+        assertTrue(summary.contains("Glow crystal x1"));
+        assertTrue(summary.contains("Copper ingot x1"));
+    }
+
+    @Test
+    void slotTooltipsExplainReedsAndUseActualComfortValues() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(itemId("voxel:reed_bundle"), 2));
+        slots.set(1, new ItemStack(itemId("voxel:bark_strip"), 2));
+        slots.set(2, new ItemStack(itemId("voxel:tool_handle"), 1));
+        slots.set(3, new ItemStack(itemId("voxel:resin_torch"), 4));
+        slots.set(4, new ItemStack(itemId("voxel:sleeping_mat"), 1));
+        slots.set(5, new ItemStack(itemId("voxel:storage_crate"), 1));
+        slots.set(6, new ItemStack(itemId("voxel:berry_bush"), 1));
+        slots.set(7, new ItemStack(itemId("voxel:ancient_lantern"), 1));
+        hotbar.applySnapshot(slots);
+
+        assertEquals("Seals water containers and burns briefly", hotbar.slotView(0).description());
+        assertEquals("Fuel, torch wrap, and tool handle material", hotbar.slotView(1).description());
+        assertEquals("Reinforced handle for copper tools", hotbar.slotView(2).description());
+        hotbar.scroll(1);
+        hotbar.scroll(1);
+        hotbar.scroll(1);
+        assertEquals(Blocks.TORCH, hotbar.selectedPlaceBlockId().orElseThrow());
+        assertEquals(4, hotbar.slotView(4).comfortValue());
+        assertEquals(1, hotbar.slotView(5).comfortValue());
+        assertEquals(0, hotbar.slotView(6).comfortValue());
+        assertEquals("Restored ruin light for cozy bases", hotbar.slotView(7).description());
+        assertEquals(4, hotbar.slotView(7).comfortValue());
+    }
+
+    private static short itemId(String key) {
+        return Items.createDefaultRegistry().requireByKey(key).id();
+    }
+
+    @Test
     void invalidSlotAccessorsAreUiSafe() {
         Hotbar hotbar = new Hotbar();
         hotbar.resetForNewGame();

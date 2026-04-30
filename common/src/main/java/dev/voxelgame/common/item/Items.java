@@ -45,6 +45,10 @@ public final class Items {
         block(registry, (short) 70, "voxel:mushroom_cluster");
         block(registry, (short) 71, "voxel:clay_deposit");
         block(registry, (short) 72, "voxel:glow_crystal_node");
+        block(registry, (short) 77, "voxel:cooking_pot");
+        block(registry, (short) 78, "voxel:reeds");
+        block(registry, (short) 84, "voxel:workbench");
+        block(registry, (short) 85, "voxel:forge");
         registry.register((short) 20, "voxel:coal", new ItemType((short) 20, "voxel:coal", 64, ToolType.NONE, 0, null));
         registry.register((short) 21, "voxel:raw_iron", new ItemType((short) 21, "voxel:raw_iron", 64, ToolType.NONE, 0, null));
         registry.register((short) 22, "voxel:raw_copper", new ItemType((short) 22, "voxel:raw_copper", 64, ToolType.NONE, 0, null));
@@ -79,10 +83,39 @@ public final class Items {
         registry.register((short) 64, "voxel:glow_crystal", new ItemType((short) 64, "voxel:glow_crystal", 32, ToolType.NONE, 0, null));
         registry.register((short) 65, "voxel:copper_axe", new ItemType((short) 65, "voxel:copper_axe", 1, ToolType.AXE, 260, null));
         registry.register((short) 66, "voxel:copper_pickaxe", new ItemType((short) 66, "voxel:copper_pickaxe", 1, ToolType.PICKAXE, 240, null));
+        registry.register((short) 68, "voxel:moss_clump", new ItemType((short) 68, "voxel:moss_clump", 64, ToolType.NONE, 0, null));
+        registry.register((short) 69, "voxel:slime_drop", new ItemType((short) 69, "voxel:slime_drop", 32, ToolType.NONE, 0, null));
+        registry.register((short) 73, "voxel:water_container", new ItemType((short) 73, "voxel:water_container", 8, ToolType.NONE, 0, null));
+        registry.register((short) 74, "voxel:berry_jam", new ItemType((short) 74, "voxel:berry_jam", 8, ToolType.NONE, 0, null, 8, 2));
+        registry.register((short) 75, "voxel:calming_tea", new ItemType((short) 75, "voxel:calming_tea", 8, ToolType.NONE, 0, null, 3, 4));
+        registry.register((short) 76, "voxel:hearty_stew", new ItemType((short) 76, "voxel:hearty_stew", 8, ToolType.NONE, 0, null, 10, 3));
+        registry.register((short) 79, "voxel:reed_bundle", new ItemType((short) 79, "voxel:reed_bundle", 64, ToolType.NONE, 0, null));
+        registry.register((short) 80, "voxel:tool_handle", new ItemType((short) 80, "voxel:tool_handle", 32, ToolType.NONE, 0, null));
+        registry.register((short) 81, "voxel:resin_torch", new ItemType((short) 81, "voxel:resin_torch", 64, ToolType.NONE, 0, "voxel:torch"));
+        registry.register((short) 82, "voxel:ancient_fragment", new ItemType((short) 82, "voxel:ancient_fragment", 32, ToolType.NONE, 0, null));
+        registry.register((short) 83, "voxel:ancient_lantern", new ItemType((short) 83, "voxel:ancient_lantern", 16, ToolType.NONE, 0, "voxel:ancient_lantern"));
+        registry.register((short) 86, "voxel:iron_ingot", new ItemType((short) 86, "voxel:iron_ingot", 64, ToolType.NONE, 0, null));
+        registry.register((short) 87, "voxel:cloth", new ItemType((short) 87, "voxel:cloth", 64, ToolType.NONE, 0, null));
+        registry.register((short) 88, "voxel:leather_strip", new ItemType((short) 88, "voxel:leather_strip", 64, ToolType.NONE, 0, null));
+        registry.register((short) 89, "voxel:honey", new ItemType((short) 89, "voxel:honey", 16, ToolType.NONE, 0, null, 3, 2));
+        registry.register((short) 90, "voxel:ruin_key", new ItemType((short) 90, "voxel:ruin_key", 16, ToolType.NONE, 0, null));
+        registry.register((short) 91, "voxel:ruin_seal", new ItemType((short) 91, "voxel:ruin_seal", 16, ToolType.NONE, 0, null));
+        registry.register((short) 92, "voxel:iron_axe", new ItemType((short) 92, "voxel:iron_axe", 1, ToolType.AXE, 420, null));
+        registry.register((short) 93, "voxel:iron_pickaxe", new ItemType((short) 93, "voxel:iron_pickaxe", 1, ToolType.PICKAXE, 410, null));
+        registry.register((short) 94, "voxel:lost_charm", new ItemType((short) 94, "voxel:lost_charm", 16, ToolType.NONE, 0, null));
+        aliases(registry);
         return registry;
     }
 
     private static void block(Registry<ItemType> registry, short id, String key) {
         registry.register(id, key, new ItemType(id, key, 64, ToolType.NONE, 0, key));
+    }
+
+    private static void aliases(Registry<ItemType> registry) {
+        registry.registerAlias("voxel:wild_berries", "voxel:berries");
+        registry.registerAlias("voxel:planks", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:wooden_plank", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:iron_ore", "voxel:raw_iron");
+        registry.registerAlias("voxel:copper_ore", "voxel:raw_copper");
     }
 }

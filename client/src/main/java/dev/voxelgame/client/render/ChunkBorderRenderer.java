@@ -79,6 +79,18 @@ public final class ChunkBorderRenderer implements AutoCloseable {
         return snapshots.size();
     }
 
+    public int renderMeshBounds(Matrix4f projection, Matrix4f view, Collection<ChunkMesh.Bounds> bounds) {
+        if (bounds.isEmpty()) {
+            return 0;
+        }
+        float[] vertices = meshBoundsVertices(bounds);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, new Vector3f(0.62f, 0.84f, 1.0f), 0.42f, true);
+        return bounds.size();
+    }
+
     private void renderLines(Matrix4f projection, Matrix4f view, float[] vertices, Vector3f color, float alpha, boolean depthTest) {
         boolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
         boolean blendWasEnabled = glIsEnabled(GL_BLEND);
@@ -166,6 +178,23 @@ public final class ChunkBorderRenderer implements AutoCloseable {
             offset = box(vertices, offset, minX, minY, minZ, maxX, maxY, maxZ);
         }
         return vertices;
+    }
+
+    static float[] meshBoundsVertices(Collection<ChunkMesh.Bounds> bounds) {
+        float[] vertices = new float[bounds.size() * 24 * FLOATS_PER_VERTEX];
+        int offset = 0;
+        for (ChunkMesh.Bounds box : bounds) {
+            if (box == null || box.isEmpty()) {
+                continue;
+            }
+            offset = box(vertices, offset, box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ());
+        }
+        if (offset == vertices.length) {
+            return vertices;
+        }
+        float[] trimmed = new float[offset];
+        System.arraycopy(vertices, 0, trimmed, 0, offset);
+        return trimmed;
     }
 
     private static int box(float[] vertices, int offset, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {

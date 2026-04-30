@@ -46,6 +46,12 @@ public final class Blocks {
     public static final short CAMPFIRE_ACTIVE = 40;
     public static final short CAMPFIRE_BURNED_OUT = 41;
     public static final short SLEEPING_MAT = 42;
+    public static final short COOKING_POT = 43;
+    public static final short REEDS = 44;
+    public static final short TWIG_PILE = 45;
+    public static final short ANCIENT_LANTERN = 46;
+    public static final short WORKBENCH = 47;
+    public static final short FORGE = 48;
 
     private Blocks() {
     }
@@ -95,6 +101,12 @@ public final class Blocks {
         register(registry, CAMPFIRE_ACTIVE, "voxel:campfire_active", 0.5f, ToolType.AXE, false, false, false, 14, BlockRenderLayer.CUTOUT, "voxel:campfire");
         register(registry, CAMPFIRE_BURNED_OUT, "voxel:campfire_burned_out", 0.4f, ToolType.AXE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:campfire");
         register(registry, SLEEPING_MAT, "voxel:sleeping_mat", 0.1f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:sleeping_mat");
+        register(registry, COOKING_POT, "voxel:cooking_pot", 0.6f, ToolType.PICKAXE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:cooking_pot");
+        register(registry, REEDS, "voxel:reeds", 0.0f, ToolType.KNIFE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:reed_bundle");
+        register(registry, TWIG_PILE, "voxel:twig_pile", 0.0f, ToolType.NONE, false, false, false, 0, BlockRenderLayer.CUTOUT, "voxel:twig");
+        register(registry, ANCIENT_LANTERN, "voxel:ancient_lantern", 0.2f, ToolType.NONE, false, false, false, 15, BlockRenderLayer.CUTOUT, "voxel:ancient_lantern");
+        register(registry, WORKBENCH, "voxel:workbench", 1.1f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:workbench");
+        register(registry, FORGE, "voxel:forge", 2.4f, ToolType.PICKAXE, 1, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:forge");
         return registry;
     }
 

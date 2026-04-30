@@ -58,12 +58,97 @@ class PlayerPhysicsTest {
     }
 
     @Test
+    void movementRulesUseSurvivalSpeedForServerDeltas() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        assertTrue(PlayerMovementRules.isPlausibleSurvivalDelta(8.0, 64.0, 8.0, 9.5, 64.0, 8.0, 0.05, config, dry));
+        assertFalse(PlayerMovementRules.isPlausibleSurvivalDelta(8.0, 64.0, 8.0, 11.2, 64.0, 8.0, 0.05, config, dry));
+    }
+
+    @Test
+    void movementRulesApplyModeSpecificSpeedEnvelopes() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        assertFalse(PlayerMovementRules.isPlausibleModeDelta(
+                8.0, 64.0, 8.0,
+                11.2, 64.0, 8.0,
+                0.05,
+                config,
+                dry,
+                PlayerMovementRules.MovementMode.SURVIVAL
+        ));
+        assertTrue(PlayerMovementRules.isPlausibleModeDelta(
+                8.0, 64.0, 8.0,
+                11.2, 64.0, 8.0,
+                0.05,
+                config,
+                dry,
+                PlayerMovementRules.MovementMode.FLYING
+        ));
+    }
+
+    @Test
+    void movementRulesRejectSuddenHorizontalAccelerationBursts() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+
+        assertTrue(PlayerMovementRules.isPlausibleHorizontalAcceleration(
+                0.4, 0.0, 0.1,
+                0.8, 0.0, 0.1,
+                config,
+                PlayerMovementRules.MovementMode.SURVIVAL
+        ));
+        assertFalse(PlayerMovementRules.isPlausibleHorizontalAcceleration(
+                0.1, 0.0, 0.1,
+                2.0, 0.0, 0.1,
+                config,
+                PlayerMovementRules.MovementMode.SURVIVAL
+        ));
+    }
+
+    @Test
     void movementRulesKeepPlayerInsideVerticalWorldBounds() {
         PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
 
         assertTrue(PlayerMovementRules.withinVerticalBounds(64.0, config, -64, 320));
         assertFalse(PlayerMovementRules.withinVerticalBounds(-80.0, config, -64, 320));
         assertFalse(PlayerMovementRules.withinVerticalBounds(320.0, config, -64, 320));
+    }
+
+    @Test
+    void movementRulesRejectUnsupportedGroundedClaim() {
+        assertTrue(PlayerMovementRules.groundedClaimPlausible(false, false));
+        assertTrue(PlayerMovementRules.groundedClaimPlausible(true, true));
+        assertFalse(PlayerMovementRules.groundedClaimPlausible(true, false));
+    }
+
+    @Test
+    void movementRulesRejectOverstatedWaterStateClaim() {
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+        PlayerWaterState feetOnly = new PlayerWaterState(true, false, false);
+
+        assertTrue(PlayerMovementRules.waterStateClaimPlausible(dry, dry));
+        assertTrue(PlayerMovementRules.waterStateClaimPlausible(feetOnly, feetOnly));
+        assertFalse(PlayerMovementRules.waterStateClaimPlausible(feetOnly, dry));
+        assertTrue(PlayerMovementRules.waterStateClaimPlausible(dry, feetOnly));
+    }
+
+    @Test
+    void movementRulesTreatWaterStateAsMovementAssist() {
+        assertFalse(PlayerMovementRules.waterMovementAssist(new PlayerWaterState(false, false, false)));
+        assertTrue(PlayerMovementRules.waterMovementAssist(new PlayerWaterState(true, false, false)));
+        assertTrue(PlayerMovementRules.waterMovementAssist(new PlayerWaterState(false, true, false)));
+        assertTrue(PlayerMovementRules.waterMovementAssist(new PlayerWaterState(false, false, true)));
+    }
+
+    @Test
+    void movementRulesRequireGroundOrAssistToStartMovingUpward() {
+        assertTrue(PlayerMovementRules.upwardMovementPlausible(64.0, 64.02, false, 0.0, false));
+        assertTrue(PlayerMovementRules.upwardMovementPlausible(64.0, 64.4, true, 0.0, false));
+        assertTrue(PlayerMovementRules.upwardMovementPlausible(64.0, 64.4, false, 0.2, false));
+        assertTrue(PlayerMovementRules.upwardMovementPlausible(64.0, 64.4, false, 0.0, true));
+        assertFalse(PlayerMovementRules.upwardMovementPlausible(64.0, 64.4, false, 0.0, false));
     }
 
     @Test
@@ -94,6 +179,44 @@ class PlayerPhysicsTest {
 
         assertEquals(0.0, next.x(), 0.001);
         assertTrue(next.z() > 0.1);
+    }
+
+    @Test
+    void survivalStepLimitsAirControlInsteadOfSnappingToFullSpeed() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState airborne = new PlayerState(0.0, 65.0, 0.0, 0.0f, -1.0f, 0.0f, false, false, 0.0f);
+        PlayerInput strafe = new PlayerInput(1.0f, 0.0f, false, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(airborne, strafe, dry, 0.1f, config, (x, y, z) -> false);
+
+        assertTrue(next.velocityX() > 0.0f);
+        assertTrue(next.velocityX() < config.walkSpeed());
+    }
+
+    @Test
+    void survivalStepAppliesGroundFrictionWhenInputStops() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState sliding = new PlayerState(0.0, 65.0, 0.0, config.walkSpeed(), 0.0f, 0.0f, true, false, 0.0f);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(sliding, PlayerInput.idle(), dry, 0.016f, config, (x, y, z) -> false);
+
+        assertTrue(next.velocityX() > 0.0f);
+        assertTrue(next.velocityX() < config.walkSpeed());
+    }
+
+    @Test
+    void survivalStepStopsAtBlockedCorner() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
+        PlayerInput diagonal = new PlayerInput(1.0f, 1.0f, false, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(state, diagonal, dry, 0.1f, config, (x, y, z) -> x > 0.05 || z > 0.05);
+
+        assertEquals(0.0, next.x(), 0.001);
+        assertEquals(0.0, next.z(), 0.001);
     }
 
     @Test
@@ -134,6 +257,18 @@ class PlayerPhysicsTest {
         assertFalse(next.underwater());
         assertTrue(next.velocityY() > 0.0f);
         assertEquals(0.0f, next.velocityX(), 0.001f);
+    }
+
+    @Test
+    void survivalStepAppliesWaterHorizontalDrag() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState drifting = new PlayerState(8.0, 65.0, 8.0, config.walkSpeed(), 0.0f, 0.0f, false, false, 0.0f);
+        PlayerWaterState bodyInWater = new PlayerWaterState(false, true, false);
+
+        PlayerState next = PlayerPhysics.stepSurvival(drifting, PlayerInput.idle(), bodyInWater, 0.1f, config, (x, y, z) -> false);
+
+        assertTrue(next.velocityX() > 0.0f);
+        assertTrue(next.velocityX() < config.walkSpeed());
     }
 
     @Test

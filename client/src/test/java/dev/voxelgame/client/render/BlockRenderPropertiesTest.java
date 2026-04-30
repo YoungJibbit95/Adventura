@@ -1,8 +1,13 @@
 package dev.voxelgame.client.render;
 
-import dev.voxelgame.client.render.assets.BlockTextureAtlas;
+import dev.voxelgame.common.block.BlockRenderLayer;
+import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.ToolType;
+import dev.voxelgame.common.registry.Registry;
 import org.junit.jupiter.api.Test;
+
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,17 +16,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlockRenderPropertiesTest {
     @Test
-    void materialTablesCoverShaderBlockIdRange() {
+    void materialTablesCoverMaterialIndexRange() {
         assertEquals(BlockRenderProperties.MAX_BLOCK_ID * 4, BlockRenderProperties.colorAlphaTable().length);
         assertEquals(BlockRenderProperties.MAX_BLOCK_ID * 4, BlockRenderProperties.effectsTable().length);
-        assertEquals(BlockRenderProperties.SHADER_BLOCK_ID_LIMIT * 4, BlockRenderProperties.shaderColorAlphaTable().length);
-        assertEquals(BlockRenderProperties.SHADER_BLOCK_ID_LIMIT * 4, BlockRenderProperties.shaderEffectsTable().length);
-        assertEquals(BlockRenderProperties.SHADER_BLOCK_ID_LIMIT, BlockTextureAtlas.SHADER_BLOCK_ID_LIMIT);
+        assertEquals(BlockRenderProperties.MATERIAL_INDEX_LIMIT * 4, BlockRenderProperties.shaderColorAlphaTable().length);
+        assertEquals(BlockRenderProperties.MATERIAL_INDEX_LIMIT * 4, BlockRenderProperties.shaderEffectsTable().length);
+        RenderMaterial[] materials = RenderMaterial.fromRegistry(Blocks.createDefaultRegistry());
+        assertTrue(materials.length > Blocks.FORGE);
+        assertTrue(materials.length <= BlockRenderProperties.MATERIAL_INDEX_LIMIT);
     }
 
     @Test
     void registeredBlocksFitMaterialTable() {
         assertDoesNotThrow(() -> BlockRenderProperties.validateRegisteredBlocks(Blocks.createDefaultRegistry()));
+    }
+
+    @Test
+    void materialTableReportsRegisteredBlocksWithoutMaterialData() {
+        Registry<BlockType> blocks = new Registry<>("blocks");
+        BlockType unknown = new BlockType((short) 300, "voxel:unknown_test_block", 1.0f, ToolType.NONE, true, true, true, 0, BlockRenderLayer.SOLID, null);
+        blocks.register(unknown.id(), unknown.key(), unknown);
+
+        RenderMaterial.Table table = RenderMaterial.tableFor(blocks, null);
+
+        assertTrue(table.materialCount() > 256);
+        assertEquals(1, table.missingMaterialCount());
+        assertTrue(table.materials()[unknown.id()].missingMaterialData());
     }
 
     @Test
@@ -54,6 +74,7 @@ class BlockRenderPropertiesTest {
 
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.WILD_GRASS));
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.SUN_BLOOM));
+        assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.REEDS));
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.CAMPFIRE_ACTIVE));
         assertEquals(0.0f, effects[Blocks.WILD_GRASS * 4 + 3], 0.0001f);
     }
@@ -61,9 +82,63 @@ class BlockRenderPropertiesTest {
     @Test
     void emissiveBlocksExposeGlowStrength() {
         BlockRenderProperties lantern = BlockRenderProperties.forBlock(Blocks.LANTERN);
+        BlockRenderProperties ancientLantern = BlockRenderProperties.forBlock(Blocks.ANCIENT_LANTERN);
         float[] effects = BlockRenderProperties.effectsTable();
 
         assertTrue((lantern.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
+        assertTrue((ancientLantern.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
         assertEquals(0.78f, effects[Blocks.LANTERN * 4], 0.0001f);
+        assertEquals(0.95f, effects[Blocks.ANCIENT_LANTERN * 4], 0.0001f);
+    }
+
+    @Test
+    void materialLutPacksUvAndRenderMetadataRows() {
+        RenderMaterial[] materials = new RenderMaterial[Blocks.WATER + 1];
+        Arrays.fill(materials, RenderMaterial.fallback());
+        materials[Blocks.WATER] = new RenderMaterial(
+                Blocks.WATER,
+                "voxel:water",
+                BlockRenderLayer.TRANSLUCENT,
+                0.20f,
+                0.42f,
+                0.82f,
+                0.58f,
+                0.0f,
+                true,
+                BlockRenderProperties.DEFAULT_CUTOUT_THRESHOLD,
+                BlockRenderProperties.BiomeTintMode.WATER,
+                BlockRenderProperties.FogAffectMode.NORMAL,
+                true,
+                BlockRenderProperties.DEFAULT_ROUGHNESS,
+                false,
+                0.10f,
+                0.20f,
+                0.30f,
+                0.40f,
+                -1.0f,
+                -1.0f,
+                -1.0f,
+                -1.0f,
+                -1.0f,
+                -1.0f,
+                -1.0f,
+                -1.0f
+        );
+
+        float[] pixels = TerrainMaterialLut.pixels(materials);
+        int effects = offset(materials.length, Blocks.WATER, TerrainMaterialLut.ROW_EFFECTS);
+        int side = offset(materials.length, Blocks.WATER, TerrainMaterialLut.ROW_SIDE_UV);
+
+        assertEquals(0.0f, pixels[effects], 0.0001f);
+        assertEquals(1.0f, pixels[effects + 1], 0.0001f);
+        assertTrue(((int) pixels[effects + 2] & BlockRenderProperties.FLAG_ANIMATED_FLUID) != 0);
+        assertTrue(((int) pixels[effects + 2] & BlockRenderProperties.FLAG_LAYER_TRANSLUCENT) != 0);
+        assertEquals(BlockRenderProperties.DEFAULT_CUTOUT_THRESHOLD, pixels[effects + 3], 0.0001f);
+        assertEquals(0.10f, pixels[side], 0.0001f);
+        assertEquals(0.40f, pixels[side + 3], 0.0001f);
+    }
+
+    private static int offset(int materialCount, short materialIndex, int row) {
+        return (row * materialCount + materialIndex) * 4;
     }
 }

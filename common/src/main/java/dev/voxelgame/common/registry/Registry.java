@@ -10,6 +10,7 @@ import java.util.Optional;
 public final class Registry<T> {
     private final String name;
     private final Map<String, T> byKey = new LinkedHashMap<>();
+    private final Map<String, String> aliases = new LinkedHashMap<>();
     private final Map<Short, T> byId = new LinkedHashMap<>();
 
     public Registry(String name) {
@@ -19,7 +20,7 @@ public final class Registry<T> {
     public T register(short id, String key, T value) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(value, "value");
-        if (byKey.containsKey(key)) {
+        if (byKey.containsKey(key) || aliases.containsKey(key)) {
             throw new IllegalArgumentException("Duplicate key in " + name + ": " + key);
         }
         if (byId.containsKey(id)) {
@@ -30,8 +31,32 @@ public final class Registry<T> {
         return value;
     }
 
+    public void registerAlias(String aliasKey, String targetKey) {
+        Objects.requireNonNull(aliasKey, "aliasKey");
+        Objects.requireNonNull(targetKey, "targetKey");
+        if (byKey.containsKey(aliasKey) || aliases.containsKey(aliasKey)) {
+            throw new IllegalArgumentException("Duplicate key in " + name + ": " + aliasKey);
+        }
+        if (!byKey.containsKey(targetKey)) {
+            throw new IllegalArgumentException("Missing " + name + " key for alias target: " + targetKey);
+        }
+        aliases.put(aliasKey, targetKey);
+    }
+
     public Optional<T> findByKey(String key) {
-        return Optional.ofNullable(byKey.get(key));
+        T value = byKey.get(key);
+        if (value != null) {
+            return Optional.of(value);
+        }
+        String targetKey = aliases.get(key);
+        return targetKey == null ? Optional.empty() : Optional.ofNullable(byKey.get(targetKey));
+    }
+
+    public Optional<String> canonicalKey(String key) {
+        if (byKey.containsKey(key)) {
+            return Optional.of(key);
+        }
+        return Optional.ofNullable(aliases.get(key));
     }
 
     public Optional<T> findById(short id) {

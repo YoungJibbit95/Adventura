@@ -12,11 +12,12 @@ public final class ComfortRules {
 
     public static int comfortValue(short blockId) {
         return switch (blockId) {
+            case Blocks.ANCIENT_LANTERN -> 4;
             case Blocks.CAMPFIRE_ACTIVE -> 5;
             case Blocks.SLEEPING_MAT -> 4;
             case Blocks.LANTERN, Blocks.WOVEN_RUG -> 3;
             case Blocks.WOODEN_CHAIR, Blocks.SMALL_TABLE, Blocks.CAMPFIRE -> 2;
-            case Blocks.FLOWER_POT, Blocks.STORAGE_CRATE, Blocks.GARDEN_FENCE -> 1;
+            case Blocks.FLOWER_POT, Blocks.STORAGE_CRATE, Blocks.GARDEN_FENCE, Blocks.WORKBENCH -> 1;
             default -> 0;
         };
     }

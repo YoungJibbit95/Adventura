@@ -10,6 +10,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LootTableTest {
     @Test
@@ -33,6 +34,36 @@ class LootTableTest {
                 .flatMap(template -> template.lootMarkers().stream())
                 .map(StructureMarker::key)
                 .forEach(tables::requireByKey);
+    }
+
+    @Test
+    void defaultLootEntriesReferenceRegisteredItems() {
+        var items = Items.createDefaultRegistry();
+
+        for (LootTable table : LootTables.createDefaultRegistry().values()) {
+            for (LootEntry entry : table.entries()) {
+                assertFalse(items.findByKey(entry.itemKey()).isEmpty(), table.key() + " drops missing item " + entry.itemKey());
+            }
+        }
+    }
+
+    @Test
+    void ruinCratesSeedAncientFragmentProgression() {
+        LootTable table = LootTables.createDefaultRegistry().requireByKey("voxel:ruin_crate");
+
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:ancient_fragment")));
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:ancient_lantern")));
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:ruin_key")));
+    }
+
+    @Test
+    void rareRuinCratesSeedLateGameKeysSealsAndIron() {
+        LootTable table = LootTables.createDefaultRegistry().requireByKey("voxel:ruin_rare_crate");
+
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:iron_ingot")));
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:ruin_key")));
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:ruin_seal")));
+        assertTrue(table.entries().stream().anyMatch(entry -> entry.itemKey().equals("voxel:lost_charm")));
     }
 
     @Test

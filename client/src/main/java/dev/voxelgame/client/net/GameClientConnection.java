@@ -16,6 +16,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
 
+import java.util.function.Consumer;
+
 public final class GameClientConnection implements AutoCloseable {
     private final String host;
     private final int port;
@@ -24,11 +26,26 @@ public final class GameClientConnection implements AutoCloseable {
     private final Hotbar hotbar;
     private final PlayerStats playerStats;
     private final ChatLog chatLog;
+    private final Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler;
     private final ClientNetworkStats stats = new ClientNetworkStats();
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private Channel channel;
 
     public GameClientConnection(String host, int port, String username, ClientWorld world, Hotbar hotbar, PlayerStats playerStats, ChatLog chatLog) {
+        this(host, port, username, world, hotbar, playerStats, chatLog, snapshot -> {
+        });
+    }
+
+    public GameClientConnection(
+            String host,
+            int port,
+            String username,
+            ClientWorld world,
+            Hotbar hotbar,
+            PlayerStats playerStats,
+            ChatLog chatLog,
+            Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler
+    ) {
         this.host = host;
         this.port = port;
         this.username = username;
@@ -36,6 +53,8 @@ public final class GameClientConnection implements AutoCloseable {
         this.hotbar = hotbar;
         this.playerStats = playerStats;
         this.chatLog = chatLog;
+        this.playerPositionHandler = playerPositionHandler == null ? snapshot -> {
+        } : playerPositionHandler;
     }
 
     public void connect() {
@@ -50,9 +69,9 @@ public final class GameClientConnection implements AutoCloseable {
                             ch.pipeline()
                                     .addLast(new LengthFieldBasedFrameDecoder(2 * 1024 * 1024, 0, 4, 0, 4))
                                     .addLast(new LengthFieldPrepender(4))
-                                    .addLast(new ClientPacketDecoder())
+                                    .addLast(new ClientPacketDecoder(stats))
                                     .addLast(new ClientPacketEncoder())
-                                    .addLast(new ClientConnectionHandler(username, world, hotbar, playerStats, chatLog, stats));
+                                    .addLast(new ClientConnectionHandler(username, world, hotbar, playerStats, chatLog, stats, playerPositionHandler));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();
@@ -70,6 +89,11 @@ public final class GameClientConnection implements AutoCloseable {
     }
 
     public ClientNetworkStats.Snapshot stats() {
+        return stats.snapshot();
+    }
+
+    public ClientNetworkStats.Snapshot stats(int chunkStreamQueueLength) {
+        stats.setChunkStreamQueueLength(chunkStreamQueueLength);
         return stats.snapshot();
     }
 

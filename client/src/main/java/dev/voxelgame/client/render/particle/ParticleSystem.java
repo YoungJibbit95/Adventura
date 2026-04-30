@@ -1,5 +1,6 @@
 package dev.voxelgame.client.render.particle;
 
+import dev.voxelgame.client.render.RenderResourceTracker;
 import dev.voxelgame.client.render.ShaderProgram;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.entity.EntityBounds;
@@ -42,6 +43,7 @@ public final class ParticleSystem implements AutoCloseable {
     private static final int MAX_PARTICLES = 512;
     private static final int VERTICES_PER_PARTICLE = 6;
     private static final int FLOATS_PER_VERTEX = 7;
+    private static final long PARTICLE_BUFFER_BYTES = (long) MAX_PARTICLES * VERTICES_PER_PARTICLE * FLOATS_PER_VERTEX * Float.BYTES;
 
     private final ShaderProgram shader;
     private final int vao;
@@ -55,6 +57,10 @@ public final class ParticleSystem implements AutoCloseable {
     private final Map<Long, Double> nextSporeTimes = new HashMap<>();
     private final SplittableRandom random = new SplittableRandom(42L);
     private double lastUpdateTime = Double.NaN;
+    private double lastStatsTime = Double.NaN;
+    private int spawnedSinceLastStats;
+    private long evictedSinceLastStats;
+    private boolean closed;
 
     public ParticleSystem() {
         this.shader = ShaderProgram.fromResources(
@@ -66,12 +72,13 @@ public final class ParticleSystem implements AutoCloseable {
 
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, (long) MAX_PARTICLES * VERTICES_PER_PARTICLE * FLOATS_PER_VERTEX * Float.BYTES, GL_DYNAMIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, PARTICLE_BUFFER_BYTES, GL_DYNAMIC_DRAW);
         glVertexAttribPointer(0, 3, GL_FLOAT, false, FLOATS_PER_VERTEX * Float.BYTES, 0L);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(1, 4, GL_FLOAT, false, FLOATS_PER_VERTEX * Float.BYTES, 3L * Float.BYTES);
         glEnableVertexAttribArray(1);
         glBindVertexArray(0);
+        RenderResourceTracker.registerParticleBuffers(PARTICLE_BUFFER_BYTES);
     }
 
     public void spawnBlockBreak(BlockType block, Raycast.Hit hit, double now) {
@@ -185,7 +192,7 @@ public final class ParticleSystem implements AutoCloseable {
     public RenderStats render(Matrix4f projection, Matrix4f view, double now) {
         update(now);
         if (particles.isEmpty()) {
-            return new RenderStats(0, 0, 0);
+            return statsSnapshot(now, 0, 0);
         }
         float[] vertices = buildVertices(view, now);
         int vertexCount = vertices.length / FLOATS_PER_VERTEX;
@@ -204,7 +211,7 @@ public final class ParticleSystem implements AutoCloseable {
         glDepthMask(true);
         glDisable(GL_BLEND);
         glUseProgram(0);
-        return new RenderStats(particles.size(), 1, vertexCount / 3);
+        return statsSnapshot(now, 1, vertexCount / 3);
     }
 
     public int liveCount() {
@@ -213,18 +220,42 @@ public final class ParticleSystem implements AutoCloseable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         glDeleteBuffers(vbo);
         glDeleteVertexArrays(vao);
+        RenderResourceTracker.releaseParticleBuffers(PARTICLE_BUFFER_BYTES);
         shader.close();
     }
 
     private void spawn(Vector3f origin, Vector3f velocity, Vector3f color, float size, float lifetime, double now, float gravity, float damping) {
         if (particles.size() >= MAX_PARTICLES) {
             particles.remove(0);
+            evictedSinceLastStats++;
         }
         Vector3f position = new Vector3f(origin)
                 .add(randomRange(-0.20f, 0.20f), randomRange(-0.12f, 0.16f), randomRange(-0.20f, 0.20f));
         particles.add(new Particle(position, velocity, new Vector3f(color), size, gravity, damping, now, now + lifetime));
+        spawnedSinceLastStats++;
+    }
+
+    private RenderStats statsSnapshot(double now, int drawCalls, int triangles) {
+        double elapsedSeconds = Double.isNaN(lastStatsTime) ? 0.0 : Math.max(0.0, now - lastStatsTime);
+        double spawnRate = elapsedSeconds > 0.0 ? spawnedSinceLastStats / elapsedSeconds : 0.0;
+        long evictedParticles = evictedSinceLastStats;
+        spawnedSinceLastStats = 0;
+        evictedSinceLastStats = 0L;
+        lastStatsTime = now;
+        return new RenderStats(
+                particles.size(),
+                spawnRate,
+                particles.size() / (double) MAX_PARTICLES,
+                evictedParticles,
+                drawCalls,
+                triangles
+        );
     }
 
     private void update(double now) {
@@ -348,9 +379,9 @@ public final class ParticleSystem implements AutoCloseable {
         }
     }
 
-    public record RenderStats(int liveParticles, int drawCalls, int triangles) {
+    public record RenderStats(int liveParticles, double spawnRate, double budgetUsage, long evictedParticles, int drawCalls, int triangles) {
         public static RenderStats empty() {
-            return new RenderStats(0, 0, 0);
+            return new RenderStats(0, 0.0, 0.0, 0L, 0, 0);
         }
     }
 

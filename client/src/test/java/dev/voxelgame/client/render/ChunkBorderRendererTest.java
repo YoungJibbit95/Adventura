@@ -36,4 +36,19 @@ class ChunkBorderRendererTest {
         assertEquals(0.0f, vertices[4]);
         assertEquals(-16.0f, vertices[5]);
     }
+
+    @Test
+    void buildsTwelveEdgesPerMeshBound() {
+        float[] vertices = ChunkBorderRenderer.meshBoundsVertices(List.of(
+                new ChunkMesh.Bounds(1.0f, 2.0f, 3.0f, 5.0f, 7.0f, 11.0f)
+        ));
+
+        assertEquals(12 * 2 * 3, vertices.length);
+        assertEquals(1.0f, vertices[0]);
+        assertEquals(2.0f, vertices[1]);
+        assertEquals(3.0f, vertices[2]);
+        assertEquals(5.0f, vertices[3]);
+        assertEquals(2.0f, vertices[4]);
+        assertEquals(3.0f, vertices[5]);
+    }
 }

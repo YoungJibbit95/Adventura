@@ -1,14 +1,16 @@
 package dev.voxelgame.client.net;
 
 import dev.voxelgame.common.net.GamePacket;
-import dev.voxelgame.common.net.PacketCodec;
+import dev.voxelgame.common.net.PacketLimits;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.DecoderException;
 import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,14 +65,17 @@ class ClientPacketCodecTest {
     void decoderRejectsOversizedFrames() {
         EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
         try {
-            int oversizedLength = PacketCodec.MAX_PACKET_SIZE + 1;
+            int oversizedLength = PacketLimits.MAX_PACKET_SIZE + 1;
             var buffer = Unpooled.buffer(Integer.BYTES);
             buffer.writeInt(oversizedLength);
 
             try {
-                assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(buffer));
+                DecoderException thrown = assertThrows(DecoderException.class, () -> channel.writeInbound(buffer));
+                assertInstanceOf(IllegalArgumentException.class, thrown.getCause());
             } finally {
-                ReferenceCountUtil.release(buffer);
+                if (buffer.refCnt() > 0) {
+                    ReferenceCountUtil.release(buffer);
+                }
             }
         } finally {
             channel.finishAndReleaseAll();
@@ -82,7 +87,7 @@ class ClientPacketCodecTest {
     void decoderAcceptsFrameLengthAtLimit() {
         EmbeddedChannel channel = new EmbeddedChannel(new ClientPacketDecoder());
         try {
-            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketCodec.MAX_PACKET_SIZE);
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketLimits.MAX_PACKET_SIZE);
             assertFalse(channel.writeInbound(frameHeader));
             assertNull(channel.readInbound());
         } finally {

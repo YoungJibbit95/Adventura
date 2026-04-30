@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EntityBoundsTest {
@@ -14,5 +15,14 @@ class EntityBoundsTest {
 
         assertEquals(98.38f, EntityBounds.baseY(player), 0.001f);
         assertTrue(EntityBounds.forType("voxel:player").height() > 1.7f);
+    }
+
+    @Test
+    void entityBoundsDetectPlacedBlockOverlap() {
+        EntitySnapshot sheep = new EntitySnapshot(2L, "voxel:cozy_sheep", null, 8.5, 120.0, 9.5, 0.0f, 0.0f, 10);
+
+        assertTrue(EntityBounds.intersectsBlock(sheep, 8, 120, 9));
+        assertFalse(EntityBounds.intersectsBlock(sheep, 8, 121, 9));
+        assertFalse(EntityBounds.intersectsBlock(sheep, 8, 120, 11));
     }
 }

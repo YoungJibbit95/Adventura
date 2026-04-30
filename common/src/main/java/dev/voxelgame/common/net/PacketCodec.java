@@ -14,8 +14,20 @@ import java.util.List;
 import java.util.UUID;
 
 public final class PacketCodec {
-    public static final int MAX_PACKET_SIZE = 2 * 1024 * 1024;
-    private static final int MAX_ARRAY_LENGTH = 1_000_000;
+    public static final int MAX_PACKET_SIZE = PacketLimits.MAX_PACKET_SIZE;
+    private static final int MAX_CHUNK_ARRAY_LENGTH = 128 * 1024;
+    private static final int MAX_ENTITY_SNAPSHOTS = 2_048;
+    private static final int MAX_ITEM_STACKS = 128;
+    private static final int MAX_COOK_INPUT_SLOTS = 64;
+    private static final int ITEM_STACK_BYTES = Short.BYTES + Integer.BYTES + Integer.BYTES;
+    private static final int MIN_ENTITY_SNAPSHOT_BYTES = Long.BYTES
+            + Short.BYTES
+            + 1
+            + Double.BYTES * 3
+            + Float.BYTES * 2
+            + Integer.BYTES
+            + Short.BYTES
+            + Double.BYTES * 3;
 
     private PacketCodec() {
     }
@@ -67,12 +79,28 @@ public final class PacketCodec {
                     out.writeShort(action.blockId());
                 }
                 case GamePacket.PlayerMove move -> {
+                    out.writeLong(move.sequence());
                     out.writeDouble(move.x());
                     out.writeDouble(move.y());
                     out.writeDouble(move.z());
                     out.writeFloat(move.yaw());
                     out.writeFloat(move.pitch());
                     out.writeBoolean(move.onGround());
+                    out.writeBoolean(move.feetInWater());
+                    out.writeBoolean(move.bodyInWater());
+                    out.writeBoolean(move.headUnderwater());
+                }
+                case GamePacket.PlayerPositionSnapshot snapshot -> {
+                    out.writeLong(snapshot.sequence());
+                    out.writeDouble(snapshot.x());
+                    out.writeDouble(snapshot.y());
+                    out.writeDouble(snapshot.z());
+                    out.writeFloat(snapshot.yaw());
+                    out.writeFloat(snapshot.pitch());
+                    out.writeBoolean(snapshot.onGround());
+                    out.writeBoolean(snapshot.feetInWater());
+                    out.writeBoolean(snapshot.bodyInWater());
+                    out.writeBoolean(snapshot.headUnderwater());
                 }
                 case GamePacket.BlockInteract interact -> {
                     out.writeInt(interact.selectedSlot());
@@ -96,6 +124,9 @@ public final class PacketCodec {
                         out.writeFloat(snapshot.pitch());
                         out.writeInt(snapshot.health());
                         out.writeUTF(snapshot.stateKey());
+                        out.writeDouble(snapshot.velocityX());
+                        out.writeDouble(snapshot.velocityY());
+                        out.writeDouble(snapshot.velocityZ());
                     }
                 }
                 case GamePacket.EntityInteract interact -> {
@@ -116,6 +147,7 @@ public final class PacketCodec {
                     out.writeInt(storage.x());
                     out.writeInt(storage.y());
                     out.writeInt(storage.z());
+                    out.writeInt(storage.transactionId());
                 }
                 case GamePacket.SleepRequest sleep -> {
                     out.writeInt(sleep.x());
@@ -131,6 +163,17 @@ public final class PacketCodec {
                     for (int slot : cook.inputSlots()) {
                         out.writeInt(slot);
                     }
+                    out.writeInt(cook.transactionId());
+                }
+                case GamePacket.CampfireStatus status -> {
+                    out.writeInt(status.x());
+                    out.writeInt(status.y());
+                    out.writeInt(status.z());
+                    out.writeBoolean(status.active());
+                    out.writeDouble(status.fuelSecondsRemaining());
+                    out.writeUTF(status.cookingRecipeKey());
+                    out.writeDouble(status.cookTotalSeconds());
+                    out.writeDouble(status.cookSecondsRemaining());
                 }
                 case GamePacket.StorageOpen storage -> {
                     out.writeInt(storage.x());
@@ -155,17 +198,25 @@ public final class PacketCodec {
                     out.writeInt(craft.stationX());
                     out.writeInt(craft.stationY());
                     out.writeInt(craft.stationZ());
+                    out.writeInt(craft.transactionId());
                 }
                 case GamePacket.Chat chat -> out.writeUTF(chat.message());
             }
             out.flush();
-            return bytes.toByteArray();
+            byte[] encoded = bytes.toByteArray();
+            if (encoded.length > MAX_PACKET_SIZE) {
+                throw new IllegalStateException("Encoded packet exceeds max packet size: " + encoded.length);
+            }
+            return encoded;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to encode packet", e);
         }
     }
 
     public static GamePacket decode(byte[] bytes) {
+        if (bytes.length < PacketLimits.MIN_PACKET_SIZE || bytes.length > MAX_PACKET_SIZE) {
+            throw new IllegalArgumentException("Invalid packet size: " + bytes.length);
+        }
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
             PacketType type = PacketType.fromId(in.readInt());
@@ -193,10 +244,33 @@ public final class PacketCodec {
                         in.readInt(),
                         in.readShort()
                 );
-                case PLAYER_MOVE -> new GamePacket.PlayerMove(in.readDouble(), in.readDouble(), in.readDouble(), in.readFloat(), in.readFloat(), in.readBoolean());
+                case PLAYER_MOVE -> new GamePacket.PlayerMove(
+                        in.readLong(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readFloat(),
+                        in.readFloat(),
+                        in.readBoolean(),
+                        in.readBoolean(),
+                        in.readBoolean(),
+                        in.readBoolean()
+                );
+                case PLAYER_POSITION_SNAPSHOT -> new GamePacket.PlayerPositionSnapshot(
+                        in.readLong(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readFloat(),
+                        in.readFloat(),
+                        in.readBoolean(),
+                        in.readBoolean(),
+                        in.readBoolean(),
+                        in.readBoolean()
+                );
                 case BLOCK_INTERACT -> new GamePacket.BlockInteract(in.readInt(), in.readInt(), in.readInt(), in.readInt());
                 case ENTITY_SNAPSHOT -> {
-                    int count = checkedLength(in.readInt());
+                    int count = checkedLength(in.readInt(), MAX_ENTITY_SNAPSHOTS, in.available(), MIN_ENTITY_SNAPSHOT_BYTES, "entity snapshot count");
                     List<EntitySnapshot> snapshots = new ArrayList<>(count);
                     for (int i = 0; i < count; i++) {
                         long entityId = in.readLong();
@@ -212,7 +286,10 @@ public final class PacketCodec {
                                 in.readFloat(),
                                 in.readFloat(),
                                 in.readInt(),
-                                in.readUTF()
+                                in.readUTF(),
+                                in.readDouble(),
+                                in.readDouble(),
+                                in.readDouble()
                         ));
                     }
                     yield new GamePacket.EntitySnapshots(snapshots);
@@ -231,20 +308,30 @@ public final class PacketCodec {
                         in.readInt(),
                         in.readInt()
                 );
-                case STORAGE_OPEN_REQUEST -> new GamePacket.StorageOpenRequest(in.readInt(), in.readInt(), in.readInt());
+                case STORAGE_OPEN_REQUEST -> new GamePacket.StorageOpenRequest(in.readInt(), in.readInt(), in.readInt(), in.readInt());
                 case SLEEP_REQUEST -> new GamePacket.SleepRequest(in.readInt(), in.readInt(), in.readInt());
                 case COOK_REQUEST -> {
                     int stationX = in.readInt();
                     int stationY = in.readInt();
                     int stationZ = in.readInt();
                     String recipeKey = in.readUTF();
-                    int count = checkedLength(in.readInt());
+                    int count = checkedLength(in.readInt(), MAX_COOK_INPUT_SLOTS, in.available(), Integer.BYTES, "cook input slot count");
                     List<Integer> inputSlots = new ArrayList<>(count);
                     for (int i = 0; i < count; i++) {
                         inputSlots.add(in.readInt());
                     }
-                    yield new GamePacket.CookRequest(stationX, stationY, stationZ, recipeKey, inputSlots);
+                    yield new GamePacket.CookRequest(stationX, stationY, stationZ, recipeKey, inputSlots, in.readInt());
                 }
+                case CAMPFIRE_STATUS -> new GamePacket.CampfireStatus(
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readBoolean(),
+                        in.readDouble(),
+                        in.readUTF(),
+                        in.readDouble(),
+                        in.readDouble()
+                );
                 case STORAGE_OPEN -> new GamePacket.StorageOpen(in.readInt(), in.readInt(), in.readInt(), readItemStacks(in));
                 case STORAGE_TRANSFER -> new GamePacket.StorageTransfer(
                         in.readInt(),
@@ -260,6 +347,7 @@ public final class PacketCodec {
                         in.readUTF(),
                         in.readInt(),
                         in.readBoolean(),
+                        in.readInt(),
                         in.readInt(),
                         in.readInt(),
                         in.readInt()
@@ -292,7 +380,7 @@ public final class PacketCodec {
     }
 
     private static short[] readShortArray(DataInputStream in) throws IOException {
-        int length = checkedLength(in.readInt());
+        int length = checkedLength(in.readInt(), MAX_CHUNK_ARRAY_LENGTH, in.available(), Short.BYTES, "short array length");
         short[] values = new short[length];
         for (int i = 0; i < length; i++) {
             values[i] = in.readShort();
@@ -306,7 +394,7 @@ public final class PacketCodec {
     }
 
     private static byte[] readByteArray(DataInputStream in) throws IOException {
-        int length = checkedLength(in.readInt());
+        int length = checkedLength(in.readInt(), MAX_CHUNK_ARRAY_LENGTH, in.available(), 1, "byte array length");
         byte[] values = new byte[length];
         in.readFully(values);
         return values;
@@ -322,7 +410,7 @@ public final class PacketCodec {
     }
 
     private static List<ItemStack> readItemStacks(DataInputStream in) throws IOException {
-        int length = checkedLength(in.readInt());
+        int length = checkedLength(in.readInt(), MAX_ITEM_STACKS, in.available(), ITEM_STACK_BYTES, "item stack count");
         List<ItemStack> stacks = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
             short itemId = in.readShort();
@@ -342,9 +430,13 @@ public final class PacketCodec {
         return stacks;
     }
 
-    private static int checkedLength(int length) {
-        if (length < 0 || length > MAX_ARRAY_LENGTH) {
-            throw new IllegalArgumentException("Invalid array length: " + length);
+    private static int checkedLength(int length, int maxLength, int availableBytes, int minBytesPerEntry, String label) {
+        if (length < 0 || length > maxLength) {
+            throw new IllegalArgumentException("Invalid " + label + ": " + length);
+        }
+        long minimumPayloadBytes = (long) length * minBytesPerEntry;
+        if (minimumPayloadBytes > availableBytes) {
+            throw new IllegalArgumentException("Invalid " + label + ": " + length + " exceeds remaining payload");
         }
         return length;
     }

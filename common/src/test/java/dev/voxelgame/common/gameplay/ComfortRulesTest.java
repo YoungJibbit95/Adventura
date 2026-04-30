@@ -18,8 +18,9 @@ class ComfortRulesTest {
         world.setBlockId(1, 80, 0, Blocks.WOVEN_RUG);
         world.setBlockId(2, 80, 0, Blocks.WOODEN_CHAIR);
         world.setBlockId(3, 80, 0, Blocks.STORAGE_CRATE);
+        world.setBlockId(4, 80, 0, Blocks.ANCIENT_LANTERN);
 
-        assertEquals(11, ComfortRules.scan(world, 0.5, 80.5, 0.5, 8, 25));
+        assertEquals(15, ComfortRules.scan(world, 0.5, 80.5, 0.5, 8, 25));
         assertEquals(6, ComfortRules.scan(world, 0.5, 80.5, 0.5, 8, 6));
     }
 

@@ -2,6 +2,7 @@ package dev.voxelgame.common.gameplay;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
@@ -17,6 +18,14 @@ class InteractionRulesTest {
     void reachUsesEyePositionAndBlockCenter() {
         assertTrue(InteractionRules.canReachBlock(0.5, 64.5, 0.5, 0, 64, 6));
         assertFalse(InteractionRules.canReachBlock(0.5, 64.5, 0.5, 0, 64, 8));
+    }
+
+    @Test
+    void entityReachUsesBoundsClosestPoint() {
+        EntitySnapshot sheep = new EntitySnapshot(42L, "voxel:cozy_sheep", null, 7.4, 64.0, 0.5, 0.0f, 0.0f, 10);
+
+        assertTrue(InteractionRules.canReachEntity(0.5, 64.8, 0.5, sheep, 6.5));
+        assertFalse(InteractionRules.canReachEntity(0.5, 64.8, 0.5, sheep, 5.5));
     }
 
     @Test
@@ -45,6 +54,7 @@ class InteractionRulesTest {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
         ItemStack stonePickaxe = new ItemStack(items.requireByKey("voxel:stone_pickaxe").id(), 1);
         ItemStack copperPickaxe = new ItemStack(items.requireByKey("voxel:copper_pickaxe").id(), 1);
+        ItemStack ironPickaxe = new ItemStack(items.requireByKey("voxel:iron_pickaxe").id(), 1);
         BlockType copperOre = blocks.requireByKey("voxel:copper_ore");
         BlockType ironOre = blocks.requireByKey("voxel:iron_ore");
         BlockType crystalNode = blocks.requireByKey("voxel:glow_crystal_node");
@@ -55,6 +65,17 @@ class InteractionRulesTest {
         assertFalse(InteractionRules.canHarvest(stonePickaxe, items, ironOre));
         assertTrue(InteractionRules.canHarvest(copperPickaxe, items, ironOre));
         assertFalse(InteractionRules.canHarvest(copperPickaxe, items, crystalNode));
+        assertTrue(InteractionRules.canHarvest(ironPickaxe, items, crystalNode));
+    }
+
+    @Test
+    void wildGrassCanBeGatheredForDryGrassFuel() {
+        BlockType wildGrass = Blocks.createDefaultRegistry().requireByKey("voxel:wild_grass");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(wildGrass).orElseThrow();
+
+        assertEquals("voxel:dry_grass", interaction.itemKey());
+        assertEquals(1, interaction.count());
     }
 
     @Test
@@ -68,6 +89,16 @@ class InteractionRulesTest {
     }
 
     @Test
+    void reedsCanBeCutForWaterContainerBinding() {
+        BlockType reeds = Blocks.createDefaultRegistry().requireByKey("voxel:reeds");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(reeds).orElseThrow();
+
+        assertEquals("voxel:reed_bundle", interaction.itemKey());
+        assertEquals(1, interaction.count());
+    }
+
+    @Test
     void pineLogCanBeTappedForResin() {
         BlockType pineLog = Blocks.createDefaultRegistry().requireByKey("voxel:pine_log");
 
@@ -75,5 +106,15 @@ class InteractionRulesTest {
 
         assertEquals("voxel:resin", interaction.itemKey());
         assertEquals(1, interaction.count());
+    }
+
+    @Test
+    void treeStumpCanBePeeledForBarkStrips() {
+        BlockType treeStump = Blocks.createDefaultRegistry().requireByKey("voxel:tree_stump");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(treeStump).orElseThrow();
+
+        assertEquals("voxel:bark_strip", interaction.itemKey());
+        assertEquals(2, interaction.count());
     }
 }

@@ -1,5 +1,8 @@
 package dev.voxelgame.client.render;
 
+import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.world.ChunkPos;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
@@ -93,5 +96,25 @@ class WorldRendererTest {
         assertEquals(1, stats.renderedCutoutChunks());
         assertEquals(5, stats.loadedGpuMeshes());
         assertEquals(4, stats.loadedChunkPositions());
+    }
+
+    @Test
+    void meshReleaseStatsHasEmptySnapshot() {
+        WorldRenderer.MeshReleaseStats stats = WorldRenderer.MeshReleaseStats.empty();
+
+        assertEquals(0, stats.releasedLayers());
+        assertEquals(0, stats.releasedChunkPositions());
+        assertEquals(0L, stats.releasedBytes());
+    }
+
+    @Test
+    void chunkAabbUsesNonEmptySectionBoundsWhenAvailable() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 250, 8, Blocks.STONE));
+
+        WorldRenderer.ChunkAabb bounds = WorldRenderer.chunkAabb(world, new ChunkPos(0, 0));
+
+        assertEquals(240.0f, bounds.minY());
+        assertEquals(256.0f, bounds.maxY());
     }
 }

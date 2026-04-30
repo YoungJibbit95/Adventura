@@ -1,14 +1,16 @@
 package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.net.GamePacket;
-import dev.voxelgame.common.net.PacketCodec;
+import dev.voxelgame.common.net.PacketLimits;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.DecoderException;
 import io.netty.util.ReferenceCountUtil;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,24 +65,44 @@ class NettyPacketCodecTest {
     void decoderRejectsOversizedFrames() {
         EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
         try {
-            int tooLarge = PacketCodec.MAX_PACKET_SIZE + 1;
+            int tooLarge = PacketLimits.MAX_PACKET_SIZE + 1;
             var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(tooLarge);
             try {
-                assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(frameHeader));
+                DecoderException thrown = assertThrows(DecoderException.class, () -> channel.writeInbound(frameHeader));
+                assertInstanceOf(IllegalArgumentException.class, thrown.getCause());
             } finally {
-                ReferenceCountUtil.release(frameHeader);
+                if (frameHeader.refCnt() > 0) {
+                    ReferenceCountUtil.release(frameHeader);
+                }
             }
         } finally {
             channel.finishAndReleaseAll();
         }
     }
 
+    @Test
+    void decoderRejectsUndersizedFrames() {
+        EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
+        try {
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketLimits.MIN_PACKET_SIZE - 1);
+            try {
+                DecoderException thrown = assertThrows(DecoderException.class, () -> channel.writeInbound(frameHeader));
+                assertInstanceOf(IllegalArgumentException.class, thrown.getCause());
+            } finally {
+                if (frameHeader.refCnt() > 0) {
+                    ReferenceCountUtil.release(frameHeader);
+                }
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
 
     @Test
     void decoderAcceptsFrameLengthAtLimit() {
         EmbeddedChannel channel = new EmbeddedChannel(new NettyPacketDecoder());
         try {
-            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketCodec.MAX_PACKET_SIZE);
+            var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketLimits.MAX_PACKET_SIZE);
             assertFalse(channel.writeInbound(frameHeader));
             assertNull(channel.readInbound());
         } finally {

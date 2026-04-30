@@ -20,8 +20,5 @@ dependencies {
 
 application {
     mainClass.set("dev.voxelgame.client.ClientMain")
-}
-
-tasks.named<JavaExec>("run") {
-    jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
+    applicationDefaultJvmArgs = listOf("-Dorg.lwjgl.system.allocator=jemalloc")
 }

@@ -1,11 +1,14 @@
 package dev.voxelgame.client.world;
 
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,6 +30,16 @@ class ClientWorldCollisionTest {
     }
 
     @Test
+    void collisionAtChunkBoundaryUsesActualPlayerOverlap() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(15, 119, 8, Blocks.AIR));
+        world.applyBlock(new GamePacket.BlockUpdate(16, 119, 8, Blocks.STONE));
+
+        assertFalse(world.collidesPlayer(15.65, 120.0, 8.5));
+        assertTrue(world.collidesPlayer(15.75, 120.0, 8.5));
+    }
+
+    @Test
     void localPlacementCannotIntersectPlayerBounds() {
         ClientWorld world = new ClientWorld(123L);
         world.applyBlock(new GamePacket.BlockUpdate(8, 64, 8, Blocks.AIR));
@@ -45,20 +58,40 @@ class ClientWorldCollisionTest {
     }
 
     @Test
+    void localPlacementCannotIntersectVisibleEntityBounds() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 120, 9, Blocks.AIR));
+        world.applyEntitySnapshots(List.of(new EntitySnapshot(
+                77L,
+                "voxel:cozy_sheep",
+                null,
+                8.5,
+                120.0,
+                9.5,
+                0.0f,
+                0.0f,
+                10
+        )));
+        Raycast.Hit hit = new Raycast.Hit(8, 119, 9, 0, 1, 0, 1.0);
+
+        assertFalse(world.placeBlock(hit, Blocks.STONE, new Vector3f(8.5f, 121.62f, 8.5f)));
+    }
+
+    @Test
     void waterStateSeparatesFeetBodyAndHead() {
         ClientWorld world = new ClientWorld(123L);
         world.applyBlock(new GamePacket.BlockUpdate(8, 64, 8, Blocks.WATER));
         world.applyBlock(new GamePacket.BlockUpdate(8, 65, 8, Blocks.AIR));
         world.applyBlock(new GamePacket.BlockUpdate(8, 66, 8, Blocks.AIR));
 
-        PlayerWaterState feetOnly = world.playerWaterState(new Vector3f(8.5f, 65.62f, 8.5f));
+        PlayerWaterState feetOnly = world.playerWaterState(new Vector3f(8.5f, 66.05f, 8.5f));
         assertTrue(feetOnly.feetInWater());
         assertFalse(feetOnly.bodyInWater());
         assertFalse(feetOnly.headUnderwater());
         assertTrue(feetOnly.movementAffected());
 
         world.applyBlock(new GamePacket.BlockUpdate(8, 65, 8, Blocks.WATER));
-        PlayerWaterState bodyWater = world.playerWaterState(new Vector3f(8.5f, 65.62f, 8.5f));
+        PlayerWaterState bodyWater = world.playerWaterState(new Vector3f(8.5f, 66.05f, 8.5f));
         assertTrue(bodyWater.bodyInWater());
         assertFalse(bodyWater.headUnderwater());
 

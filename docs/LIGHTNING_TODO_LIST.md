@@ -1,151 +1,353 @@
 # Adventura – Lighting TODO List
 
+Stand: 2026-04-30
+
 ## Ziel
 
-Lighting soll cozy, weich und technisch stabil werden. Adventura braucht warme Tagesfarben, klares Nachtgefühl, leuchtende Campfires/Lanterns/Glow Mushrooms und später dunklere Höhlen ohne harte Performance-Spikes.
+Lighting soll Adventura cozy, weich und technisch stabil machen. Diese Liste behandelt **Lighting/Beleuchtung**, nicht Lightning/Blitze. Weather-Lightning kann später als eigenes Feature kommen.
 
-## P0 – Lighting-Begriffe
+Adventura braucht:
 
-Diese Liste behandelt Lighting/Beleuchtung, nicht Lightning/Blitze. Weather/Lightning kann später separat kommen.
+- warme Tagesfarben
+- lesbare Nacht
+- sichtbare Campfires/Lanterns/Glow Blocks
+- dunklere Höhlen
+- keine harten Light-Seams an Chunkgrenzen
+- keine großen Performance-Spikes bei Light Updates
 
-Light-Arten:
-- Global Daylight.
-- Sky Light.
-- Block Light.
-- Emissive Material.
-- Fog Color.
-- Bloom/Glow.
-- Particle Glow.
+## Light-Arten
 
-## P1 – Bestehendes Lighting stabilisieren
+- Global Daylight
+- Sky Light
+- Block Light
+- Emissive Material
+- Fog Color
+- Bloom/Glow
+- Particle Glow
+- optional später Colored Light
 
-- Blockupdates müssen Licht über Chunkgrenzen sauber invalidieren.
-- Light seams an Chunkgrenzen testen.
-- Nachbar-Chunks bei Light-Änderungen dirty markieren.
-- Tests für Wasser, transparente Blöcke und Höhlen.
-- Sky Light Tests für Höhlen, Überhänge, Chunkgrenzen, Wasser/Eis, transparente Blöcke und hohe Berge.
+---
 
-### Light Debug Overlay
-- ~~aktuelles Light Level am Zielblock.~~ ✅ (`/debuglight` nutzt jetzt bevorzugt den anvisierten Block statt nur die Kameraposition)
-- Sky Light.
-- Block Light.
-- ~~Emissive Material Flag.~~ ✅ (`/debuglight` zeigt jetzt emissive-Wert des aktuellen Blocks)
-- optional Light Visualization Mode.
+# P0 – Lighting Debug und Stabilität
 
-## P2 – Block Light System
+## P0.1 Light Debug View
 
-Light Sources:
-- active campfire.
-- cozy lantern.
-- glow mushroom.
-- glow crystal node.
-- glow lantern.
-- firefly swarm visuell oder später schwaches dynamic light.
+### Basis vorhanden
 
-Daten:
-- Light Value pro Block/Material.
-- Block Light Array pro Chunk.
-- Update Queue.
-- boundary propagation zwischen Chunks.
-- fallback full rebuild.
+- `/debuglight` zeigt Sky Light, Block Light, Combined Light und Emissive-Wert an.
+- Light-Debug-Formatierung ist testbar.
 
-Propagation:
-- Add Light.
-- Remove Light.
-- kleine incremental updates.
-- voller Rebuild nur als Fallback.
-- Performance messen.
+### Offen
 
-## P3 – Material und Shader Lighting
+- Light Visualization Mode als Overlay oder blockweise Farbdarstellung.
+- Toggle für Sky Light only.
+- Toggle für Block Light only.
+- Toggle für Emissive only.
+- Debug Anzeige am anvisierten Block:
+  - block key
+  - sky light
+  - block light
+  - combined
+  - light source value
+  - occlusion type
 
-### Emissive Materials
-- emissive nicht mehr über hardcoded Block-IDs.
-- Materialdaten aus `BlockRenderProperties` / Registry.
-- Shader bekommt emissive flag/value.
-- Glow/Bloom Toggle respektieren.
+### Akzeptanz
 
-### Terrain Shader
-- ✅ UV-Wrapping im Terrain-Shader (`faceUv`) repariert; doppelte/defekte Bedingung entfernt, damit Atlas-UVs stabil normalisiert werden.
-- per-face brightness.
-- ~~vertex AO.~~ ✅ (AO wird auf greedy-gemeshte Terrain-Flächen pro Vertex angewendet; AO-Sampling für große Merges nutzt jetzt die jeweilige Eck-Blockposition statt nur den Ursprung des Merges)
-- ~~vertex AO.~~ ✅ (AO wird jetzt auch auf greedy-gemeshte Terrain-Flächen pro Vertex angewendet statt hart auf `1.0` gesetzt)
-- ~~fog.~~ ✅ (bereits im `chunk.frag` aktiv; zusätzlich gegen fehlerhafte Fog-Range abgesichert)
-- biome tint später.
-- ~~day/night global brightness.~~ ✅ (als `uGlobalBrightness` aus Sky-Luminanz im Terrain-Shader verdrahtet)
-- ~~block light contribution.~~ ✅ (Mesher kombiniert Sky/Block-Light gewichtet statt nur `max()`, damit lokale Lichtquellen trotz Tageshelligkeit sichtbar beitragen)
+- Light-Seams lassen sich sichtbar prüfen.
+- Campfire/Lantern/Glow-Block-Werte sind schnell debugbar.
 
-### Cutout / Vegetation
-- Alpha Cutout bleibt scharf.
-- Light/AO trotzdem lesbar.
-- Glow mushrooms leicht emissive.
+---
 
-### Water
-- ~~Wasser bekommt eigene Helligkeit/Tint.~~ ✅ (Terrain-Shader hebt `animatedFluid` nachts leicht an und gibt einen dezenten kühlen Tint, damit Wasser nicht absäuft)
+## P0.2 Light-Seams an Chunkgrenzen testen
+
+### Basis vorhanden
+
+- Chunkgrenzen für Block-Light-Propagation sind teilweise getestet.
+- Wasser/opaque Verhalten ist teilweise getestet.
+
+### Offen
+
+- hohe Berge testen.
+- transparente Blöcke testen.
+- unloaded neighbor behavior testen.
+- Light Source direkt an Chunkgrenze testen.
+- Light Remove direkt an Chunkgrenze testen.
+- Full Rebuild Fallback testen.
+
+### Akzeptanz
+
+- keine sichtbaren Light-Kanten an Chunkgrenzen.
+- Add/Remove von Emittern bleibt konsistent.
+
+---
+
+# P1 – Sky Light
+
+## P1.1 Sky-Light-Regeln definieren
+
+### Offen
+
+- Opaque Blocks blocken Sky Light.
+- Water/Glass/Cutout behandeln:
+  - Water schwächt Sky Light optional.
+  - Cutout blockt nicht vollständig.
+  - Leaves können leicht abdunkeln.
+- Höhlen und Überhänge abdunkeln.
+- Chunkgrenzen konsistent.
+
+### Tests
+
+- offene Fläche hat helles Sky Light.
+- Höhle ist dunkel.
+- Überhang reduziert Licht.
+- Wasser verhält sich erwartbar.
+- Chunkgrenze zeigt keinen Sprung.
+
+### Akzeptanz
+
+- Tageslicht wirkt stabil.
+- Höhlen sind sichtbar dunkler.
+- keine starken Seams.
+
+---
+
+## P1.2 Day/Night Global Light
+
+### Ziel
+
+Tageszeit soll stimmungsvoll sein, ohne Gameplay zu blockieren.
+
+### Phasen
+
+- Morning: warm und weich.
+- Noon: klar und hell.
+- Evening: amber/orange.
+- Night: blau/kühl, aber spielbar.
+
+### Offen
+
+- Farbkurven definieren.
+- Sky/Fog/Fog Distance koppeln.
+- global brightness smooth interpolieren.
+- Night minimum brightness definieren.
+- Campfire/Lantern nachts stärker lesbar machen.
+
+### Akzeptanz
+
+- Übergänge sind weich.
+- Nacht ist atmosphärisch, aber nicht frustrierend.
+- Base-Licht fühlt sich nützlich an.
+
+---
+
+# P2 – Block Light
+
+## P2.1 Light Source Registry
+
+### Light Sources
+
+- active campfire
+- cozy lantern
+- glow mushroom
+- glow crystal node
+- glow lantern
+- ancient lantern
+- firefly swarm optional dynamisch/visuell
+
+### Offen
+
+- Light Value pro Block/Material zentral definieren.
+- Validation: Light Source Blocks existieren.
+- Light Value 0..15 prüfen.
+- Emissive und Light Value getrennt halten:
+  - emissive = sieht selbst leuchtend aus
+  - lightValue = beleuchtet Umgebung
+
+### Akzeptanz
+
+- neue Light Blocks brauchen nur Registry-/Materialdaten.
+- Shader hat keine hardcoded Light-IDs.
+
+---
+
+## P2.2 Incremental Block Light Updates
+
+### Problem
+
+Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wird.
+
+### Offen
+
+- Update Queue für Light Add.
+- Update Queue für Light Remove.
+- Propagation über Chunkgrenzen.
+- Fallback Full Rebuild.
+- Dirty Meshes nur für betroffene Bereiche.
+- Performance-Messung pro Light Update.
+
+### Akzeptanz
+
+- Campfire an/aus verursacht keinen großen Spike.
+- Lantern platzieren aktualisiert Nachbarschaft.
+- Light Remove hinterlässt keine Geisterlichter.
+
+---
+
+# P3 – Shader Lighting
+
+## P3.1 Terrain Lighting
+
+### Muss können
+
+- face-direction brightness
+- sky light
+- block light
+- vertex AO
+- global day/night factor
+- fog color
+- emissive add
+
+### Offen
+
+- Lightwerte sauber normalisieren.
+- Ambient Occlusion mit block light kompatibel machen.
+- emissive nicht vom Fog komplett verschlucken.
+- optional smooth light interpolation.
+- debug mode: show light values.
+
+### Akzeptanz
+
+- Terrain hat Tiefe, aber bleibt pixel-art-lesbar.
+- AO wirkt weich, nicht dreckig.
+- Glow Blocks bleiben sichtbar.
+
+---
+
+## P3.2 Cutout / Vegetation Lighting
+
+### Offen
+
+- Pflanzen hell genug halten.
+- Leaves/Pine Needles leicht abdunkeln.
+- Glow mushrooms emissive.
+- Wind/Animation darf Light nicht kaputt machen.
+
+### Akzeptanz
+
+- Pflanzen sind bei Tag gut lesbar.
+- nachts nicht komplett schwarz, wenn Umgebung beleuchtet ist.
+
+---
+
+## P3.3 Water Lighting
+
+### Offen
+
 - underwater tint.
-- Nachtwasser nicht komplett schwarz.
+- Wasser nachts nicht komplett schwarz.
+- Shallow Water heller als Deep Water optional.
+- Block Light durch/auf Wasser prüfen.
+- Wasseroberfläche leicht glänzend, aber nicht realistisch/teuer.
 
-## P4 – Day/Night und Atmosphäre
+### Akzeptanz
 
-- Morning warm.
-- Noon klar.
-- Evening amber.
-- Night blau/kühl.
-- Smooth transitions.
-- Fog Color abhängig von Tageszeit und später Biom.
-- Fog kaschiert Render Distance.
-- Campfire/Lantern sollen nachts sichtbar nützlich sein.
-- Glow-Materialien machen Mushroom Grove besonders.
+- Lakeside bleibt nachts lesbar.
+- Unterwasserzustand ist klar erkennbar.
 
-## P5 – Cave Darkness
+---
 
-- Sky Light in Höhlen korrekt reduzieren.
-- Block Light sichtbar machen.
-- Torch/Lantern/Campfire sinnvoll nutzen.
-- Debug-Tests für Cave Light.
+# P4 – Cave Darkness
 
-## P6 – Bloom / Glow Polish
+## Ziel
 
-Glow Sources:
-- campfire.
-- lantern.
-- glow mushroom.
-- glow crystal.
-- fireflies.
-- magic particles.
+Höhlen und Ruinen sollen dunkler sein, damit Lanterns/Campfires/Glow Items Bedeutung haben.
 
-Regeln:
-- Glow cozy und weich.
-- nicht überstrahlen.
-- Low-End Toggle beachten.
-- Bloom-Intensität in Settings.
+### Offen
 
-## P7 – Optional: Weather Lightning später
+- Cave Darkness aus Sky Light ableiten.
+- Mindesthelligkeit definieren.
+- Campfire/Lantern/Held-Item-Licht optional.
+- Old Ruins leicht dunkler/foggy machen.
+- Debug-Seeds für Cave Pocket nutzen.
 
-- Gewitter selten.
-- Lightning als kurzer Sky Flash.
-- kein Fokus im cozy Core.
-- getrennt vom normalen Lighting-System halten.
+### Akzeptanz
 
-## Tests
+- Höhlen fühlen sich anders an als Oberfläche.
+- Spieler versteht, warum Lichtquellen nützlich sind.
+- Darkness ist cozy-adventurous, nicht unfair.
 
-Unit:
-- Light propagation add/remove.
+---
+
+# P5 – Bloom / Glow
+
+## Glow Sources
+
+- campfire
+- lantern
+- glow mushroom
+- glow crystal
+- ancient lantern
+- fireflies
+- magic particles
+
+## Offen
+
+- Bloom Intensity Setting.
+- Low-End Toggle.
+- emissive threshold definieren.
+- Glow nicht überstrahlen lassen.
+- Fireflies eher soft additive.
+- Glow Mushroom Grove als visueller Showcase.
+
+## Akzeptanz
+
+- Glow ist warm und weich.
+- Pixel-Art wird nicht matschig.
+- Bloom kann deaktiviert werden.
+
+---
+
+# P6 – Optional Weather Lightning später
+
+Nicht im Core priorisieren.
+
+Falls später:
+
+- seltene Gewitter.
+- kurzer Sky Flash.
+- Sound Hook.
+- kein Gameplay-Zwang.
+- getrennt von normalem Lighting-System.
+
+---
+
+# Tests
+
+## Unit Tests
+
+- Light source registry values.
+- Sky Light open column.
+- Sky Light under overhang.
+- Water/transparent behavior.
+- Block Light add.
+- Block Light remove.
 - Chunk boundary propagation.
-- light source values.
-- transparent block behavior.
+- Full rebuild fallback.
 
-Manual:
+## Manual Smoke Tests
+
 - Campfire leuchtet nachts.
 - Lantern leuchtet Base aus.
-- Glow Mushroom ist sichtbar.
-- Höhle ist dunkler.
-- Chunkgrenzen haben keine Light Seams.
+- Glow Mushroom sichtbar im Grove.
+- Höhle dunkler als Oberfläche.
+- Chunkgrenzen ohne Light Seams.
 - Day/Night Übergang weich.
+- Bloom off/on vergleichbar.
 
-## Akzeptanzkriterien
+## Akzeptanz
 
 - Campfire, Lantern und Glow Blocks wirken sichtbar.
-- Nacht ist stimmungsvoll, aber spielbar.
+- Nacht ist stimmungsvoll und spielbar.
 - Höhlen sind dunkler.
-- keine großen Frame-Spikes bei Light Updates.
+- Light Updates erzeugen keine großen Spikes.
 - keine hardcoded Block-ID-Lichtlogik im Shader.

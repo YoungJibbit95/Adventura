@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackLogTest {
     @Test
@@ -40,6 +41,19 @@ class FeedbackLogTest {
         assertEquals(List.of("Inventory Full x2"), log.visible(12.0));
         assertEquals(List.of(), log.visible(12.5));
     }
+
+    @Test
+    void visibleEntriesFadeNearExpiration() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Almost gone", 10.0, 1.0);
+
+        assertEquals(1.0f, log.visibleEntries(10.2).getFirst().alpha(), 0.001f);
+        assertEquals(0.5f, log.visibleEntries(10.775).getFirst().alpha(), 0.001f);
+        assertTrue(log.visibleEntries(10.95).getFirst().alpha() < 0.1f);
+        assertEquals(List.of(), log.visibleEntries(11.0));
+    }
+
     @Test
     void addPurgesExpiredEntriesBeforeApplyingCapacityLimit() {
         FeedbackLog log = new FeedbackLog();

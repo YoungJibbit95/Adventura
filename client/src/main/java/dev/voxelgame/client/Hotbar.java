@@ -312,6 +312,30 @@ public final class Hotbar {
         return !before.equals(backpackSlots());
     }
 
+    public synchronized boolean sortStorage() {
+        if (openStorageInventory == null) {
+            return false;
+        }
+        List<ItemStack> before = inventorySlots(openStorageInventory);
+        List<ItemStack> sorted = before.stream()
+                .filter(stack -> !stack.isEmpty())
+                .sorted(Comparator
+                        .comparing((ItemStack stack) -> items.requireById(stack.itemId()).key())
+                        .thenComparingInt(ItemStack::damage)
+                        .thenComparing(Comparator.comparingInt(ItemStack::count).reversed()))
+                .toList();
+        int slot = 0;
+        for (ItemStack stack : sorted) {
+            openStorageInventory.setSlot(slot, stack);
+            slot++;
+        }
+        while (slot < openStorageInventory.size()) {
+            openStorageInventory.setSlot(slot, ItemStack.EMPTY);
+            slot++;
+        }
+        return !before.equals(inventorySlots(openStorageInventory));
+    }
+
     public synchronized boolean quickMoveInventorySlot(int sourceSlot) {
         if (sourceSlot < 0 || sourceSlot >= inventory.size()) {
             return false;
@@ -326,17 +350,50 @@ public final class Hotbar {
     }
 
     public synchronized boolean moveInventorySlot(int sourceSlot, int targetSlot) {
-        if (sourceSlot < 0 || sourceSlot >= inventory.size() || targetSlot < 0 || targetSlot >= inventory.size() || sourceSlot == targetSlot) {
+        return moveSlot(inventory, sourceSlot, inventory, targetSlot);
+    }
+
+    public synchronized boolean moveStorageSlot(int sourceSlot, int targetSlot) {
+        if (openStorageInventory == null) {
             return false;
         }
-        ItemStack source = inventory.slot(sourceSlot);
+        return moveSlot(openStorageInventory, sourceSlot, openStorageInventory, targetSlot);
+    }
+
+    public synchronized boolean moveStorageToInventorySlot(int sourceSlot, int targetSlot) {
+        if (openStorageInventory == null || sourceSlot < 0 || sourceSlot >= openStorageInventory.size()) {
+            return false;
+        }
+        ItemStack source = openStorageInventory.slot(sourceSlot);
+        boolean moved = moveSlot(openStorageInventory, sourceSlot, inventory, targetSlot);
+        if (moved && !source.isEmpty()) {
+            discoveredItems.add(source.itemId());
+        }
+        return moved;
+    }
+
+    public synchronized boolean moveInventoryToStorageSlot(int sourceSlot, int targetSlot) {
+        if (openStorageInventory == null) {
+            return false;
+        }
+        return moveSlot(inventory, sourceSlot, openStorageInventory, targetSlot);
+    }
+
+    private boolean moveSlot(Inventory sourceInventory, int sourceSlot, Inventory targetInventory, int targetSlot) {
+        if (sourceSlot < 0 || sourceSlot >= sourceInventory.size() || targetSlot < 0 || targetSlot >= targetInventory.size()) {
+            return false;
+        }
+        if (sourceInventory == targetInventory && sourceSlot == targetSlot) {
+            return false;
+        }
+        ItemStack source = sourceInventory.slot(sourceSlot);
         if (source.isEmpty()) {
             return false;
         }
-        ItemStack target = inventory.slot(targetSlot);
+        ItemStack target = targetInventory.slot(targetSlot);
         if (target.isEmpty()) {
-            inventory.setSlot(targetSlot, source);
-            inventory.setSlot(sourceSlot, ItemStack.EMPTY);
+            targetInventory.setSlot(targetSlot, source);
+            sourceInventory.setSlot(sourceSlot, ItemStack.EMPTY);
             return true;
         }
         if (target.itemId() == source.itemId() && target.damage() == source.damage() && source.damage() == 0) {
@@ -344,14 +401,14 @@ public final class Hotbar {
             int capacity = type.maxStackSize() - target.count();
             if (capacity > 0) {
                 int moved = Math.min(capacity, source.count());
-                inventory.setSlot(targetSlot, new ItemStack(target.itemId(), target.count() + moved, target.damage()));
+                targetInventory.setSlot(targetSlot, new ItemStack(target.itemId(), target.count() + moved, target.damage()));
                 int remaining = source.count() - moved;
-                inventory.setSlot(sourceSlot, remaining <= 0 ? ItemStack.EMPTY : new ItemStack(source.itemId(), remaining, source.damage()));
+                sourceInventory.setSlot(sourceSlot, remaining <= 0 ? ItemStack.EMPTY : new ItemStack(source.itemId(), remaining, source.damage()));
                 return true;
             }
         }
-        inventory.setSlot(sourceSlot, target);
-        inventory.setSlot(targetSlot, source);
+        sourceInventory.setSlot(sourceSlot, target);
+        targetInventory.setSlot(targetSlot, source);
         return true;
     }
 
@@ -420,6 +477,14 @@ public final class Hotbar {
     private List<ItemStack> backpackSlots() {
         List<ItemStack> slots = new ArrayList<>();
         for (int i = HOTBAR_SLOTS; i < inventory.size(); i++) {
+            slots.add(inventory.slot(i));
+        }
+        return slots;
+    }
+
+    private static List<ItemStack> inventorySlots(Inventory inventory) {
+        List<ItemStack> slots = new ArrayList<>();
+        for (int i = 0; i < inventory.size(); i++) {
             slots.add(inventory.slot(i));
         }
         return slots;
@@ -506,6 +571,8 @@ public final class Hotbar {
                     0,
                     "-",
                     0,
+                    0.0f,
+                    "",
                     0,
                     0,
                     0,
@@ -524,6 +591,8 @@ public final class Hotbar {
                 item.durability(),
                 toolTypeLabel(item),
                 toolLevel(item),
+                item.isTool() ? item.toolSpeed() : 0.0f,
+                item.durability() > 0 ? repairMaterialLabel(item.key()) : "",
                 item.foodValue(),
                 item.healValue(),
                 comfortValue(item),
@@ -594,8 +663,13 @@ public final class Hotbar {
         tooltip.append(" | ").append(itemRarity(item));
         tooltip.append(" | ").append(itemDescription(item));
         if (item.isTool()) {
-            tooltip.append(" | ").append(toolTypeLabel(item)).append(" Level ").append(toolLevel(item)).append(" ");
+            tooltip.append(" | ").append(toolTypeLabel(item)).append(" Level ").append(toolLevel(item));
+            tooltip.append(" Speed x").append(formatToolSpeed(item.toolSpeed()));
+        }
+        if (item.durability() > 0) {
+            tooltip.append(" | Durability ");
             tooltip.append(Math.max(0, item.durability() - stack.damage())).append("/").append(item.durability());
+            tooltip.append(" | Repair: ").append(repairMaterialLabel(item.key()));
         }
         if (item.isFood()) {
             tooltip.append(" | Food +").append(item.foodValue());
@@ -627,6 +701,45 @@ public final class Hotbar {
     }
 
     private static String itemDescription(ItemType item) {
+        if ("voxel:reed_bundle".equals(item.key())) {
+            return "Seals water containers and burns briefly";
+        }
+        if ("voxel:bark_strip".equals(item.key())) {
+            return "Fuel, torch wrap, and tool handle material";
+        }
+        if ("voxel:tool_handle".equals(item.key())) {
+            return "Reinforced handle for copper tools";
+        }
+        if ("voxel:resin_torch".equals(item.key())) {
+            return "Placeable torch wrapped with pine resin";
+        }
+        if ("voxel:ancient_fragment".equals(item.key())) {
+            return "Ruin relic used to restore old craftwork";
+        }
+        if ("voxel:ancient_lantern".equals(item.key())) {
+            return "Restored ruin light for cozy bases";
+        }
+        if ("voxel:water_container".equals(item.key())) {
+            return "Cooking supply for soups, tea, and stew";
+        }
+        if ("voxel:iron_ingot".equals(item.key())) {
+            return "Forge metal for iron tools and ruin keys";
+        }
+        if ("voxel:cloth".equals(item.key())) {
+            return "Workbench textile for comfort crafts";
+        }
+        if ("voxel:leather_strip".equals(item.key())) {
+            return "Grip binding for iron tools and ruin keys";
+        }
+        if ("voxel:ruin_key".equals(item.key())) {
+            return "Late ruin progression key";
+        }
+        if ("voxel:ruin_seal".equals(item.key())) {
+            return "Forged seal for rare ruin progression";
+        }
+        if ("voxel:lost_charm".equals(item.key())) {
+            return "Rare collectible from old ruins";
+        }
         if (item.isFood()) {
             return "Restores hunger" + (item.healValue() > 0 ? " and health" : "");
         }
@@ -647,7 +760,8 @@ public final class Hotbar {
         if (key.contains("glow") || key.contains("crystal")) {
             return "Rare";
         }
-        if (key.contains("copper") || key.contains("iron") || key.contains("lantern") || key.contains("stew") || key.contains("soup")) {
+        if (key.contains("copper") || key.contains("iron") || key.contains("lantern") || key.contains("stew") || key.contains("soup")
+                || key.contains("jam") || key.contains("tea")) {
             return "Uncommon";
         }
         return "Common";
@@ -664,14 +778,42 @@ public final class Hotbar {
         return InteractionRules.toolLevel(item);
     }
 
+    private static String formatToolSpeed(float speed) {
+        if (speed == Math.round(speed)) {
+            return Integer.toString(Math.round(speed));
+        }
+        String text = String.format(Locale.ROOT, "%.2f", speed);
+        while (text.endsWith("0")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return text.endsWith(".") ? text.substring(0, text.length() - 1) : text;
+    }
+
+    static String repairMaterialLabel(String itemKey) {
+        if (itemKey.contains("copper")) {
+            return "copper ingot";
+        }
+        if (itemKey.contains("iron")) {
+            return "iron ingot";
+        }
+        if (itemKey.contains("crystal") || itemKey.contains("glow") || itemKey.contains("ancient")) {
+            return "glow crystal";
+        }
+        if (itemKey.contains("stone")) {
+            return "stone or pebble";
+        }
+        return "matching material";
+    }
+
     private static int comfortValue(ItemType item) {
         if (item.placesBlockKey() == null) {
             return 0;
         }
         return switch (item.placesBlockKey()) {
+            case "voxel:sleeping_mat", "voxel:ancient_lantern" -> 4;
             case "voxel:lantern", "voxel:woven_rug" -> 3;
             case "voxel:campfire", "voxel:wooden_chair", "voxel:small_table" -> 2;
-            case "voxel:flower_pot", "voxel:herb_planter", "voxel:berry_bush" -> 1;
+            case "voxel:flower_pot", "voxel:storage_crate", "voxel:garden_fence", "voxel:workbench" -> 1;
             default -> 0;
         };
     }
@@ -688,15 +830,33 @@ public final class Hotbar {
             case CAMPFIRE -> "Campfire";
             case COOKING_POT -> "Cooking Pot";
             case WORKBENCH -> "Workbench";
+            case FORGE -> "Forge";
         };
     }
 
     private record StoragePos(int x, int y, int z) {
     }
 
-    public record SlotView(String itemKey, String label, String category, String description, String rarity, int count, int durabilityLeft, int maxDurability, String toolTypeLabel, int toolLevel, int foodValue, int healValue, int comfortValue, boolean placeable) {
+    public record SlotView(
+            String itemKey,
+            String label,
+            String category,
+            String description,
+            String rarity,
+            int count,
+            int durabilityLeft,
+            int maxDurability,
+            String toolTypeLabel,
+            int toolLevel,
+            float toolSpeed,
+            String repairMaterialLabel,
+            int foodValue,
+            int healValue,
+            int comfortValue,
+            boolean placeable
+    ) {
         private static SlotView empty() {
-            return new SlotView("", "Empty", "", "", "", 0, 0, 0, "", 0, 0, 0, 0, false);
+            return new SlotView("", "Empty", "", "", "", 0, 0, 0, "", 0, 0.0f, "", 0, 0, 0, false);
         }
 
         public boolean isEmpty() {

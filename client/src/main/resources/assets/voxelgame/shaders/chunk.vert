@@ -2,7 +2,7 @@
 
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aNormal;
-layout (location = 2) in float aBlockId;
+layout (location = 2) in float aMaterialIndex;
 layout (location = 3) in float aLight;
 layout (location = 4) in float aAo;
 layout (location = 5) in vec2 aFaceUv;
@@ -15,10 +15,11 @@ uniform int uAmbientOcclusionEnabled;
 uniform int uSoftShadowsEnabled;
 uniform float uTime;
 uniform float uShadowStrength;
-uniform vec4 uBlockEffects[64];
+uniform sampler2D uMaterialLut;
+uniform int uMaterialCount;
 
 out float vLight;
-out float vBlockId;
+out float vMaterialIndex;
 out float vShade;
 out float vDistance;
 out float vAo;
@@ -26,13 +27,18 @@ out vec3 vWorldPosition;
 out vec3 vNormal;
 out vec2 vFaceUv;
 
-bool animatedFluid(int id) {
-    return uBlockEffects[clamp(id, 0, 63)].y > 0.5;
+vec4 materialTexel(float materialIndex, int row) {
+    int safeIndex = clamp(int(materialIndex + 0.5), 0, max(uMaterialCount - 1, 0));
+    return texelFetch(uMaterialLut, ivec2(safeIndex, row), 0);
+}
+
+bool animatedFluid(float materialIndex) {
+    return materialTexel(materialIndex, 1).y > 0.5;
 }
 
 void main() {
     vLight = max(aLight, 0.12);
-    vBlockId = aBlockId;
+    vMaterialIndex = aMaterialIndex;
     float sun = max(dot(normalize(aNormal), normalize(uSunDirection)), 0.0);
     float floorShade = uSoftShadowsEnabled == 1 ? 0.34 : 0.50;
     vShade = mix(floorShade, 1.0, sun);
@@ -42,7 +48,7 @@ void main() {
     }
     vAo = uAmbientOcclusionEnabled == 1 ? aAo : 1.0;
     vec3 position = aPosition;
-    if (animatedFluid(int(aBlockId + 0.5))) {
+    if (animatedFluid(aMaterialIndex)) {
         position.y += sin(uTime * 2.2 + aPosition.x * 0.45 + aPosition.z * 0.33) * 0.035;
     }
     vWorldPosition = position;

@@ -1,6 +1,7 @@
 package dev.voxelgame.client.render.entity;
 
 import dev.voxelgame.common.entity.EntityBounds;
+import dev.voxelgame.common.entity.ItemDropType;
 import org.joml.Vector3f;
 
 import java.util.List;
@@ -28,6 +29,9 @@ public final class EntityModelRegistry {
     }
 
     private static EntityModel createModel(String typeKey) {
+        if (ItemDropType.isTypeKey(typeKey)) {
+            return itemDrop(typeKey);
+        }
         if ("voxel:player".equals(typeKey)) {
             return humanoid(typeKey);
         }
@@ -164,6 +168,13 @@ public final class EntityModelRegistry {
         ), true);
     }
 
+    private static EntityModel itemDrop(String typeKey) {
+        return new EntityModel(typeKey, List.of(
+                rotatedPart("item", 0.0f, 0.08f, 0.0f, 0.28f, 0.28f, 0.28f, EntityModelPart.ColorRole.BASE, 0.0f, 0.35f, 0.0f),
+                rotatedPart("glint", 0.0f, 0.27f, 0.0f, 0.20f, 0.04f, 0.20f, EntityModelPart.ColorRole.DETAIL, 0.0f, 0.35f, 0.0f)
+        ), true);
+    }
+
     private static EntityModelPart part(String name, float x, float y, float z, float width, float height, float depth, EntityModelPart.ColorRole role) {
         return new EntityModelPart(name, x, y, z, width, height, depth, role, false);
     }
@@ -173,6 +184,9 @@ public final class EntityModelRegistry {
     }
 
     private static Vector3f baseColor(String typeKey) {
+        if (ItemDropType.isTypeKey(typeKey)) {
+            return itemDropColor(typeKey);
+        }
         return switch (typeKey) {
             case "voxel:cozy_sheep" -> new Vector3f(0.82f, 0.78f, 0.66f);
             case "voxel:forest_bunny" -> new Vector3f(0.45f, 0.34f, 0.26f);
@@ -205,6 +219,9 @@ public final class EntityModelRegistry {
     }
 
     private static Vector3f detailColor(String typeKey) {
+        if (ItemDropType.isTypeKey(typeKey)) {
+            return new Vector3f(0.86f, 0.96f, 0.74f);
+        }
         return switch (typeKey) {
             case "voxel:forest_bunny" -> new Vector3f(0.84f, 0.72f, 0.56f);
             case "voxel:snow_hare" -> new Vector3f(0.96f, 0.96f, 0.88f);
@@ -222,5 +239,16 @@ public final class EntityModelRegistry {
         }
         Vector3f base = baseColor(typeKey);
         return new Vector3f(base).mul(0.68f);
+    }
+
+    private static Vector3f itemDropColor(String typeKey) {
+        return switch (ItemDropType.itemKey(typeKey).orElse("")) {
+            case "voxel:moss_clump" -> new Vector3f(0.24f, 0.48f, 0.22f);
+            case "voxel:slime_drop" -> new Vector3f(0.34f, 0.86f, 0.54f);
+            case "voxel:glow_crystal" -> new Vector3f(0.42f, 0.92f, 0.86f);
+            case "voxel:berries" -> new Vector3f(0.72f, 0.16f, 0.22f);
+            case "voxel:mushroom" -> new Vector3f(0.72f, 0.36f, 0.28f);
+            default -> new Vector3f(0.62f, 0.56f, 0.40f);
+        };
     }
 }

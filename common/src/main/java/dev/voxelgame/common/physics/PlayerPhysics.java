@@ -1,6 +1,12 @@
 package dev.voxelgame.common.physics;
 
 public final class PlayerPhysics {
+    private static final float GROUND_ACCELERATION_PER_SECOND = 22.0f;
+    private static final float GROUND_FRICTION_PER_SECOND = 18.0f;
+    private static final float AIR_CONTROL_PER_SECOND = 4.5f;
+    private static final float AIR_HORIZONTAL_DRAG = 0.985f;
+    private static final float WATER_CONTROL_PER_SECOND = 6.5f;
+
     private PlayerPhysics() {
     }
 
@@ -40,10 +46,36 @@ public final class PlayerPhysics {
         boolean swimming = water.movementAffected();
         boolean sprinting = input.sprint() && !swimming;
         float speed = horizontalSpeed(config, sprinting, swimming);
-        float velocityX = input.moveX() * speed;
-        float velocityZ = input.moveZ() * speed;
+        float targetVelocityX = input.moveX() * speed;
+        float targetVelocityZ = input.moveZ() * speed;
+        float velocityX = state.velocityX();
+        float velocityZ = state.velocityZ();
         float velocityY = state.velocityY();
         boolean onGround = state.onGround();
+
+        if (swimming) {
+            float waterControl = Math.min(1.0f, deltaSeconds * WATER_CONTROL_PER_SECOND);
+            velocityX += (targetVelocityX - velocityX) * waterControl;
+            velocityZ += (targetVelocityZ - velocityZ) * waterControl;
+            velocityX = dampSmallVelocity(velocityX * config.waterHorizontalDrag());
+            velocityZ = dampSmallVelocity(velocityZ * config.waterHorizontalDrag());
+        } else if (onGround) {
+            if (input.moveX() != 0.0f || input.moveZ() != 0.0f) {
+                float acceleration = Math.min(1.0f, deltaSeconds * GROUND_ACCELERATION_PER_SECOND);
+                velocityX += (targetVelocityX - velocityX) * acceleration;
+                velocityZ += (targetVelocityZ - velocityZ) * acceleration;
+            } else {
+                float friction = Math.max(0.0f, 1.0f - deltaSeconds * GROUND_FRICTION_PER_SECOND);
+                velocityX = dampSmallVelocity(velocityX * friction);
+                velocityZ = dampSmallVelocity(velocityZ * friction);
+            }
+        } else {
+            float airControl = Math.min(1.0f, deltaSeconds * AIR_CONTROL_PER_SECOND);
+            velocityX += (targetVelocityX - velocityX) * airControl;
+            velocityZ += (targetVelocityZ - velocityZ) * airControl;
+            velocityX *= AIR_HORIZONTAL_DRAG;
+            velocityZ *= AIR_HORIZONTAL_DRAG;
+        }
 
         if (swimming && input.jump()) {
             velocityY = Math.max(velocityY, config.swimRiseSpeed());
@@ -189,6 +221,10 @@ public final class PlayerPhysics {
             nextZ += stepZ;
         }
         return new Movement(nextX, nextY, nextZ, false);
+    }
+
+    private static float dampSmallVelocity(float velocity) {
+        return Math.abs(velocity) < 0.001f ? 0.0f : velocity;
     }
 
     private record Movement(double x, double y, double z, boolean collided) {

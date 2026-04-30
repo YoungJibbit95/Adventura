@@ -61,15 +61,38 @@ class ChunkMesherTest {
     }
 
     @Test
-    void ambientOcclusionPathKeepsSingleBlockFaces() {
+    void ambientOcclusionPathUsesGreedyMeshWhenMergeInputsMatch() {
         MeshWorld meshWorld = meshWorld();
         meshWorld.world().setBlockId(0, 64, 0, Blocks.STONE);
         meshWorld.world().setBlockId(1, 64, 0, Blocks.STONE);
 
-        ChunkMesh mesh = new ChunkMesher().buildTerrainMesh(meshWorld.world(), meshWorld.chunk(), true);
+        ChunkMesher mesher = new ChunkMesher();
+        ChunkMesh mesh = mesher.buildTerrainMesh(meshWorld.world(), meshWorld.chunk(), true);
+
+        assertEquals(24, mesh.vertexCount());
+        assertEquals(36, mesh.indexCount());
+        assertEquals(true, mesher.lastBuildStats().greedyMeshing());
+    }
+
+    @Test
+    void greedyMeshingCanBeDisabledForVisualComparison() {
+        MeshWorld meshWorld = meshWorld();
+        meshWorld.world().setBlockId(0, 64, 0, Blocks.STONE);
+        meshWorld.world().setBlockId(1, 64, 0, Blocks.STONE);
+
+        ChunkMesher mesher = new ChunkMesher();
+        mesher.setGreedyMeshingEnabled(false);
+        ChunkMesh mesh = mesher.buildTerrainMesh(meshWorld.world(), meshWorld.chunk(), true);
+        ChunkMesher.MeshBuildStats stats = mesher.lastBuildStats();
 
         assertEquals(40, mesh.vertexCount());
         assertEquals(60, mesh.indexCount());
+        assertEquals(false, stats.greedyMeshing());
+        assertEquals(mesh.vertexCount(), stats.vertices());
+        assertEquals(mesh.indexCount(), stats.indices());
+        assertEquals(mesh.estimatedBytes(), stats.outputBytes());
+        assertEquals(0L, stats.temporaryBufferGrowthBytes());
+        assertEquals(true, stats.retainedBufferBytes() >= stats.outputBytes());
     }
 
     @Test
@@ -118,6 +141,12 @@ class ChunkMesherTest {
         assertEquals(maxY, actualMaxY, 0.0001f);
         assertEquals(minZ, actualMinZ, 0.0001f);
         assertEquals(maxZ, actualMaxZ, 0.0001f);
+        assertEquals(minX, mesh.bounds().minX(), 0.0001f);
+        assertEquals(maxX, mesh.bounds().maxX(), 0.0001f);
+        assertEquals(minY, mesh.bounds().minY(), 0.0001f);
+        assertEquals(maxY, mesh.bounds().maxY(), 0.0001f);
+        assertEquals(minZ, mesh.bounds().minZ(), 0.0001f);
+        assertEquals(maxZ, mesh.bounds().maxZ(), 0.0001f);
     }
 
     private static void assertIntegerVertexPositions(ChunkMesh mesh) {

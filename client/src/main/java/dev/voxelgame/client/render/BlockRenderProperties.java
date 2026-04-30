@@ -6,6 +6,7 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.registry.Registry;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 public record BlockRenderProperties(
         float tintR,
@@ -13,25 +14,59 @@ public record BlockRenderProperties(
         float tintB,
         float alpha,
         float emissive,
-        boolean animatedFluid
+        boolean animatedFluid,
+        float cutoutThreshold,
+        BiomeTintMode biomeTintMode,
+        FogAffectMode fogAffectMode,
+        float roughness
 ) {
-    public static final int MAX_BLOCK_ID = 256;
-    public static final int SHADER_BLOCK_ID_LIMIT = 64;
+    public static final int MAX_BLOCK_ID = 4096;
+    public static final int MATERIAL_INDEX_LIMIT = MAX_BLOCK_ID;
+    /**
+     * Kept as a compatibility alias for older tests/callers. Shader uploads no longer use a fixed uniform array limit.
+     */
+    @Deprecated
+    public static final int SHADER_BLOCK_ID_LIMIT = MATERIAL_INDEX_LIMIT;
     public static final int FLAG_TRANSLUCENT = 1;
     public static final int FLAG_EMISSIVE = 1 << 1;
     public static final int FLAG_ANIMATED_FLUID = 1 << 2;
     public static final int FLAG_FILL_TEXTURE_GAPS = 1 << 3;
+    public static final int FLAG_LAYER_SOLID = 1 << 4;
+    public static final int FLAG_LAYER_CUTOUT = 1 << 5;
+    public static final int FLAG_LAYER_TRANSLUCENT = 1 << 6;
+
+    public static final float DEFAULT_CUTOUT_THRESHOLD = 0.05f;
+    public static final float DEFAULT_ROUGHNESS = 0.82f;
 
     private static final BlockRenderProperties FALLBACK = new BlockRenderProperties(0.70f, 0.30f, 0.70f, 1.0f, 0.0f, false);
     private static final BlockRenderProperties[] DEFAULTS = createDefaultTable();
     private static final boolean[] FILLS_TEXTURE_GAPS = createFillTextureGapTable();
 
+    public BlockRenderProperties(float tintR, float tintG, float tintB, float alpha, float emissive, boolean animatedFluid) {
+        this(
+                tintR,
+                tintG,
+                tintB,
+                alpha,
+                emissive,
+                animatedFluid,
+                DEFAULT_CUTOUT_THRESHOLD,
+                BiomeTintMode.NONE,
+                FogAffectMode.NORMAL,
+                DEFAULT_ROUGHNESS
+        );
+    }
+
     public BlockRenderProperties {
+        Objects.requireNonNull(biomeTintMode, "biomeTintMode");
+        Objects.requireNonNull(fogAffectMode, "fogAffectMode");
         if (!Float.isFinite(tintR) || !Float.isFinite(tintG) || !Float.isFinite(tintB)
-                || !Float.isFinite(alpha) || !Float.isFinite(emissive)) {
+                || !Float.isFinite(alpha) || !Float.isFinite(emissive)
+                || !Float.isFinite(cutoutThreshold) || !Float.isFinite(roughness)) {
             throw new IllegalArgumentException("Render properties must be finite");
         }
-        if (!unit(tintR) || !unit(tintG) || !unit(tintB) || !unit(alpha) || !unit(emissive)) {
+        if (!unit(tintR) || !unit(tintG) || !unit(tintB) || !unit(alpha) || !unit(emissive)
+                || !unit(cutoutThreshold) || !unit(roughness)) {
             throw new IllegalArgumentException("Render property values must be within 0..1");
         }
     }
@@ -53,13 +88,24 @@ public record BlockRenderProperties(
 
     public static void validateRegisteredBlocks(Registry<BlockType> blocks) {
         for (BlockType block : blocks.values()) {
-            if (block.id() < 0 || block.id() >= MAX_BLOCK_ID) {
+            if (block.id() < 0 || block.id() >= MATERIAL_INDEX_LIMIT) {
                 throw new IllegalStateException("Block id outside render material table: " + block.key());
             }
-            if (block.id() >= SHADER_BLOCK_ID_LIMIT) {
-                throw new IllegalStateException("Block id outside shader material table: " + block.key());
+            if (!hasExplicitProperties(block.id())) {
+                continue;
+            }
+            BlockRenderProperties properties = DEFAULTS[block.id()];
+            if (properties.alpha() < 1.0f && block.renderLayer() != BlockRenderLayer.TRANSLUCENT) {
+                throw new IllegalStateException("Alpha material must use TRANSLUCENT layer: " + block.key());
+            }
+            if (block.renderLayer() == BlockRenderLayer.TRANSLUCENT && properties.alpha() >= 1.0f) {
+                throw new IllegalStateException("TRANSLUCENT material needs alpha below 1.0: " + block.key());
             }
         }
+    }
+
+    public static boolean hasExplicitProperties(short blockId) {
+        return blockId >= 0 && blockId < DEFAULTS.length && DEFAULTS[blockId] != FALLBACK;
     }
 
     public static boolean fillsTextureGaps(short blockId) {
@@ -81,6 +127,18 @@ public record BlockRenderProperties(
             flags |= FLAG_ANIMATED_FLUID;
         }
         return flags;
+    }
+
+    public int materialFlags(BlockRenderLayer layer, boolean faceGapFix) {
+        int flags = materialFlags();
+        if (faceGapFix) {
+            flags |= FLAG_FILL_TEXTURE_GAPS;
+        }
+        return flags | switch (layer) {
+            case SOLID -> FLAG_LAYER_SOLID;
+            case CUTOUT -> FLAG_LAYER_CUTOUT;
+            case TRANSLUCENT -> FLAG_LAYER_TRANSLUCENT;
+        };
     }
 
     public static float[] colorAlphaTable() {
@@ -182,6 +240,12 @@ public record BlockRenderProperties(
         set(table, Blocks.CAMPFIRE_ACTIVE, 1.00f, 0.55f, 0.20f, 1.0f, 1.0f, false);
         set(table, Blocks.CAMPFIRE_BURNED_OUT, 0.24f, 0.22f, 0.20f);
         set(table, Blocks.SLEEPING_MAT, 0.55f, 0.30f, 0.28f);
+        set(table, Blocks.COOKING_POT, 0.58f, 0.36f, 0.25f);
+        set(table, Blocks.REEDS, 0.36f, 0.58f, 0.28f);
+        set(table, Blocks.TWIG_PILE, 0.56f, 0.38f, 0.20f);
+        set(table, Blocks.ANCIENT_LANTERN, 0.36f, 0.86f, 0.92f, 1.0f, 0.95f, false);
+        set(table, Blocks.WORKBENCH, 0.48f, 0.30f, 0.18f);
+        set(table, Blocks.FORGE, 0.34f, 0.31f, 0.30f);
         return table;
     }
 
@@ -204,5 +268,18 @@ public record BlockRenderProperties(
 
     private static boolean unit(float value) {
         return value >= 0.0f && value <= 1.0f;
+    }
+
+    public enum BiomeTintMode {
+        NONE,
+        GRASS,
+        FOLIAGE,
+        WATER
+    }
+
+    public enum FogAffectMode {
+        NORMAL,
+        REDUCED,
+        UNAFFECTED
     }
 }

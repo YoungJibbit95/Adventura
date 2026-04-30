@@ -8,6 +8,56 @@ tasks.register("buildGame") {
     dependsOn(subprojects.map { "${it.path}:build" })
 }
 
+val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+val localNpmExecutable = if (isWindows) {
+    null
+} else {
+    file("${System.getProperty("user.home")}/.nvm/versions/node")
+        .takeIf { it.isDirectory }
+        ?.listFiles()
+        ?.filter { it.isDirectory }
+        ?.sortedByDescending { it.name }
+        ?.map { it.resolve("bin/npm") }
+        ?.firstOrNull { it.exists() }
+}
+val npmCommand = if (isWindows) "npm.cmd" else localNpmExecutable?.absolutePath ?: "npm"
+val launcherNpmPath = localNpmExecutable
+    ?.parentFile
+    ?.absolutePath
+    ?.let { "$it:${System.getenv("PATH").orEmpty()}" }
+
+tasks.register<Exec>("setupLauncher") {
+    group = "voxel"
+    description = "Installs the Electron launcher dependencies."
+    workingDir = file("launcher-electron")
+    launcherNpmPath?.let { environment("PATH", it) }
+    commandLine(npmCommand, "install")
+}
+
+tasks.register<Exec>("runLauncher") {
+    group = "voxel"
+    description = "Runs the Electron launcher from the workspace."
+    workingDir = file("launcher-electron")
+    launcherNpmPath?.let { environment("PATH", it) }
+    commandLine(npmCommand, "run", "dev")
+}
+
+tasks.register<Exec>("runElectronLauncher") {
+    group = "voxel"
+    description = "Runs the Electron launcher from the workspace."
+    workingDir = file("launcher-electron")
+    launcherNpmPath?.let { environment("PATH", it) }
+    commandLine(npmCommand, "run", "dev")
+}
+
+tasks.register<Exec>("packageLauncher") {
+    group = "voxel"
+    description = "Builds the Electron launcher desktop package."
+    workingDir = file("launcher-electron")
+    launcherNpmPath?.let { environment("PATH", it) }
+    commandLine(npmCommand, "run", "dist")
+}
+
 tasks.register<JavaExec>("runClient") {
     group = "voxel"
     description = "Runs the client and opens the main menu."
@@ -44,14 +94,6 @@ tasks.register<JavaExec>("joinLocal") {
     mainClass.set("dev.voxelgame.client.ClientMain")
     args("--auto-join", "--connect", "127.0.0.1", "--port", "25565", "--username", "Player", "--render-distance", "8")
     jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
-}
-
-tasks.register<JavaExec>("runLauncher") {
-    group = "voxel"
-    description = "Runs the Swing launcher for client/server startup."
-    dependsOn(":launcher:classes")
-    classpath = project(":launcher").sourceSets.main.get().runtimeClasspath
-    mainClass.set("dev.voxelgame.launcher.GameLauncherMain")
 }
 
 allprojects {

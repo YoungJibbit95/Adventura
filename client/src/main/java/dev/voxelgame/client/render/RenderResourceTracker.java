@@ -8,6 +8,21 @@ public final class RenderResourceTracker {
     private static long peakChunkMeshBytes;
     private static long createdChunkMeshes;
     private static long disposedChunkMeshes;
+    private static int liveTextures;
+    private static long liveTextureBytes;
+    private static long peakTextureBytes;
+    private static long createdTextures;
+    private static long disposedTextures;
+    private static int liveShaderPrograms;
+    private static long createdShaderPrograms;
+    private static long disposedShaderPrograms;
+    private static int liveParticleVertexArrays;
+    private static int liveParticleBuffers;
+    private static long liveParticleBufferBytes;
+    private static int liveEntityVertexArrays;
+    private static int liveEntityBuffers;
+    private static long liveEntityBufferBytes;
+    private static int liveFramebuffers;
 
     private RenderResourceTracker() {
     }
@@ -32,6 +47,82 @@ public final class RenderResourceTracker {
         disposedChunkMeshes++;
     }
 
+    public static synchronized void registerTexture(long estimatedBytes) {
+        long bytes = Math.max(0L, estimatedBytes);
+        liveTextures++;
+        liveTextureBytes += bytes;
+        peakTextureBytes = Math.max(peakTextureBytes, liveTextureBytes);
+        createdTextures++;
+    }
+
+    public static synchronized void releaseTexture(long estimatedBytes) {
+        long bytes = Math.max(0L, estimatedBytes);
+        if (liveTextures <= 0 || liveTextureBytes < bytes) {
+            throw new IllegalStateException("Texture resource tracking underflow");
+        }
+        liveTextures--;
+        liveTextureBytes -= bytes;
+        disposedTextures++;
+    }
+
+    public static synchronized void registerShaderProgram() {
+        liveShaderPrograms++;
+        createdShaderPrograms++;
+    }
+
+    public static synchronized void releaseShaderProgram() {
+        if (liveShaderPrograms <= 0) {
+            throw new IllegalStateException("Shader program resource tracking underflow");
+        }
+        liveShaderPrograms--;
+        disposedShaderPrograms++;
+    }
+
+    public static synchronized void registerParticleBuffers(long estimatedBytes) {
+        liveParticleVertexArrays++;
+        liveParticleBuffers++;
+        liveParticleBufferBytes += Math.max(0L, estimatedBytes);
+    }
+
+    public static synchronized void releaseParticleBuffers(long estimatedBytes) {
+        long bytes = Math.max(0L, estimatedBytes);
+        if (liveParticleVertexArrays <= 0 || liveParticleBuffers <= 0 || liveParticleBufferBytes < bytes) {
+            throw new IllegalStateException("Particle buffer resource tracking underflow");
+        }
+        liveParticleVertexArrays--;
+        liveParticleBuffers--;
+        liveParticleBufferBytes -= bytes;
+    }
+
+    public static synchronized void registerEntityBuffers(int bufferCount, long estimatedBytes) {
+        int buffers = Math.max(0, bufferCount);
+        liveEntityVertexArrays++;
+        liveEntityBuffers += buffers;
+        liveEntityBufferBytes += Math.max(0L, estimatedBytes);
+    }
+
+    public static synchronized void releaseEntityBuffers(int bufferCount, long estimatedBytes) {
+        int buffers = Math.max(0, bufferCount);
+        long bytes = Math.max(0L, estimatedBytes);
+        if (liveEntityVertexArrays <= 0 || liveEntityBuffers < buffers || liveEntityBufferBytes < bytes) {
+            throw new IllegalStateException("Entity buffer resource tracking underflow");
+        }
+        liveEntityVertexArrays--;
+        liveEntityBuffers -= buffers;
+        liveEntityBufferBytes -= bytes;
+    }
+
+    public static synchronized void registerFramebuffer() {
+        liveFramebuffers++;
+    }
+
+    public static synchronized void releaseFramebuffer() {
+        if (liveFramebuffers <= 0) {
+            throw new IllegalStateException("Framebuffer resource tracking underflow");
+        }
+        liveFramebuffers--;
+    }
+
     public static synchronized Snapshot snapshot() {
         return new Snapshot(
                 liveChunkMeshes,
@@ -40,7 +131,22 @@ public final class RenderResourceTracker {
                 liveChunkMeshBytes,
                 peakChunkMeshBytes,
                 createdChunkMeshes,
-                disposedChunkMeshes
+                disposedChunkMeshes,
+                liveTextures,
+                liveTextureBytes,
+                peakTextureBytes,
+                createdTextures,
+                disposedTextures,
+                liveShaderPrograms,
+                createdShaderPrograms,
+                disposedShaderPrograms,
+                liveParticleVertexArrays,
+                liveParticleBuffers,
+                liveParticleBufferBytes,
+                liveEntityVertexArrays,
+                liveEntityBuffers,
+                liveEntityBufferBytes,
+                liveFramebuffers
         );
     }
 
@@ -52,6 +158,21 @@ public final class RenderResourceTracker {
         peakChunkMeshBytes = 0L;
         createdChunkMeshes = 0L;
         disposedChunkMeshes = 0L;
+        liveTextures = 0;
+        liveTextureBytes = 0L;
+        peakTextureBytes = 0L;
+        createdTextures = 0L;
+        disposedTextures = 0L;
+        liveShaderPrograms = 0;
+        createdShaderPrograms = 0L;
+        disposedShaderPrograms = 0L;
+        liveParticleVertexArrays = 0;
+        liveParticleBuffers = 0;
+        liveParticleBufferBytes = 0L;
+        liveEntityVertexArrays = 0;
+        liveEntityBuffers = 0;
+        liveEntityBufferBytes = 0L;
+        liveFramebuffers = 0;
     }
 
     public record Snapshot(
@@ -61,7 +182,25 @@ public final class RenderResourceTracker {
             long liveChunkMeshBytes,
             long peakChunkMeshBytes,
             long createdChunkMeshes,
-            long disposedChunkMeshes
+            long disposedChunkMeshes,
+            int liveTextures,
+            long liveTextureBytes,
+            long peakTextureBytes,
+            long createdTextures,
+            long disposedTextures,
+            int liveShaderPrograms,
+            long createdShaderPrograms,
+            long disposedShaderPrograms,
+            int liveParticleVertexArrays,
+            int liveParticleBuffers,
+            long liveParticleBufferBytes,
+            int liveEntityVertexArrays,
+            int liveEntityBuffers,
+            long liveEntityBufferBytes,
+            int liveFramebuffers
     ) {
+        public static Snapshot empty() {
+            return new Snapshot(0, 0, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0, 0, 0L, 0, 0, 0L, 0);
+        }
     }
 }

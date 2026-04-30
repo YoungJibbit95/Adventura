@@ -12,6 +12,7 @@ class OverworldGeneratorResourceTest {
         assertEquals(Blocks.HERB_PLANTER, OverworldGenerator.detailResourceFor("voxel:cozy_meadow", 0.020));
         assertEquals(Blocks.SUN_BLOOM, OverworldGenerator.detailResourceFor("voxel:flower_fields", 0.010));
         assertEquals(Blocks.CLAY_DEPOSIT, OverworldGenerator.detailResourceFor("voxel:lakeside", 0.010));
+        assertEquals(Blocks.REEDS, OverworldGenerator.detailResourceFor("voxel:lakeside", 0.020));
         assertEquals(Blocks.MUSHROOM_CLUSTER, OverworldGenerator.detailResourceFor("voxel:mushroom_grove", 0.010));
         assertEquals(Blocks.TREE_STUMP, OverworldGenerator.detailResourceFor("voxel:skyroot_forest", 0.010));
         assertEquals(Blocks.RED_MUSHROOM, OverworldGenerator.detailResourceFor("voxel:pine_forest", 0.018));

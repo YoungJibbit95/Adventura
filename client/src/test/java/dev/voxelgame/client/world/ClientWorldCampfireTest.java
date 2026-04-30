@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientWorldCampfireTest {
     @Test
@@ -20,6 +22,50 @@ class ClientWorldCampfireTest {
         List<ClientWorld.BlockPos> campfires = world.activeCampfiresWithin(new Vector3f(2.5f, 64.5f, 2.5f), 12, 1, 0.0);
 
         assertEquals(List.of(new ClientWorld.BlockPos(3, 64, 3)), campfires);
+    }
+
+    @Test
+    void nearestBlockWithinFindsCookingPotStation() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(7, 64, 7, Blocks.COOKING_POT));
+        world.applyBlock(new GamePacket.BlockUpdate(3, 64, 3, Blocks.COOKING_POT));
+
+        assertEquals(
+                new ClientWorld.BlockPos(3, 64, 3),
+                world.nearestBlockWithin(new Vector3f(2.5f, 64.5f, 2.5f), Blocks.COOKING_POT, 8).orElseThrow()
+        );
+    }
+
+    @Test
+    void campfireStatusTracksFuelAndCookingProgressFromSnapshot() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(3, 64, 3, Blocks.CAMPFIRE));
+
+        world.applyCampfireStatus(new GamePacket.CampfireStatus(
+                3,
+                64,
+                3,
+                true,
+                10.0,
+                "voxel:cooked_berries",
+                4.0,
+                4.0
+        ), 20.0);
+
+        ClientWorld.CampfireStatusView initial = world.campfireStatusAt(3, 64, 3, 20.0).orElseThrow();
+        assertTrue(initial.active());
+        assertTrue(initial.cooking());
+        assertEquals(10.0, initial.fuelSecondsRemaining(), 0.001);
+        assertEquals(0.0f, initial.cookProgress(), 0.001f);
+
+        ClientWorld.CampfireStatusView halfway = world.campfireStatusAt(3, 64, 3, 22.0).orElseThrow();
+        assertEquals(8.0, halfway.fuelSecondsRemaining(), 0.001);
+        assertEquals(2.0, halfway.cookSecondsRemaining(), 0.001);
+        assertEquals(0.5f, halfway.cookProgress(), 0.001f);
+
+        ClientWorld.CampfireStatusView expired = world.campfireStatusAt(3, 64, 3, 31.0).orElseThrow();
+        assertFalse(expired.active());
+        assertEquals(Blocks.CAMPFIRE_BURNED_OUT, world.blockIdAt(3, 64, 3));
     }
 
     @Test

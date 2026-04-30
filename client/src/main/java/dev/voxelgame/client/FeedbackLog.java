@@ -1,5 +1,7 @@
 package dev.voxelgame.client;
 
+import dev.voxelgame.client.animation.Easing;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -7,6 +9,7 @@ import java.util.Locale;
 public final class FeedbackLog {
     private static final int MAX_ENTRIES = 6;
     private static final double DEFAULT_DURATION_SECONDS = 3.4;
+    private static final double FADE_SECONDS = 0.45;
 
     private final List<Entry> entries = new ArrayList<>();
 
@@ -48,10 +51,16 @@ public final class FeedbackLog {
     }
 
     public synchronized List<String> visible(double nowSeconds) {
+        return visibleEntries(nowSeconds).stream()
+                .map(VisibleEntry::message)
+                .toList();
+    }
+
+    public synchronized List<VisibleEntry> visibleEntries(double nowSeconds) {
         entries.removeIf(entry -> entry.expiresAtSeconds <= nowSeconds);
-        List<String> visible = new ArrayList<>(entries.size());
+        List<VisibleEntry> visible = new ArrayList<>(entries.size());
         for (Entry entry : entries) {
-            visible.add(entry.render());
+            visible.add(new VisibleEntry(entry.render(), fadeAlpha(entry.expiresAtSeconds - nowSeconds)));
         }
         return List.copyOf(visible);
     }
@@ -66,6 +75,24 @@ public final class FeedbackLog {
                 || lower.contains("discovered")
                 || lower.contains("lore")
                 || lower.contains("comfort level");
+    }
+
+    private static float fadeAlpha(double remainingSeconds) {
+        if (remainingSeconds >= FADE_SECONDS) {
+            return 1.0f;
+        }
+        return Easing.smoothStep(remainingSeconds / FADE_SECONDS);
+    }
+
+    public record VisibleEntry(String message, float alpha) {
+        public VisibleEntry {
+            if (message == null || message.isBlank()) {
+                throw new IllegalArgumentException("Visible feedback message is required");
+            }
+            if (alpha < 0.0f || alpha > 1.0f) {
+                throw new IllegalArgumentException("Visible feedback alpha must be in 0..1");
+            }
+        }
     }
 
     private record Entry(String message, int count, double expiresAtSeconds) {

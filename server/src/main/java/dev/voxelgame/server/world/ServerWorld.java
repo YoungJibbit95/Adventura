@@ -2,6 +2,8 @@ package dev.voxelgame.server.world;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.EntityBounds;
+import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.ComfortRules;
 import dev.voxelgame.common.item.Inventory;
@@ -13,6 +15,8 @@ import dev.voxelgame.common.loot.LootTable;
 import dev.voxelgame.common.loot.LootTableRegistry;
 import dev.voxelgame.common.loot.LootTables;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkDataCodec;
@@ -30,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 public final class ServerWorld {
@@ -41,6 +46,8 @@ public final class ServerWorld {
     public static final int MIN_SLEEP_COMFORT = 4;
     public static final int SLEEP_SHELTER_RADIUS = 2;
     public static final int SLEEP_SHELTER_HEIGHT = 4;
+    private static final double ENTITY_PATH_MAX_STEP = 0.35;
+    private static final double ENTITY_GROUND_PROBE_DISTANCE = 0.08;
 
     private final long seed;
     private final InMemoryWorld world;
@@ -48,6 +55,8 @@ public final class ServerWorld {
     private final LightEngine lightEngine = new LightEngine();
     private final Registry<ItemType> items = Items.createDefaultRegistry();
     private final LootTableRegistry lootTables = LootTables.createDefaultRegistry();
+    private final BlockEntityStore blockEntities = new BlockEntityStore();
+    private final Map<BlockPos, Short> changedBlocks = new LinkedHashMap<>();
     private final Map<BlockPos, Double> activeCampfires = new LinkedHashMap<>();
     private final Map<BlockPos, Inventory> storageCrates = new LinkedHashMap<>();
     private final Set<BlockPos> consumedGeneratedLootCrates = new HashSet<>();
@@ -129,9 +138,22 @@ public final class ServerWorld {
         });
     }
 
-    public void setBlock(int x, int y, int z, short blockId) {
+    public synchronized void setBlock(int x, int y, int z, short blockId) {
+        setBlockInternal(x, y, z, blockId, true);
+    }
+
+    private void setBlockInternal(int x, int y, int z, short blockId, boolean recordDiff) {
+        if (!world.dimension().containsY(y)) {
+            return;
+        }
         getOrGenerateChunk(ChunkPos.fromBlock(x, z));
+        short previousBlock = world.blockId(x, y, z);
         world.setBlockId(x, y, z, blockId);
+        BlockPos pos = new BlockPos(x, y, z);
+        syncBlockEntityForBlock(pos, blockId);
+        if (previousBlock != blockId && recordDiff) {
+            changedBlocks.put(pos, blockId);
+        }
         lightEngine.rebuildChunkLighting(world, ChunkPos.fromBlock(x, z));
     }
 
@@ -181,8 +203,252 @@ public final class ServerWorld {
         return Optional.of(world.blockType(world.blockId(x, y, z)));
     }
 
+    public synchronized boolean collidesPlayer(double eyeX, double eyeY, double eyeZ, PlayerBounds bounds) {
+        if (bounds == null) {
+            throw new IllegalArgumentException("Player bounds are required");
+        }
+        double minX = bounds.minX(eyeX);
+        double maxX = bounds.maxX(eyeX);
+        double minY = bounds.minY(eyeY);
+        double maxY = bounds.maxY(eyeY);
+        double minZ = bounds.minZ(eyeZ);
+        double maxZ = bounds.maxZ(eyeZ);
+
+        for (int y = floor(minY); y <= floor(maxY); y++) {
+            if (!world.dimension().containsY(y)) {
+                return true;
+            }
+            for (int z = floor(minZ); z <= floor(maxZ); z++) {
+                for (int x = floor(minX); x <= floor(maxX); x++) {
+                    if (!bounds.intersectsBlock(eyeX, eyeY, eyeZ, x, y, z)) {
+                        continue;
+                    }
+                    Optional<BlockType> block = blockAt(x, y, z);
+                    if (block.isEmpty() || block.get().collidable()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public synchronized boolean playerPathClear(
+            double fromEyeX,
+            double fromEyeY,
+            double fromEyeZ,
+            double toEyeX,
+            double toEyeY,
+            double toEyeZ,
+            PlayerBounds bounds,
+            double maxStep
+    ) {
+        if (bounds == null) {
+            throw new IllegalArgumentException("Player bounds are required");
+        }
+        if (!Double.isFinite(fromEyeX) || !Double.isFinite(fromEyeY) || !Double.isFinite(fromEyeZ)
+                || !Double.isFinite(toEyeX) || !Double.isFinite(toEyeY) || !Double.isFinite(toEyeZ)
+                || !Double.isFinite(maxStep) || maxStep <= 0.0) {
+            return false;
+        }
+        double dx = toEyeX - fromEyeX;
+        double dy = toEyeY - fromEyeY;
+        double dz = toEyeZ - fromEyeZ;
+        double maxDistance = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
+        int steps = Math.max(1, (int) Math.ceil(maxDistance / maxStep));
+        for (int i = 1; i <= steps; i++) {
+            double t = (double) i / steps;
+            if (collidesPlayer(fromEyeX + dx * t, fromEyeY + dy * t, fromEyeZ + dz * t, bounds)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public synchronized boolean canMoveAmbientEntity(EntitySnapshot current, EntitySnapshot candidate) {
+        if (current == null || candidate == null || !current.typeKey().equals(candidate.typeKey())) {
+            return false;
+        }
+        if (!entityPlacementClear(candidate)) {
+            return false;
+        }
+        double dx = candidate.x() - current.x();
+        double dy = candidate.y() - current.y();
+        double dz = candidate.z() - current.z();
+        double maxDistance = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
+        int steps = Math.max(1, (int) Math.ceil(maxDistance / ENTITY_PATH_MAX_STEP));
+        for (int i = 1; i <= steps; i++) {
+            double t = (double) i / steps;
+            EntitySnapshot sample = new EntitySnapshot(
+                    candidate.entityId(),
+                    candidate.typeKey(),
+                    candidate.ownerPlayerId(),
+                    current.x() + dx * t,
+                    current.y() + dy * t,
+                    current.z() + dz * t,
+                    candidate.yaw(),
+                    candidate.pitch(),
+                    candidate.health(),
+                    candidate.stateKey(),
+                    candidate.velocityX(),
+                    candidate.velocityY(),
+                    candidate.velocityZ()
+            );
+            if (!entityPlacementClear(sample)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public synchronized boolean entityPlacementClear(EntitySnapshot snapshot) {
+        if (snapshot == null) {
+            return false;
+        }
+        if (collidesEntity(snapshot)) {
+            return false;
+        }
+        if (ignoresGroundCollision(snapshot.typeKey())) {
+            return true;
+        }
+        if (touchesWater(snapshot)) {
+            return false;
+        }
+
+        double baseY = EntityBounds.baseY(snapshot);
+        int supportX = floor(snapshot.x());
+        int supportY = floor(baseY - ENTITY_GROUND_PROBE_DISTANCE);
+        int supportZ = floor(snapshot.z());
+        Optional<BlockType> support = blockAt(supportX, supportY, supportZ);
+        if (support.isEmpty() || !support.get().collidable()) {
+            return false;
+        }
+        if (blockIdAt(supportX, floor(baseY), supportZ) == Blocks.WATER || support.get().id() == Blocks.WATER) {
+            return false;
+        }
+        return !prefersGrass(snapshot.typeKey())
+                || !EntitySnapshot.STATE_GRAZE.equals(snapshot.stateKey())
+                || support.get().id() == Blocks.GRASS;
+    }
+
+    private boolean collidesEntity(EntitySnapshot snapshot) {
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        double baseY = EntityBounds.baseY(snapshot);
+        double minX = bounds.minX(snapshot.x());
+        double maxX = bounds.maxX(snapshot.x());
+        double minY = bounds.minY(baseY);
+        double maxY = bounds.maxY(baseY);
+        double minZ = bounds.minZ(snapshot.z());
+        double maxZ = bounds.maxZ(snapshot.z());
+
+        for (int y = floor(minY); y <= floor(maxY); y++) {
+            if (!world.dimension().containsY(y)) {
+                return true;
+            }
+            for (int z = floor(minZ); z <= floor(maxZ); z++) {
+                for (int x = floor(minX); x <= floor(maxX); x++) {
+                    if (!bounds.intersectsBlock(snapshot.x(), baseY, snapshot.z(), x, y, z)) {
+                        continue;
+                    }
+                    Optional<BlockType> block = blockAt(x, y, z);
+                    if (block.isEmpty() || block.get().collidable()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean touchesWater(EntitySnapshot snapshot) {
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        double baseY = EntityBounds.baseY(snapshot);
+        for (int y = floor(bounds.minY(baseY)); y <= floor(bounds.maxY(baseY)); y++) {
+            if (!world.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = floor(bounds.minZ(snapshot.z())); z <= floor(bounds.maxZ(snapshot.z())); z++) {
+                for (int x = floor(bounds.minX(snapshot.x())); x <= floor(bounds.maxX(snapshot.x())); x++) {
+                    if (bounds.intersectsBlock(snapshot.x(), baseY, snapshot.z(), x, y, z)
+                            && blockIdAt(x, y, z) == Blocks.WATER) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean ignoresGroundCollision(String typeKey) {
+        return "voxel:firefly_swarm".equals(typeKey) || "voxel:mire_wisp".equals(typeKey);
+    }
+
+    private static boolean prefersGrass(String typeKey) {
+        return "voxel:cozy_sheep".equals(typeKey)
+                || "voxel:forest_grazer".equals(typeKey)
+                || "voxel:meadow_grazer".equals(typeKey);
+    }
+
+    public synchronized PlayerWaterState playerWaterState(double eyeX, double eyeY, double eyeZ, PlayerBounds bounds) {
+        if (bounds == null) {
+            throw new IllegalArgumentException("Player bounds are required");
+        }
+        int x = floor(eyeX);
+        int z = floor(eyeZ);
+        int headY = floor(eyeY);
+        int bodyY = floor(eyeY - bounds.eyeHeight() * 0.35f);
+        int feetY = floor(bounds.minY(eyeY) + 0.05);
+        return new PlayerWaterState(
+                blockIdAt(x, feetY, z) == Blocks.WATER,
+                blockIdAt(x, bodyY, z) == Blocks.WATER,
+                blockIdAt(x, headY, z) == Blocks.WATER
+        );
+    }
+
+    private short blockIdAt(int x, int y, int z) {
+        if (!world.dimension().containsY(y)) {
+            return Blocks.AIR;
+        }
+        getOrGenerateChunk(ChunkPos.fromBlock(x, z));
+        return world.blockId(x, y, z);
+    }
+
     public Optional<String> blockKey(short blockId) {
         return world.blocks().findById(blockId).map(BlockType::key);
+    }
+
+    public synchronized List<BlockChange> saveBlockDiffs() {
+        return changedBlocks.entrySet().stream()
+                .map(entry -> new BlockChange(
+                        entry.getKey().x(),
+                        entry.getKey().y(),
+                        entry.getKey().z(),
+                        blockKey(entry.getValue()).orElse("voxel:air")
+                ))
+                .toList();
+    }
+
+    public synchronized void loadBlockDiffs(List<BlockChange> blockChanges) {
+        changedBlocks.clear();
+        if (blockChanges == null) {
+            return;
+        }
+        for (BlockChange blockChange : blockChanges) {
+            short blockId = world.blocks()
+                    .findByKey(blockChange.blockKey())
+                    .map(BlockType::id)
+                    .orElse(Blocks.AIR);
+            setBlockInternal(blockChange.x(), blockChange.y(), blockChange.z(), blockId, false);
+            changedBlocks.put(new BlockPos(blockChange.x(), blockChange.y(), blockChange.z()), blockId);
+        }
+    }
+
+    public synchronized Optional<BlockEntityType> blockEntityTypeAt(int x, int y, int z) {
+        Optional<BlockType> block = blockAt(x, y, z);
+        if (block.isEmpty()) {
+            return Optional.empty();
+        }
+        return syncBlockEntityForBlock(new BlockPos(x, y, z), block.get().id());
     }
 
     public boolean hasBlockWithin(double centerX, double centerY, double centerZ, short blockId, int radius) {
@@ -238,6 +504,7 @@ public final class ServerWorld {
             return Optional.empty();
         }
         BlockPos pos = new BlockPos(x, y, z);
+        blockEntities.ensure(new BlockEntityStore.Position(x, y, z), BlockEntityType.CAMPFIRE);
         double activeUntil = Math.max(nowSeconds, activeCampfires.getOrDefault(pos, nowSeconds)) + addedFuelSeconds;
         activeCampfires.put(pos, activeUntil);
         if (block.get().id() != Blocks.CAMPFIRE_ACTIVE) {
@@ -247,10 +514,81 @@ public final class ServerWorld {
         return Optional.empty();
     }
 
+    public synchronized OptionalDouble campfireFuelSecondsRemaining(int x, int y, int z, double nowSeconds) {
+        tickCampfires(nowSeconds);
+        BlockPos pos = new BlockPos(x, y, z);
+        Double activeUntil = activeCampfires.get(pos);
+        if (activeUntil == null) {
+            return OptionalDouble.empty();
+        }
+        return OptionalDouble.of(Math.max(0.0, activeUntil - nowSeconds));
+    }
+
+    public synchronized BlockEntitySnapshot saveBlockEntities(double nowSeconds) {
+        tickCampfires(nowSeconds);
+        List<StorageCrateState> storageStates = new ArrayList<>(storageCrates.size());
+        for (Map.Entry<BlockPos, Inventory> entry : storageCrates.entrySet()) {
+            BlockPos pos = entry.getKey();
+            storageStates.add(new StorageCrateState(pos.x(), pos.y(), pos.z(), entry.getValue().slots()));
+        }
+        List<CampfireState> campfireStates = new ArrayList<>(activeCampfires.size());
+        for (Map.Entry<BlockPos, Double> entry : activeCampfires.entrySet()) {
+            BlockPos pos = entry.getKey();
+            double remaining = Math.max(0.0, entry.getValue() - nowSeconds);
+            if (remaining > 0.0) {
+                campfireStates.add(new CampfireState(pos.x(), pos.y(), pos.z(), remaining));
+            }
+        }
+        List<BlockEntityPos> consumedLootStates = consumedGeneratedLootCrates.stream()
+                .map(pos -> new BlockEntityPos(pos.x(), pos.y(), pos.z()))
+                .toList();
+        return new BlockEntitySnapshot(storageStates, campfireStates, consumedLootStates, blockEntities.snapshot());
+    }
+
+    public synchronized void loadBlockEntities(BlockEntitySnapshot snapshot, double nowSeconds) {
+        storageCrates.clear();
+        activeCampfires.clear();
+        consumedGeneratedLootCrates.clear();
+        blockEntities.clear();
+        if (snapshot == null) {
+            return;
+        }
+        blockEntities.loadSnapshot(snapshot.blockEntities());
+        blockEntities.pruneInvalid((position, type) -> blockIdAt(position.x(), position.y(), position.z()) != Blocks.AIR
+                && type.supportsBlock(blockIdAt(position.x(), position.y(), position.z())));
+        for (BlockEntityPos pos : snapshot.consumedGeneratedLootCrates()) {
+            consumedGeneratedLootCrates.add(new BlockPos(pos.x(), pos.y(), pos.z()));
+        }
+        for (StorageCrateState state : snapshot.storageCrates()) {
+            if (!isStorageCrate(state.x(), state.y(), state.z())) {
+                continue;
+            }
+            blockEntities.ensure(new BlockEntityStore.Position(state.x(), state.y(), state.z()), BlockEntityType.STORAGE_CRATE);
+            Inventory storage = new Inventory(STORAGE_CRATE_SLOTS);
+            storage.replaceSlots(state.slots());
+            storageCrates.put(new BlockPos(state.x(), state.y(), state.z()), storage);
+        }
+        for (CampfireState state : snapshot.campfires()) {
+            if (state.fuelSecondsRemaining() <= 0.0) {
+                continue;
+            }
+            Optional<BlockType> block = blockAt(state.x(), state.y(), state.z());
+            if (block.isEmpty() || !CampfireRules.isCampfire(block.get().id())) {
+                continue;
+            }
+            blockEntities.ensure(new BlockEntityStore.Position(state.x(), state.y(), state.z()), BlockEntityType.CAMPFIRE);
+            activeCampfires.put(new BlockPos(state.x(), state.y(), state.z()), nowSeconds + state.fuelSecondsRemaining());
+            if (block.get().id() != Blocks.CAMPFIRE_ACTIVE) {
+                setBlock(state.x(), state.y(), state.z(), Blocks.CAMPFIRE_ACTIVE);
+            }
+        }
+    }
+
     public synchronized Optional<List<ItemStack>> openStorageCrate(int x, int y, int z) {
         if (!isStorageCrate(x, y, z)) {
             return Optional.empty();
         }
+        blockEntities.ensure(new BlockEntityStore.Position(x, y, z), BlockEntityType.STORAGE_CRATE);
         Inventory storage = storageCrates.computeIfAbsent(new BlockPos(x, y, z), this::createStorageInventory);
         return Optional.of(storage.slots());
     }
@@ -291,6 +629,7 @@ public final class ServerWorld {
         if (!isStorageCrate(x, y, z)) {
             return Optional.empty();
         }
+        blockEntities.ensure(new BlockEntityStore.Position(x, y, z), BlockEntityType.STORAGE_CRATE);
         Inventory storage = storageCrates.computeIfAbsent(new BlockPos(x, y, z), this::createStorageInventory);
         if (fromStorage) {
             transferSlot(storage, sourceSlot, playerInventory, targetSlot, count, items);
@@ -315,6 +654,7 @@ public final class ServerWorld {
             consumedGeneratedLootCrates.add(pos);
         }
         storageCrates.remove(pos);
+        blockEntities.remove(new BlockEntityStore.Position(pos.x(), pos.y(), pos.z()));
         setBlock(action.targetX(), action.targetY(), action.targetZ(), Blocks.AIR);
         return Optional.of(new GamePacket.BlockUpdate(action.targetX(), action.targetY(), action.targetZ(), Blocks.AIR));
     }
@@ -340,8 +680,9 @@ public final class ServerWorld {
     }
 
     private boolean isStorageCrate(int x, int y, int z) {
-        Optional<BlockType> block = blockAt(x, y, z);
-        return block.isPresent() && block.get().id() == Blocks.STORAGE_CRATE;
+        return blockEntityTypeAt(x, y, z)
+                .filter(type -> type == BlockEntityType.STORAGE_CRATE)
+                .isPresent();
     }
 
     private boolean isSleepingMat(int x, int y, int z) {
@@ -433,8 +774,64 @@ public final class ServerWorld {
         return Math.abs(ax - bx) + Math.abs(ay - by) + Math.abs(az - bz);
     }
 
+    private static int floor(double value) {
+        return (int) Math.floor(value);
+    }
+
+    private Optional<BlockEntityType> syncBlockEntityForBlock(BlockPos pos, short blockId) {
+        return blockEntities.sync(new BlockEntityStore.Position(pos.x(), pos.y(), pos.z()), blockId);
+    }
+
     public GamePacket.ChunkData packetFor(ChunkPos pos) {
         return ChunkDataCodec.toPacket(getOrGenerateChunk(pos));
+    }
+
+    public record BlockEntitySnapshot(
+            List<StorageCrateState> storageCrates,
+            List<CampfireState> campfires,
+            List<BlockEntityPos> consumedGeneratedLootCrates,
+            BlockEntityStore.Snapshot blockEntities
+    ) {
+        public BlockEntitySnapshot(
+                List<StorageCrateState> storageCrates,
+                List<CampfireState> campfires,
+                List<BlockEntityPos> consumedGeneratedLootCrates
+        ) {
+            this(storageCrates, campfires, consumedGeneratedLootCrates, BlockEntityStore.Snapshot.EMPTY);
+        }
+
+        public BlockEntitySnapshot {
+            storageCrates = storageCrates == null ? List.of() : List.copyOf(storageCrates);
+            campfires = campfires == null ? List.of() : List.copyOf(campfires);
+            consumedGeneratedLootCrates = consumedGeneratedLootCrates == null ? List.of() : List.copyOf(consumedGeneratedLootCrates);
+            blockEntities = blockEntities == null ? BlockEntityStore.Snapshot.EMPTY : blockEntities;
+        }
+    }
+
+    public record BlockChange(int x, int y, int z, String blockKey) {
+        public BlockChange {
+            if (blockKey == null || blockKey.isBlank()) {
+                blockKey = "voxel:air";
+            }
+        }
+    }
+
+    public record StorageCrateState(int x, int y, int z, List<ItemStack> slots) {
+        public StorageCrateState {
+            slots = slots == null ? List.of() : List.copyOf(slots);
+            if (slots.size() != STORAGE_CRATE_SLOTS) {
+                throw new IllegalArgumentException("Storage crate snapshot must contain " + STORAGE_CRATE_SLOTS + " slots");
+            }
+        }
+    }
+
+    public record CampfireState(int x, int y, int z, double fuelSecondsRemaining) {
+        public CampfireState {
+            fuelSecondsRemaining = Math.max(0.0, fuelSecondsRemaining);
+        }
+    }
+
+    public record BlockEntityPos(int x, int y, int z) {
     }
 
     private record BlockPos(int x, int y, int z) {

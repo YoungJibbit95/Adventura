@@ -19,6 +19,8 @@ class CampfireRulesTest {
     @Test
     void onlyKnownFuelItemsBurn() {
         assertTrue(CampfireRules.fuelSeconds("voxel:twig").isPresent());
+        assertTrue(CampfireRules.fuelSeconds("voxel:bark_strip").isPresent());
+        assertTrue(CampfireRules.fuelSeconds("voxel:reed_bundle").isPresent());
         assertTrue(CampfireRules.fuelSeconds("voxel:charcoal").orElseThrow() > CampfireRules.fuelSeconds("voxel:twig").orElseThrow());
         assertTrue(CampfireRules.fuelSeconds("voxel:berries").isEmpty());
     }

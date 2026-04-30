@@ -33,6 +33,17 @@ class PlayerStatsTest {
     }
 
     @Test
+    void breathDrainsOnlyUnderwaterAndRegeneratesAboveWater() {
+        PlayerStats stats = new PlayerStats();
+
+        stats.tick(2.0f, GameMode.SURVIVAL, true, false, false);
+        assertEquals(16, stats.breath());
+
+        stats.tick(1.0f, GameMode.SURVIVAL, false, false, false);
+        assertEquals(20, stats.breath());
+    }
+
+    @Test
     void foodRestoresHungerHealthAndStamina() {
         PlayerStats stats = new PlayerStats();
         stats.applySnapshot(12, 10, 5, 20, 0, 0);

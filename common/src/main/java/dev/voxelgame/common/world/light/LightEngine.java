@@ -7,8 +7,10 @@ import dev.voxelgame.common.world.InMemoryWorld;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 
 public final class LightEngine {
     private static final int[][] DIRECTIONS = {
@@ -16,12 +18,32 @@ public final class LightEngine {
     };
 
     public void rebuildChunkLighting(InMemoryWorld world, ChunkPos center) {
-        Chunk chunk = world.getOrCreateChunk(center);
-        rebuildSkyLightColumn(world, chunk);
+        world.getOrCreateChunk(center);
+        rebuildSkyLight(world, center);
         rebuildBlockLight(world, center);
     }
 
+    public void rebuildSkyLight(InMemoryWorld world, ChunkPos center) {
+        rebuildSkyLight(world, affectedChunks(world, center));
+    }
+
     public void rebuildSkyLightColumn(InMemoryWorld world, Chunk chunk) {
+        List<Chunk> chunks = new ArrayList<>();
+        chunks.add(chunk);
+        rebuildSkyLight(world, chunks);
+    }
+
+    private void rebuildSkyLight(InMemoryWorld world, List<Chunk> chunks) {
+        Queue<LightNode> queue = new ArrayDeque<>();
+        Set<ChunkPos> affectedPositions = new HashSet<>();
+        for (Chunk chunk : chunks) {
+            affectedPositions.add(chunk.pos());
+            seedSkyLightColumns(world, chunk, queue);
+        }
+        propagateSkyLight(world, affectedPositions, queue);
+    }
+
+    private void seedSkyLightColumns(InMemoryWorld world, Chunk chunk, Queue<LightNode> queue) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
         for (int localZ = 0; localZ < ChunkPos.SIZE; localZ++) {
@@ -32,10 +54,44 @@ public final class LightEngine {
                 for (int y = chunk.dimension().maxYExclusive() - 1; y >= chunk.dimension().minY(); y--) {
                     BlockType block = world.blockType(chunk.blockId(x, y, z));
                     chunk.setSkyLight(x, y, z, light);
+                    if (light > 0 && !block.opaque()) {
+                        queue.add(new LightNode(x, y, z, light));
+                    }
                     if (block.opaque()) {
                         light = 0;
                     }
                 }
+            }
+        }
+    }
+
+    private void propagateSkyLight(InMemoryWorld world, Set<ChunkPos> affectedPositions, Queue<LightNode> queue) {
+        while (!queue.isEmpty()) {
+            LightNode node = queue.remove();
+            int nextLight = node.light - 1;
+            if (nextLight <= 0) {
+                continue;
+            }
+            for (int[] direction : DIRECTIONS) {
+                int nx = node.x + direction[0];
+                int ny = node.y + direction[1];
+                int nz = node.z + direction[2];
+                if (!world.dimension().containsY(ny)) {
+                    continue;
+                }
+                Chunk targetChunk = world.findChunk(ChunkPos.fromBlock(nx, nz)).orElse(null);
+                if (targetChunk == null || !affectedPositions.contains(targetChunk.pos())) {
+                    continue;
+                }
+                BlockType block = world.blockType(targetChunk.blockId(nx, ny, nz));
+                if (block.opaque()) {
+                    continue;
+                }
+                if (targetChunk.skyLight(nx, ny, nz) >= nextLight) {
+                    continue;
+                }
+                targetChunk.setSkyLight(nx, ny, nz, nextLight);
+                queue.add(new LightNode(nx, ny, nz, nextLight));
             }
         }
     }

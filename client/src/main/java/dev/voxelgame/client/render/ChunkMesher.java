@@ -8,7 +8,18 @@ import dev.voxelgame.common.world.ChunkSection;
 import dev.voxelgame.common.world.WorldView;
 
 public final class ChunkMesher {
+    /**
+     * Chunk vertex format, GL location order:
+     * 0 position xyz, 1 normal xyz, 2 material index, 3 light, 4 AO, 5 local/tiled face UV.
+     */
     public static final int FLOATS_PER_VERTEX = 11;
+    public static final int POSITION_OFFSET = 0;
+    public static final int NORMAL_OFFSET = 3;
+    public static final int MATERIAL_INDEX_OFFSET = 6;
+    public static final int LIGHT_OFFSET = 7;
+    public static final int AO_OFFSET = 8;
+    public static final int FACE_UV_OFFSET = 9;
+    public static final int VERTEX_BYTES = FLOATS_PER_VERTEX * Float.BYTES;
 
     private static final Face[] FACES = {
             new Face(1, 0, 0, new float[][]{{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}}),
@@ -18,6 +29,24 @@ public final class ChunkMesher {
             new Face(0, 0, 1, new float[][]{{1, 0, 1}, {1, 1, 1}, {0, 1, 1}, {0, 0, 1}}),
             new Face(0, 0, -1, new float[][]{{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}})
     };
+    private static final int[] FULL_AO = {255, 255, 255, 255};
+
+    private final FloatMeshBuffer vertices = new FloatMeshBuffer(4096);
+    private final IntMeshBuffer indices = new IntMeshBuffer(2048);
+    private boolean greedyMeshingEnabled = true;
+    private MeshBuildStats lastBuildStats = MeshBuildStats.empty();
+
+    public void setGreedyMeshingEnabled(boolean greedyMeshingEnabled) {
+        this.greedyMeshingEnabled = greedyMeshingEnabled;
+    }
+
+    public boolean greedyMeshingEnabled() {
+        return greedyMeshingEnabled;
+    }
+
+    public MeshBuildStats lastBuildStats() {
+        return lastBuildStats;
+    }
 
     public ChunkMesh buildTerrainMesh(WorldView world, Chunk chunk) {
         return buildTerrainMesh(world, chunk, true);
@@ -35,26 +64,28 @@ public final class ChunkMesher {
         return buildMesh(world, chunk, true, layer, ambientOcclusion);
     }
 
-    private ChunkMesh buildMesh(WorldView world, Chunk chunk, boolean filterLayer, BlockRenderLayer layer, boolean ambientOcclusion) {
-        if (layer == BlockRenderLayer.SOLID && !ambientOcclusion) {
-            return buildGreedySolidMesh(world, chunk, filterLayer);
+    private synchronized ChunkMesh buildMesh(WorldView world, Chunk chunk, boolean filterLayer, BlockRenderLayer layer, boolean ambientOcclusion) {
+        vertices.reset();
+        indices.reset();
+        boolean usedGreedyMeshing = layer == BlockRenderLayer.SOLID && greedyMeshingEnabled;
+        if (usedGreedyMeshing) {
+            appendGreedySolidFaces(vertices, indices, world, chunk, ambientOcclusion);
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, ambientOcclusion, true);
+        } else {
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, false);
         }
-        return buildSimpleMesh(world, chunk, filterLayer, layer, ambientOcclusion, false);
-    }
-
-    private ChunkMesh buildGreedySolidMesh(WorldView world, Chunk chunk, boolean filterLayer) {
-        FloatMeshBuffer vertices = new FloatMeshBuffer();
-        IntMeshBuffer indices = new IntMeshBuffer();
-        appendGreedySolidFaces(vertices, indices, world, chunk);
-        appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, false, true);
-        return new ChunkMesh(vertices.toArray(), indices.toArray());
-    }
-
-    private ChunkMesh buildSimpleMesh(WorldView world, Chunk chunk, boolean filterLayer, BlockRenderLayer layer, boolean ambientOcclusion, boolean skipGreedyBlocks) {
-        FloatMeshBuffer vertices = new FloatMeshBuffer();
-        IntMeshBuffer indices = new IntMeshBuffer();
-        appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, skipGreedyBlocks);
-        return new ChunkMesh(vertices.toArray(), indices.toArray());
+        float[] vertexArray = vertices.toArray();
+        int[] indexArray = indices.toArray();
+        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray);
+        lastBuildStats = new MeshBuildStats(
+                mesh.vertexCount(),
+                mesh.indexCount(),
+                mesh.estimatedBytes(),
+                vertices.growthBytesSinceReset() + indices.growthBytesSinceReset(),
+                vertices.capacityBytes() + indices.capacityBytes(),
+                usedGreedyMeshing
+        );
+        return mesh;
     }
 
     private static void appendSimpleFaces(
@@ -114,7 +145,7 @@ public final class ChunkMesher {
         }
     }
 
-    private static void appendGreedySolidFaces(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, Chunk chunk) {
+    private static void appendGreedySolidFaces(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, Chunk chunk, boolean ambientOcclusion) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
         int minY = chunk.dimension().minY();
@@ -125,8 +156,8 @@ public final class ChunkMesher {
             int vCount = vCount(face, height);
             GreedyCell[] mask = new GreedyCell[uCount * vCount];
             for (int fixed = 0; fixed < fixedCount; fixed++) {
-                fillGreedyMask(mask, face, fixed, uCount, vCount, baseX, baseZ, minY, world);
-                emitGreedyMask(vertices, indices, mask, face, fixed, uCount, vCount, baseX, baseZ, minY);
+                fillGreedyMask(mask, face, fixed, uCount, vCount, baseX, baseZ, minY, world, ambientOcclusion);
+                emitGreedyMask(vertices, indices, mask, face, fixed, uCount, vCount, baseX, baseZ, minY, ambientOcclusion);
             }
         }
     }
@@ -140,7 +171,8 @@ public final class ChunkMesher {
             int baseX,
             int baseZ,
             int minY,
-            WorldView world
+            WorldView world,
+            boolean ambientOcclusion
     ) {
         for (int i = 0; i < mask.length; i++) {
             mask[i] = null;
@@ -158,7 +190,15 @@ public final class ChunkMesher {
                 if (neighbor.opaque() && neighbor.renderLayer() == BlockRenderLayer.SOLID) {
                     continue;
                 }
-                mask[v * uCount + u] = new GreedyCell(block.id(), light(world, x + face.nx, y + face.ny, z + face.nz));
+                int[] ao = ambientOcclusion ? ambientOcclusionCodes(world, x, y, z, face) : FULL_AO;
+                mask[v * uCount + u] = new GreedyCell(
+                        block.id(),
+                        lightCode(light(world, x + face.nx, y + face.ny, z + face.nz)),
+                        ao[0],
+                        ao[1],
+                        ao[2],
+                        ao[3]
+                );
             }
         }
     }
@@ -173,7 +213,8 @@ public final class ChunkMesher {
             int vCount,
             int baseX,
             int baseZ,
-            int minY
+            int minY,
+            boolean ambientOcclusion
     ) {
         for (int v = 0; v < vCount; v++) {
             for (int u = 0; u < uCount; ) {
@@ -188,7 +229,7 @@ public final class ChunkMesher {
                 int x = blockX(face, fixed, u, v, baseX);
                 int y = blockY(face, fixed, v, minY);
                 int z = blockZ(face, fixed, u, v, baseZ);
-                addMergedFace(vertices, indices, world, x, y, z, face, cell.blockId(), cell.light(), width, height, ambientOcclusion);
+                addMergedFace(vertices, indices, x, y, z, face, cell.blockId(), cell.light(), width, height, ambientOcclusion ? cell.aoValues() : null);
                 clearMask(mask, u, v, width, height, uCount);
                 u += width;
             }
@@ -263,6 +304,22 @@ public final class ChunkMesher {
         return 1.0f;
     }
 
+    private static int lightCode(float light) {
+        return Math.max(0, Math.min(255, Math.round(light * 255.0f)));
+    }
+
+    private static float light(int lightCode) {
+        return Math.max(0, Math.min(255, lightCode)) / 255.0f;
+    }
+
+    private static int[] ambientOcclusionCodes(WorldView world, int x, int y, int z, Face face) {
+        int[] values = new int[4];
+        for (int i = 0; i < face.corners.length; i++) {
+            values[i] = Math.max(0, Math.min(255, Math.round(ambientOcclusion(world, x, y, z, face, face.corners[i]) * 255.0f)));
+        }
+        return values;
+    }
+
     private static void addFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, float light, boolean ambientOcclusion) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         for (float[] corner : face.corners) {
@@ -287,10 +344,11 @@ public final class ChunkMesher {
         indices.add(baseVertex + 3);
     }
 
-    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, float light, int width, int height, boolean ambientOcclusionEnabled) {
+    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, int x, int y, int z, Face face, short blockId, float light, int width, int height, int[] aoValues) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         int uAxis = uAxis(face);
         int vAxis = vAxis(face);
+        int cornerIndex = 0;
         for (float[] corner : face.corners) {
             float[] mergedCorner = corner.clone();
             if (corner[uAxis] == 1.0f) {
@@ -307,12 +365,11 @@ public final class ChunkMesher {
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
             vertices.add(light);
-            int[] aoOrigin = aoSampleOrigin(x, y, z, mergedCorner, uAxis, vAxis, width, height);
-            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, aoOrigin[0], aoOrigin[1], aoOrigin[2], face, mergedCorner) : 1.0f);
-            vertices.add(ambientOcclusionEnabled ? ambientOcclusion(world, x, y, z, face, mergedCorner) : 1.0f);
+            vertices.add(aoValues == null ? 1.0f : aoValues[cornerIndex] / 255.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
             vertices.add(uv[1]);
+            cornerIndex++;
         }
         indices.add(baseVertex);
         indices.add(baseVertex + 1);
@@ -323,16 +380,6 @@ public final class ChunkMesher {
     }
 
 
-    private static int[] aoSampleOrigin(int x, int y, int z, float[] mergedCorner, int uAxis, int vAxis, int width, int height) {
-        int[] origin = new int[]{x, y, z};
-        if (width > 1) {
-            origin[uAxis] += mergedCorner[uAxis] == 0.0f ? 0 : width - 1;
-        }
-        if (height > 1) {
-            origin[vAxis] += mergedCorner[vAxis] == 0.0f ? 0 : height - 1;
-        }
-        return origin;
-    }
     private static void addCrossSprite(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion) {
         addSpriteQuad(vertices, indices, world, x, y, z, blockId, light, ambientOcclusion, new Face(0, 0, 1, new float[][]{
                 {0.0f, 0.0f, 0.5f},
@@ -411,15 +458,32 @@ public final class ChunkMesher {
         return face.ny != 0 ? 2 : 1;
     }
 
-    private record GreedyCell(short blockId, float light) {
+    private record GreedyCell(short blockId, int lightCode, int ao0, int ao1, int ao2, int ao3) {
+        float light() {
+            return ChunkMesher.light(lightCode);
+        }
+
+        int[] aoValues() {
+            return new int[]{ao0, ao1, ao2, ao3};
+        }
     }
 
     private record Face(int nx, int ny, int nz, float[][] corners) {
     }
 
     private static final class FloatMeshBuffer {
-        private float[] values = new float[4096];
+        private float[] values;
         private int size;
+        private long growthBytesSinceReset;
+
+        FloatMeshBuffer(int initialCapacity) {
+            values = new float[Math.max(1, initialCapacity)];
+        }
+
+        void reset() {
+            size = 0;
+            growthBytesSinceReset = 0L;
+        }
 
         void add(float value) {
             ensureCapacity(size + 1);
@@ -436,10 +500,19 @@ public final class ChunkMesher {
             return copy;
         }
 
+        long growthBytesSinceReset() {
+            return growthBytesSinceReset;
+        }
+
+        long capacityBytes() {
+            return (long) values.length * Float.BYTES;
+        }
+
         private void ensureCapacity(int required) {
             if (required <= values.length) {
                 return;
             }
+            int old = values.length;
             int next = values.length;
             while (next < required) {
                 next *= 2;
@@ -447,12 +520,23 @@ public final class ChunkMesher {
             float[] grown = new float[next];
             System.arraycopy(values, 0, grown, 0, size);
             values = grown;
+            growthBytesSinceReset += (long) (next - old) * Float.BYTES;
         }
     }
 
     private static final class IntMeshBuffer {
-        private int[] values = new int[2048];
+        private int[] values;
         private int size;
+        private long growthBytesSinceReset;
+
+        IntMeshBuffer(int initialCapacity) {
+            values = new int[Math.max(1, initialCapacity)];
+        }
+
+        void reset() {
+            size = 0;
+            growthBytesSinceReset = 0L;
+        }
 
         void add(int value) {
             ensureCapacity(size + 1);
@@ -476,10 +560,19 @@ public final class ChunkMesher {
             return copy;
         }
 
+        long growthBytesSinceReset() {
+            return growthBytesSinceReset;
+        }
+
+        long capacityBytes() {
+            return (long) values.length * Integer.BYTES;
+        }
+
         private void ensureCapacity(int required) {
             if (required <= values.length) {
                 return;
             }
+            int old = values.length;
             int next = values.length;
             while (next < required) {
                 next *= 2;
@@ -487,6 +580,20 @@ public final class ChunkMesher {
             int[] grown = new int[next];
             System.arraycopy(values, 0, grown, 0, size);
             values = grown;
+            growthBytesSinceReset += (long) (next - old) * Integer.BYTES;
+        }
+    }
+
+    public record MeshBuildStats(
+            int vertices,
+            int indices,
+            long outputBytes,
+            long temporaryBufferGrowthBytes,
+            long retainedBufferBytes,
+            boolean greedyMeshing
+    ) {
+        public static MeshBuildStats empty() {
+            return new MeshBuildStats(0, 0, 0L, 0L, 0L, false);
         }
     }
 }

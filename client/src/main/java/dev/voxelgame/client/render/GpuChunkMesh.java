@@ -24,12 +24,14 @@ public final class GpuChunkMesh implements AutoCloseable {
     private final int indexCount;
     private final int vertexCount;
     private final long estimatedBytes;
+    private final ChunkMesh.Bounds bounds;
     private boolean closed;
 
     public GpuChunkMesh(ChunkMesh mesh) {
         this.indexCount = mesh.indexCount();
         this.vertexCount = mesh.vertexCount();
         this.estimatedBytes = mesh.estimatedBytes();
+        this.bounds = mesh.bounds();
         this.vao = glGenVertexArrays();
         this.vbo = glGenBuffers();
         this.ebo = glGenBuffers();
@@ -40,18 +42,18 @@ public final class GpuChunkMesh implements AutoCloseable {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices(), GL_STATIC_DRAW);
 
-        int stride = ChunkMesher.FLOATS_PER_VERTEX * Float.BYTES;
-        glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, 0L);
+        int stride = ChunkMesher.VERTEX_BYTES;
+        glVertexAttribPointer(0, 3, GL_FLOAT, false, stride, ChunkMesher.POSITION_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, false, stride, 3L * Float.BYTES);
+        glVertexAttribPointer(1, 3, GL_FLOAT, false, stride, ChunkMesher.NORMAL_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(2, 1, GL_FLOAT, false, stride, 6L * Float.BYTES);
+        glVertexAttribPointer(2, 1, GL_FLOAT, false, stride, ChunkMesher.MATERIAL_INDEX_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(3, 1, GL_FLOAT, false, stride, 7L * Float.BYTES);
+        glVertexAttribPointer(3, 1, GL_FLOAT, false, stride, ChunkMesher.LIGHT_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(3);
-        glVertexAttribPointer(4, 1, GL_FLOAT, false, stride, 8L * Float.BYTES);
+        glVertexAttribPointer(4, 1, GL_FLOAT, false, stride, ChunkMesher.AO_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(4);
-        glVertexAttribPointer(5, 2, GL_FLOAT, false, stride, 9L * Float.BYTES);
+        glVertexAttribPointer(5, 2, GL_FLOAT, false, stride, ChunkMesher.FACE_UV_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(5);
 
         glBindVertexArray(0);
@@ -72,6 +74,10 @@ public final class GpuChunkMesh implements AutoCloseable {
 
     public long estimatedBytes() {
         return estimatedBytes;
+    }
+
+    public ChunkMesh.Bounds bounds() {
+        return bounds;
     }
 
     public void draw() {

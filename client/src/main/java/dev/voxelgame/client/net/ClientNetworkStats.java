@@ -1,6 +1,7 @@
 package dev.voxelgame.client.net;
 
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.net.PacketCodec;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
@@ -16,6 +17,10 @@ public final class ClientNetworkStats {
     private final AtomicLong inventoryPackets = new AtomicLong();
     private final AtomicLong storageOpenPackets = new AtomicLong();
     private final AtomicLong chatPackets = new AtomicLong();
+    private final AtomicLong sentPayloadBytes = new AtomicLong();
+    private final AtomicLong receivedPayloadBytes = new AtomicLong();
+    private final AtomicLong invalidPacketsDropped = new AtomicLong();
+    private final AtomicLong chunkStreamQueueLength = new AtomicLong();
 
     public ClientNetworkStats() {
         this(System::nanoTime);
@@ -29,6 +34,7 @@ public final class ClientNetworkStats {
     public void recordSent(GamePacket packet) {
         if (packet != null) {
             sentPackets.incrementAndGet();
+            sentPayloadBytes.addAndGet(PacketCodec.encode(packet).length);
         }
     }
 
@@ -49,15 +55,34 @@ public final class ClientNetworkStats {
         }
     }
 
+    public void recordReceivedBytes(int payloadBytes) {
+        if (payloadBytes > 0) {
+            receivedPayloadBytes.addAndGet(payloadBytes);
+        }
+    }
+
+    public void recordInvalidPacket() {
+        invalidPacketsDropped.incrementAndGet();
+    }
+
+    public void setChunkStreamQueueLength(int queuedChunks) {
+        chunkStreamQueueLength.set(Math.max(0, queuedChunks));
+    }
+
     public Snapshot snapshot() {
         double elapsedSeconds = Math.max(1e-9, (nanoTimeSource.getAsLong() - startNanos) / 1_000_000_000.0);
         long sent = sentPackets.get();
         long received = receivedPackets.get();
+        long totalPackets = sent + received;
+        long totalBytes = sentPayloadBytes.get() + receivedPayloadBytes.get();
         return new Snapshot(
                 sent,
                 received,
                 sent / elapsedSeconds,
                 received / elapsedSeconds,
+                totalPackets == 0 ? 0.0 : totalBytes / (double) totalPackets,
+                invalidPacketsDropped.get(),
+                (int) Math.min(Integer.MAX_VALUE, chunkStreamQueueLength.get()),
                 chunkPackets.get(),
                 blockUpdatePackets.get(),
                 entitySnapshotPackets.get(),
@@ -72,6 +97,9 @@ public final class ClientNetworkStats {
             long receivedPackets,
             double sentPacketsPerSecond,
             double receivedPacketsPerSecond,
+            double averagePacketBytes,
+            long invalidPacketsDropped,
+            int chunkStreamQueueLength,
             long chunkPackets,
             long blockUpdatePackets,
             long entitySnapshotPackets,
@@ -80,7 +108,7 @@ public final class ClientNetworkStats {
             long chatPackets
     ) {
         public static Snapshot offline() {
-            return new Snapshot(0, 0, 0.0, 0.0, 0, 0, 0, 0, 0, 0);
+            return new Snapshot(0, 0, 0.0, 0.0, 0.0, 0L, 0, 0, 0, 0, 0, 0, 0);
         }
     }
 }

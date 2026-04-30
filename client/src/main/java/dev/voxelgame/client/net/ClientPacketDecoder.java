@@ -9,21 +9,34 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import java.util.List;
 
 public final class ClientPacketDecoder extends ByteToMessageDecoder {
-    private static final int MIN_PACKET_SIZE = Integer.BYTES;
-    private static final int MAX_PACKET_SIZE = 2 * 1024 * 1024;
+    private final ClientNetworkStats stats;
+
+    public ClientPacketDecoder() {
+        this(null);
+    }
+
+    public ClientPacketDecoder(ClientNetworkStats stats) {
+        this.stats = stats;
+    }
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-        if (in.readableBytes() < Integer.BYTES) {
+        if (in.readableBytes() < PacketLimits.LENGTH_PREFIX_BYTES) {
             return;
         }
 
         in.markReaderIndex();
         int packetLength = in.readInt();
         if (packetLength < 0) {
+            recordInvalidPacket();
             throw new IllegalArgumentException("Negative packet length: " + packetLength);
         }
-        if (packetLength > PacketCodec.MAX_PACKET_SIZE) {
+        if (packetLength < PacketLimits.MIN_PACKET_SIZE) {
+            recordInvalidPacket();
+            throw new IllegalArgumentException("Packet length below minimum: " + packetLength);
+        }
+        if (packetLength > PacketLimits.MAX_PACKET_SIZE) {
+            recordInvalidPacket();
             throw new IllegalArgumentException("Packet length exceeds limit: " + packetLength);
         }
         if (in.readableBytes() < packetLength) {
@@ -33,6 +46,20 @@ public final class ClientPacketDecoder extends ByteToMessageDecoder {
 
         byte[] bytes = new byte[packetLength];
         in.readBytes(bytes);
-        out.add(PacketCodec.decode(bytes));
+        try {
+            out.add(PacketCodec.decode(bytes));
+            if (stats != null) {
+                stats.recordReceivedBytes(packetLength);
+            }
+        } catch (RuntimeException e) {
+            recordInvalidPacket();
+            throw e;
+        }
+    }
+
+    private void recordInvalidPacket() {
+        if (stats != null) {
+            stats.recordInvalidPacket();
+        }
     }
 }

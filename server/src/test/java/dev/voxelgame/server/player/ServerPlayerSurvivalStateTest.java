@@ -32,6 +32,28 @@ class ServerPlayerSurvivalStateTest {
     }
 
     @Test
+    void breathDrainsOnlyWhenHeadUnderwaterAndRegeneratesAboveWater() {
+        ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
+
+        state.tick(2.0, false, true);
+        assertEquals(16, state.breath());
+
+        state.tick(2.0, false, false);
+        assertEquals(20, state.breath());
+    }
+
+    @Test
+    void drowningDamageIsServerAuthoritative() {
+        ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
+
+        state.tick(5.0, false, true);
+        state.tick(5.0, false, true);
+
+        assertEquals(19, state.health());
+        assertEquals(2, state.breath());
+    }
+
+    @Test
     void comfortScanIsThrottledToFortyTicks() {
         ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
 
@@ -53,5 +75,22 @@ class ServerPlayerSurvivalStateTest {
 
         assertTrue(cozy.hunger() > plain.hunger());
         assertEquals(25, cozy.comfort());
+    }
+
+    @Test
+    void fallImpactDamagesOnlyUnsafeFalls() {
+        ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
+
+        assertEquals(0, state.applyFallImpact(3.75, false));
+        assertEquals(20, state.health());
+
+        assertEquals(6, state.applyFallImpact(9.5, false));
+        assertEquals(14, state.health());
+    }
+
+    @Test
+    void waterCushionsFallImpact() {
+        assertEquals(16, ServerPlayerSurvivalState.fallDamageFor(20.0, false));
+        assertEquals(4, ServerPlayerSurvivalState.fallDamageFor(20.0, true));
     }
 }

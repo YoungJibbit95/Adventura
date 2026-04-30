@@ -12,7 +12,7 @@ import java.util.List;
 public final class NettyPacketDecoder extends ByteToMessageDecoder {
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-        if (in.readableBytes() < Integer.BYTES) {
+        if (in.readableBytes() < PacketLimits.LENGTH_PREFIX_BYTES) {
             return;
         }
 
@@ -21,7 +21,10 @@ public final class NettyPacketDecoder extends ByteToMessageDecoder {
         if (packetLength < 0) {
             throw new IllegalArgumentException("Negative packet length: " + packetLength);
         }
-        if (packetLength > PacketCodec.MAX_PACKET_SIZE) {
+        if (packetLength < PacketLimits.MIN_PACKET_SIZE) {
+            throw new IllegalArgumentException("Packet length below minimum: " + packetLength);
+        }
+        if (packetLength > PacketLimits.MAX_PACKET_SIZE) {
             throw new IllegalArgumentException("Packet length exceeds limit: " + packetLength);
         }
         if (in.readableBytes() < packetLength) {

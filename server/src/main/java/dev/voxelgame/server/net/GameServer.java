@@ -15,20 +15,28 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
 
+import java.nio.file.Path;
+
 public final class GameServer implements AutoCloseable {
     private final int port;
     private final ServerWorld world;
     private final AuthProvider authProvider;
     private final ServerEntityTracker entityTracker;
+    private final Path playerSaveDirectory;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel channel;
 
     public GameServer(int port, ServerWorld world, AuthProvider authProvider) {
+        this(port, world, authProvider, null);
+    }
+
+    public GameServer(int port, ServerWorld world, AuthProvider authProvider, Path playerSaveDirectory) {
         this.port = port;
         this.world = world;
         this.authProvider = authProvider;
-        this.entityTracker = new ServerEntityTracker(world.seed());
+        this.entityTracker = new ServerEntityTracker(world.seed(), world::entityPlacementClear);
+        this.playerSaveDirectory = playerSaveDirectory;
     }
 
     public void start() throws InterruptedException {
@@ -46,7 +54,7 @@ public final class GameServer implements AutoCloseable {
                                 .addLast(new LengthFieldPrepender(4))
                                 .addLast(new NettyPacketDecoder())
                                 .addLast(new NettyPacketEncoder())
-                                .addLast(new ServerConnectionHandler(world, authProvider, entityTracker));
+                                .addLast(new ServerConnectionHandler(world, authProvider, entityTracker, playerSaveDirectory));
                     }
                 });
 
@@ -55,14 +63,16 @@ public final class GameServer implements AutoCloseable {
     }
 
     public void broadcast(GamePacket packet) {
-        ServerConnectionHandler.broadcast(packet);
+        ServerConnectionHandler.broadcast(world, packet);
     }
 
     public void tickEntities(long tick) {
-        if (entityTracker.tickAmbient(tick).isEmpty()) {
+        boolean ambientChanged = !entityTracker.tickAmbient(tick, world::canMoveAmbientEntity).isEmpty();
+        boolean clientStateChanged = ServerConnectionHandler.consumeEntitySnapshotDirty(world);
+        if (!ambientChanged && !clientStateChanged) {
             return;
         }
-        broadcast(new GamePacket.EntitySnapshots(entityTracker.snapshots()));
+        ServerConnectionHandler.broadcastEntitySnapshots(world, entityTracker);
     }
 
     public void tickCooking(double nowSeconds) {
@@ -71,6 +81,7 @@ public final class GameServer implements AutoCloseable {
 
     @Override
     public void close() {
+        ServerConnectionHandler.saveActivePlayers(world);
         if (channel != null) {
             channel.close();
         }
