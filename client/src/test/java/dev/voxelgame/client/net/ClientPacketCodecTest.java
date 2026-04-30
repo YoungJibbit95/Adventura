@@ -85,6 +85,11 @@ class ClientPacketCodecTest {
             var frameHeader = Unpooled.buffer(Integer.BYTES).writeInt(PacketCodec.MAX_PACKET_SIZE);
             assertFalse(channel.writeInbound(frameHeader));
             assertNull(channel.readInbound());
+            int oversizedLength = (2 * 1024 * 1024) + 1;
+            var buffer = Unpooled.buffer(Integer.BYTES);
+            buffer.writeInt(oversizedLength);
+
+            assertThrows(IllegalArgumentException.class, () -> channel.writeInbound(buffer));
         } finally {
             channel.finishAndReleaseAll();
         }
