@@ -42,7 +42,7 @@ Diese Liste bündelt alle offenen Engine-Aufgaben aus Gameplay-Roadmap und Engin
 ### Section-Aware Chunk-Daten
 - leere Sections schneller überspringen.
 - Mesh-Bounds pro Section oder Layer vorbereiten.
-- ~~Frustum-Culling genauer machen.~~ ✅ (Chunk-Sichtbarkeit wird pro Frame/Lage gecacht statt pro Render-Layer mehrfach berechnet; Cache wird wiederverwendet um Frame-Allocations zu senken)
+- ~~Frustum-Culling genauer machen.~~ ✅ (Chunk-Sichtbarkeit wird pro Frame/Lage gecacht statt pro Render-Layer mehrfach berechnet)
 - Ziel: weniger unnötige Draw Calls bei hohen Chunks, Höhlen und Bergen.
 
 ### GL Resource Tracking
@@ -74,15 +74,19 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - BlockEntity-Daten serverseitig autoritativ halten.
 - Client bekommt nur Snapshots/UI-Daten.
 - Save/Load für alle BlockEntities.
-- Multiplayer-Transfers und Station-Operationen serverseitig prüfen.
+- ~~Multiplayer-Transfers und Station-Operationen serverseitig prüfen.~~ ✅ Basis-Validierung für Storage-Transfers/Crafting/Cooking ist serverseitig aktiv.
+- Transaktionsvalidierung weiter ausbauen: Sequenznummern auch für Craft/Cook/Open-Requests vereinheitlichen.
 
 ## P4 – Multiplayer Engine
 
 ### Interest Management
 - Entity-Snapshots nicht global an alle Spieler senden.
+- Fortschritt: Broadcasts gehen nur noch an authentifizierte Verbindungen (nicht mehr an Pre-Login Channels).
+- Fortschritt: Broadcasts für Weltzustand/Entities sind auf die jeweilige `ServerWorld` begrenzt.
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.
+- Protokoll-Decoder strikt halten: trailing bytes nach Paketdecode ablehnen. ✅ umgesetzt im `PacketCodec`.
 
 ### Async Server Chunk Generation
 - Chunk-Erzeugung darf Netty-Handler nicht blockieren.

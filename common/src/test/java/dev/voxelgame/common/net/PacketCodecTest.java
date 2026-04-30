@@ -5,11 +5,15 @@ import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.world.ChunkPos;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PacketCodecTest {
@@ -221,6 +225,16 @@ class PacketCodecTest {
     }
 
     @Test
+    void rejectsTrailingBytesAfterValidPacket() {
+        byte[] encoded = PacketCodec.encode(new GamePacket.Chat("hello"));
+        byte[] withTrailing = new byte[encoded.length + 1];
+        System.arraycopy(encoded, 0, withTrailing, 0, encoded.length);
+        withTrailing[withTrailing.length - 1] = 42;
+
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(withTrailing));
+    }
+
+    @Test
     void roundTripsStorageOpen() {
         GamePacket.StorageOpen decoded = (GamePacket.StorageOpen) PacketCodec.decode(PacketCodec.encode(
                 new GamePacket.StorageOpen(3, 81, -4, List.of(new ItemStack((short) 55, 1), ItemStack.EMPTY))
@@ -271,5 +285,19 @@ class PacketCodecTest {
         ));
 
         assertEquals("Hello server", decoded.message());
+    }
+
+    @Test
+    void rejectsInventorySnapshotWithNegativeItemCount() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.INVENTORY_SNAPSHOT.id());
+        out.writeInt(1);
+        out.writeShort(2);
+        out.writeInt(-5);
+        out.writeInt(0);
+        out.flush();
+
+        assertThrows(IllegalArgumentException.class, () -> PacketCodec.decode(bytes.toByteArray()));
     }
 }

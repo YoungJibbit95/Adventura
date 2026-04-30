@@ -118,7 +118,7 @@ public final class WorldRenderer implements AutoCloseable {
         int renderedTransparent = 0;
         int culledMeshes = 0;
         Set<ChunkPos> culledPositions = new HashSet<>();
-        visibilityCache.clear();
+        Map<ChunkPos, Boolean> visibilityCache = new HashMap<>();
         int drawCalls = 0;
         int triangles = 0;
         for (Map.Entry<ChunkPos, GpuChunkMesh> entry : opaqueMeshes.entrySet()) {

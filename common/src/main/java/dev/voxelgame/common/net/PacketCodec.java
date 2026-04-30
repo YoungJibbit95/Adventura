@@ -168,7 +168,7 @@ public final class PacketCodec {
         try {
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes));
             PacketType type = PacketType.fromId(in.readInt());
-            return switch (type) {
+            GamePacket packet = switch (type) {
                 case HANDSHAKE -> new GamePacket.Handshake(in.readInt(), in.readUTF());
                 case LOGIN_REQUEST -> new GamePacket.LoginRequest(in.readUTF(), in.readUTF());
                 case LOGIN_ACCEPTED -> new GamePacket.LoginAccepted(readUuid(in), in.readLong(), in.readInt(), in.readInt());
@@ -265,6 +265,10 @@ public final class PacketCodec {
                 );
                 case CHAT -> new GamePacket.Chat(in.readUTF());
             };
+            if (in.available() != 0) {
+                throw new IllegalArgumentException("Trailing bytes after packet decode: " + in.available());
+            }
+            return packet;
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to decode packet", e);
         }
@@ -320,7 +324,19 @@ public final class PacketCodec {
         int length = checkedLength(in.readInt());
         List<ItemStack> stacks = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
-            stacks.add(new ItemStack(in.readShort(), in.readInt(), in.readInt()));
+            short itemId = in.readShort();
+            int count = in.readInt();
+            int damage = in.readInt();
+            if (itemId < 0) {
+                throw new IllegalArgumentException("Invalid item id: " + itemId);
+            }
+            if (count < 0) {
+                throw new IllegalArgumentException("Invalid item count: " + count);
+            }
+            if (damage < 0) {
+                throw new IllegalArgumentException("Invalid item damage: " + damage);
+            }
+            stacks.add(new ItemStack(itemId, count, damage));
         }
         return stacks;
     }
