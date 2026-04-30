@@ -506,7 +506,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
 
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 576, 50, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, blocks, "dirt", 211, 50, 150, 158);
-        putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 29, 49, 150, 158);
+        putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 1123, 259, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, sidePathByBlock, Blocks.GRASS, blocks, "grass_side", 29, 49, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, bottomPathByBlock, Blocks.GRASS, blocks, "dirt", 211, 50, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WATER, blocks, "water", 211, 469, 150, 158);
