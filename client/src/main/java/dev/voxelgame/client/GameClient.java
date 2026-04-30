@@ -5,6 +5,7 @@ import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
+import dev.voxelgame.client.render.BlockRenderProperties;
 import dev.voxelgame.client.render.ChunkBorderRenderer;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
@@ -1113,9 +1114,23 @@ public final class GameClient {
         int x = (int) Math.floor(camera.position().x);
         int y = (int) Math.floor(camera.position().y);
         int z = (int) Math.floor(camera.position().z);
+        Optional<dev.voxelgame.common.math.Raycast.Hit> target = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (target.isPresent()) {
+            x = target.get().x();
+            y = target.get().y();
+            z = target.get().z();
+        }
         int sky = world.skyLightAt(x, y, z);
         int block = world.blockLightAt(x, y, z);
-        return "Light @ " + x + " " + y + " " + z + ": combined " + Math.max(sky, block) + " sky " + sky + " block " + block;
+        short blockId = world.blockIdAt(x, y, z);
+        BlockRenderProperties properties = BlockRenderProperties.forBlock(blockId);
+        String emissive = properties.emissive() > 0.0f ? String.format(Locale.ROOT, "%.2f", properties.emissive()) : "0";
+        return "Light @ " + x + " " + y + " " + z
+                + (target.isPresent() ? " (target)" : " (camera)")
+                + ": combined " + Math.max(sky, block)
+                + " sky " + sky
+                + " block " + block
+                + " emissive " + emissive;
     }
 
     private String biomeDebugLine() {
