@@ -154,6 +154,20 @@ class HotbarTest {
     }
 
     @Test
+    void splitStackMovesHalfToFirstEmptySlot() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack((short) 23, 9));
+        hotbar.applySnapshot(slots);
+
+        assertTrue(hotbar.splitInventorySlot(0));
+
+        assertEquals(5, hotbar.slotView(0).count());
+        assertEquals("voxel:stick", hotbar.slotView(1).itemKey());
+        assertEquals(4, hotbar.slotView(1).count());
+    }
+
+    @Test
     void newlyCollectedItemsDiscoverRecipes() {
         Hotbar hotbar = new Hotbar();
         hotbar.resetForNewGame();

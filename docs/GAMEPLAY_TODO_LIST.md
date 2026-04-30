@@ -6,6 +6,9 @@ Adventura soll sich wie ein eigenständiges cozy Survival-Adventure anfühlen: s
 
 ## P0 – Core Gameplay Loop schärfen
 
+### Stabilität / Edge Cases
+- ~~Beim Wechsel auf Non-Survival-Modi (`CREATIVE`/`SPECTATOR`) nach Tod müssen Survival-Stats sauber zurückgesetzt werden.~~ ✅ Erledigt.
+
 ### Early Game verbessern
 - Startgebiet klarer lesbar machen.
 - Anfänger-Ressourcen besser sichtbar platzieren: twigs, pebbles, fiber, berries, mushrooms, herbs.

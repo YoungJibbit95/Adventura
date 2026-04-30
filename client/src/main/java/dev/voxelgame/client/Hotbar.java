@@ -363,6 +363,31 @@ public final class Hotbar {
         return true;
     }
 
+    public synchronized boolean splitInventorySlot(int sourceSlot) {
+        if (sourceSlot < 0 || sourceSlot >= inventory.size()) {
+            return false;
+        }
+        ItemStack source = inventory.slot(sourceSlot);
+        if (source.isEmpty() || source.count() < 2 || source.damage() != 0) {
+            return false;
+        }
+        int targetSlot = -1;
+        for (int i = 0; i < inventory.size(); i++) {
+            if (i != sourceSlot && inventory.slot(i).isEmpty()) {
+                targetSlot = i;
+                break;
+            }
+        }
+        if (targetSlot < 0) {
+            return false;
+        }
+        int split = source.count() / 2;
+        int remaining = source.count() - split;
+        inventory.setSlot(sourceSlot, new ItemStack(source.itemId(), remaining, source.damage()));
+        inventory.setSlot(targetSlot, new ItemStack(source.itemId(), split, source.damage()));
+        return true;
+    }
+
     private boolean moveSlotToRange(int sourceSlot, int targetStart, int targetEnd) {
         ItemStack source = inventory.slot(sourceSlot);
         ItemType type = items.requireById(source.itemId());
