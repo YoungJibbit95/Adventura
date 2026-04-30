@@ -49,6 +49,7 @@ Diese Liste bündelt alle offenen Engine-Aufgaben aus Gameplay-Roadmap und Engin
 - VAO/VBO/Texture-Lebenszeit tracken.
 - Debug-Zähler für aktive GPU-Ressourcen anzeigen.
 - Mesh dispose sicherstellen.
+- ✅ Guard ergänzt: geschlossene `GpuChunkMesh`-Instanzen werfen nun bei `draw()` sofort einen Fehler statt still auf gelöschte GL-Handles zuzugreifen.
 - Smoke-Test für längeres Erkunden mit Chunk-Unload.
 
 ## P2 – Save/Load und Persistenz
