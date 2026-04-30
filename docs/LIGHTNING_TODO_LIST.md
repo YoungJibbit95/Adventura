@@ -29,7 +29,7 @@ Light-Arten:
 - aktuelles Light Level am Zielblock.
 - Sky Light.
 - Block Light.
-- Emissive Material Flag.
+- ~~Emissive Material Flag.~~ ✅ (`/debuglight` zeigt jetzt emissive-Wert des aktuellen Blocks)
 - optional Light Visualization Mode.
 
 ## P2 – Block Light System
