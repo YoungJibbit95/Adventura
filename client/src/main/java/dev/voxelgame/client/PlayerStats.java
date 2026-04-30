@@ -45,6 +45,7 @@ public final class PlayerStats {
         health = 20;
         hunger = 20;
         armor = 0;
+        comfort = 0;
         breath = 20.0f;
         stamina = 20.0f;
         hungerDrain = 0.0f;
