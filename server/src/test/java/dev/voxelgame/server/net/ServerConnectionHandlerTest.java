@@ -478,6 +478,35 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void loginRejectsSecondLoginAttemptOnSameConnection() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker()
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+
+            channel.writeInbound(new GamePacket.LoginRequest("TesterAgain", "dev-token"));
+
+            Object outbound;
+            GamePacket.LoginRejected rejected = null;
+            while ((outbound = channel.readOutbound()) != null) {
+                if (outbound instanceof GamePacket.LoginRejected loginRejected) {
+                    rejected = loginRejected;
+                }
+            }
+
+            assertTrue(rejected != null && "Already logged in".equals(rejected.reason()));
+            assertFalse(channel.isActive());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveRejectsExtremeTeleportAfterAcceptedMove() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
@@ -510,6 +539,102 @@ class ServerConnectionHandlerTest {
             assertEquals(0, stats.comfort());
         } finally {
             channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void storageTransferRejectsSkippedTransactionId() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.StorageTransfer(8, 120, 9, false, 0, GamePacket.StorageTransfer.AUTO_TARGET_SLOT, 1, 1));
+            StorageOpenResponse accepted = readStorageOpenResponse(channel);
+
+            channel.writeInbound(new GamePacket.StorageTransfer(8, 120, 9, false, 0, GamePacket.StorageTransfer.AUTO_TARGET_SLOT, 1, 3));
+            StorageOpenResponse rejected = readStorageOpenResponse(channel);
+
+            assertTrue(accepted.hasStorageOpen());
+            assertFalse(rejected.hasStorageOpen());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void chatBroadcastDoesNotSendToUnauthenticatedConnections() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel loggedIn = loggedInChannel(world);
+        EmbeddedChannel unauthenticated = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(SECOND_PLAYER_ID),
+                new ServerEntityTracker()
+        ));
+        try {
+            drainOutbound(loggedIn);
+            drainOutbound(unauthenticated);
+
+            loggedIn.writeInbound(new GamePacket.Chat("hello"));
+
+            Object loggedInPacket = loggedIn.readOutbound();
+            Object unauthenticatedPacket = unauthenticated.readOutbound();
+            assertTrue(loggedInPacket instanceof GamePacket.Chat);
+            assertFalse(unauthenticatedPacket instanceof GamePacket.Chat);
+        } finally {
+            loggedIn.finishAndReleaseAll();
+            unauthenticated.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void worldStateBroadcastsStayWithinSameWorld() {
+        EmbeddedChannel worldAChannel = loggedInChannel(new ServerWorld(123L), new ServerEntityTracker(), PLAYER_ID);
+        EmbeddedChannel worldBChannel = loggedInChannel(new ServerWorld(456L), new ServerEntityTracker(), SECOND_PLAYER_ID);
+        try {
+            drainOutbound(worldAChannel);
+            drainOutbound(worldBChannel);
+
+            worldAChannel.writeInbound(new GamePacket.PlayerMove(8.6, 120.0, 8.5, 0.0f, 0.0f, true));
+
+            Object firstWorldPacket = worldAChannel.readOutbound();
+            Object secondWorldPacket = worldBChannel.readOutbound();
+            assertTrue(firstWorldPacket instanceof GamePacket.EntitySnapshots || firstWorldPacket instanceof GamePacket.PlayerStatsSnapshot);
+            assertFalse(secondWorldPacket instanceof GamePacket.EntitySnapshots);
+            assertFalse(secondWorldPacket instanceof GamePacket.BlockUpdate);
+        } finally {
+            worldAChannel.finishAndReleaseAll();
+            worldBChannel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void entitySnapshotsAreFilteredByDistancePerPlayer() {
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker(123L);
+        EmbeddedChannel first = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel second = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
+        try {
+            drainOutbound(first);
+            drainOutbound(second);
+
+            second.writeInbound(new GamePacket.PlayerMove(120.0, 120.0, 8.5, 0.0f, 0.0f, true));
+            drainOutbound(first);
+            drainOutbound(second);
+
+            first.writeInbound(new GamePacket.PlayerMove(8.6, 120.0, 8.5, 0.0f, 0.0f, true));
+
+            GamePacket.EntitySnapshots snapshotsForSecond = null;
+            Object outbound;
+            while ((outbound = second.readOutbound()) != null) {
+                if (outbound instanceof GamePacket.EntitySnapshots packet) {
+                    snapshotsForSecond = packet;
+                }
+            }
+            assertTrue(snapshotsForSecond != null);
+            assertFalse(snapshotsForSecond.snapshots().stream().anyMatch(snapshot -> PLAYER_ID.equals(snapshot.ownerPlayerId())));
+        } finally {
+            first.finishAndReleaseAll();
+            second.finishAndReleaseAll();
         }
     }
 

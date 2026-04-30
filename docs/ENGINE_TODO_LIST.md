@@ -73,12 +73,15 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - BlockEntity-Daten serverseitig autoritativ halten.
 - Client bekommt nur Snapshots/UI-Daten.
 - Save/Load für alle BlockEntities.
-- Multiplayer-Transfers und Station-Operationen serverseitig prüfen.
+- ~~Multiplayer-Transfers und Station-Operationen serverseitig prüfen.~~ ✅ Basis-Validierung für Storage-Transfers/Crafting/Cooking ist serverseitig aktiv.
+- Transaktionsvalidierung weiter ausbauen: Sequenznummern auch für Craft/Cook/Open-Requests vereinheitlichen.
 
 ## P4 – Multiplayer Engine
 
 ### Interest Management
-- Entity-Snapshots nicht global an alle Spieler senden.
+- ~~Entity-Snapshots nicht global an alle Spieler senden.~~ ✅ Snapshot-Broadcast ist jetzt pro Spieler auf Distanz gefiltert.
+- Fortschritt: Broadcasts gehen nur noch an authentifizierte Verbindungen (nicht mehr an Pre-Login Channels).
+- Fortschritt: Broadcasts für Weltzustand/Entities sind auf die jeweilige `ServerWorld` begrenzt.
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.
