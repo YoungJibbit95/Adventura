@@ -80,7 +80,7 @@ Propagation:
 - Glow mushrooms leicht emissive.
 
 ### Water
-- Wasser bekommt eigene Helligkeit/Tint.
+- ~~Wasser bekommt eigene Helligkeit/Tint.~~ ✅ (Terrain-Shader hebt `animatedFluid` nachts leicht an und gibt einen dezenten kühlen Tint, damit Wasser nicht absäuft)
 - underwater tint.
 - Nachtwasser nicht komplett schwarz.
 
