@@ -9,6 +9,7 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - warmer Pixel-Art-Stil.
 - klare Rahmen und gute Lesbarkeit.
 - UI Scale überall anwenden.
+- ✅ Teilweise erledigt: Compact-Inventory (Slots, Header, Buttons, Hover, Durability-Bar) skaliert jetzt konsistent mit UI Scale.
 - Hover/Pressed/Disabled States vereinheitlichen.
 - zentrale Komponenten: Buttons, Panels, Slots, Tabs, Chips, Scrollbars, Tooltips, Progress Bars, Textfelder.
 
@@ -16,7 +17,7 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 - Drag/drop weiter testen.
 - Shift-click quick move weiter testen.
-- Right-click split stack weiter testen.
+- ~~Right-click split stack weiter testen.~~ ✅ Erledigt (Crafting-Inventory unterstützt jetzt Right-Click Split in leere Slots).
 - Sort Button klarer beschriften.
 - Trash nur Creative sichtbar/aktiv.
 - Slot Hover Feedback verbessern.
