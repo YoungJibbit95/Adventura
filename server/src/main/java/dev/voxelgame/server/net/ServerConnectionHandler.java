@@ -453,8 +453,13 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private boolean isNextStorageTransaction(int transactionId) {
-        return transactionId > lastStorageTransactionId
-                || (lastStorageTransactionId == Integer.MAX_VALUE && transactionId == 1);
+        if (transactionId < 1) {
+            return false;
+        }
+        if (lastStorageTransactionId == Integer.MAX_VALUE) {
+            return transactionId == 1;
+        }
+        return transactionId == lastStorageTransactionId + 1;
     }
 
     private boolean tryFuelCampfire(ChannelHandlerContext ctx, GamePacket.BlockInteract interact, BlockType targetBlock, double now) {
