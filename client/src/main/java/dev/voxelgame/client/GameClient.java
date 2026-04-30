@@ -5,6 +5,7 @@ import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
+import dev.voxelgame.client.render.BlockRenderProperties;
 import dev.voxelgame.client.render.ChunkBorderRenderer;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
@@ -1117,7 +1118,14 @@ public final class GameClient {
         int z = (int) Math.floor(camera.position().z);
         int sky = world.skyLightAt(x, y, z);
         int block = world.blockLightAt(x, y, z);
-        return "Light @ " + x + " " + y + " " + z + ": combined " + Math.max(sky, block) + " sky " + sky + " block " + block;
+        short blockId = world.blockIdAt(x, y, z);
+        BlockRenderProperties properties = BlockRenderProperties.forBlock(blockId);
+        String emissive = properties.emissive() > 0.0f ? String.format(Locale.ROOT, "%.2f", properties.emissive()) : "0";
+        return "Light @ " + x + " " + y + " " + z
+                + ": combined " + Math.max(sky, block)
+                + " sky " + sky
+                + " block " + block
+                + " emissive " + emissive;
     }
 
     private String biomeDebugLine() {
@@ -1925,7 +1933,7 @@ public final class GameClient {
         }
     }
 
-    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, float x, float y) {
+    private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, float x, float y) {
         float uiScale = settings.uiScale();
         float slot = 42.0f * uiScale;
         float gap = 6.0f * uiScale;
@@ -1939,7 +1947,7 @@ public final class GameClient {
         drawAssetPanel("panel_inventory", x - 14.0f * uiScale, y - 42.0f * uiScale, panelWidth, rows * (slot + gap) + 48.0f * uiScale, new UiColor(0.04f, 0.06f, 0.06f, 0.74f));
         uiRenderer.rect(x + 2.0f * uiScale, y - 2.0f * uiScale, gridWidth - 4.0f * uiScale, rows * (slot + gap) - gap + 4.0f * uiScale, new UiColor(0.018f, 0.030f, 0.028f, 0.22f));
         uiRenderer.text("INVENTORY", x, y - 28.0f * uiScale, 2.4f * uiScale, UiColor.WHITE);
-        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 96.0f * uiScale, 28.0f * uiScale, "SORT BAG", true), mouse, clicked, () -> {
+        drawButton(new UiButton(x + panelWidth - 188.0f * uiScale, y - 36.0f * uiScale, 76.0f * uiScale, 28.0f * uiScale, "SORT", true), mouse, clicked, () -> {
             if (hotbar.sortBackpack()) {
                 setStatus("Backpack sorted");
                 audio.play(AudioCue.INVENTORY_CLICK);
