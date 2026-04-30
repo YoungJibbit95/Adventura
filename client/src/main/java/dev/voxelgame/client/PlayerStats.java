@@ -54,7 +54,7 @@ public final class PlayerStats {
     }
 
     public void resetForMode(GameMode mode) {
-        if (mode == GameMode.SPECTATOR) {
+        if (mode != GameMode.SURVIVAL) {
             respawn();
         }
     }
