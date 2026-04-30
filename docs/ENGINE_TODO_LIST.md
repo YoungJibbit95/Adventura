@@ -85,6 +85,7 @@ Speichern: Position, Inventory, Health, Hunger, Stamina, Breath, Spawn Point, en
 - Fortschritt: Broadcasts für Weltzustand/Entities sind auf die jeweilige `ServerWorld` begrenzt.
 - Fortschritt: Client-Netzwerkdecoder begrenzt eingehende Packet-Größe jetzt ebenfalls auf 2 MiB, um OOM durch manipulierte Längenfelder zu verhindern.
 - Fortschritt: Client- und Server-Decoder verwerfen jetzt auch zu kleine (ungültige) Packet-Längen vor `PacketCodec.decode(...)`, damit kaputte Frames nicht als Decoder-Ausnahmen tiefer im Stack landen.
+- Fortschritt: Decoder-Grenzwerte sind im Shared-Code (`PacketLimits`) zentralisiert, damit C2S/S2C dieselben Limits erzwingen.
 - Relevanz nach Chunk/Radius berechnen.
 - feste Snapshot-Tickrate für Entities.
 - Block Updates nur an relevante Zuschauer.

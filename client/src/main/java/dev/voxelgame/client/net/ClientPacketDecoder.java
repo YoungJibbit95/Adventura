@@ -1,6 +1,7 @@
 package dev.voxelgame.client.net;
 
 import dev.voxelgame.common.net.PacketCodec;
+import dev.voxelgame.common.net.PacketLimits;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
@@ -22,6 +23,10 @@ public final class ClientPacketDecoder extends ByteToMessageDecoder {
         if (packetLength < 0) {
             throw new IllegalArgumentException("Negative packet length: " + packetLength);
         }
+        if (packetLength < PacketLimits.LENGTH_PREFIX_BYTES) {
+            throw new IllegalArgumentException("Packet length below minimum header size: " + packetLength);
+        }
+        if (packetLength > PacketLimits.MAX_PACKET_SIZE) {
         if (packetLength > PacketCodec.MAX_PACKET_SIZE) {
         if (packetLength < MIN_PACKET_SIZE) {
             throw new IllegalArgumentException("Packet length below minimum header size: " + packetLength);
