@@ -6,6 +6,8 @@ public final class PlayerPhysics {
     private static final float AIR_CONTROL_PER_SECOND = 4.5f;
     private static final float AIR_HORIZONTAL_DRAG = 0.985f;
     private static final float WATER_CONTROL_PER_SECOND = 6.5f;
+    private static final float COYOTE_TIME_SECONDS = 0.10f;
+    private static final float JUMP_BUFFER_SECONDS = 0.10f;
 
     private PlayerPhysics() {
     }
@@ -39,7 +41,9 @@ public final class PlayerPhysics {
                     state.velocityZ(),
                     state.onGround(),
                     water.headUnderwater(),
-                    0.0f
+                    0.0f,
+                    state.coyoteTimeSeconds(),
+                    state.jumpBufferSeconds()
             );
         }
 
@@ -52,6 +56,12 @@ public final class PlayerPhysics {
         float velocityZ = state.velocityZ();
         float velocityY = state.velocityY();
         boolean onGround = state.onGround();
+        float coyoteTimeSeconds = onGround
+                ? COYOTE_TIME_SECONDS
+                : Math.max(0.0f, state.coyoteTimeSeconds() - deltaSeconds);
+        float jumpBufferSeconds = input.jump()
+                ? JUMP_BUFFER_SECONDS
+                : Math.max(0.0f, state.jumpBufferSeconds() - deltaSeconds);
 
         if (swimming) {
             float waterControl = Math.min(1.0f, deltaSeconds * WATER_CONTROL_PER_SECOND);
@@ -79,9 +89,12 @@ public final class PlayerPhysics {
 
         if (swimming && input.jump()) {
             velocityY = Math.max(velocityY, config.swimRiseSpeed());
-        } else if (onGround && input.jump()) {
+            jumpBufferSeconds = 0.0f;
+        } else if (jumpBufferSeconds > 0.0f && (onGround || coyoteTimeSeconds > 0.0f)) {
             velocityY = config.jumpSpeed();
             onGround = false;
+            coyoteTimeSeconds = 0.0f;
+            jumpBufferSeconds = 0.0f;
         }
 
         if (swimming) {
@@ -104,6 +117,16 @@ public final class PlayerPhysics {
             }
             onGround = velocityY < 0.0f;
             velocityY = 0.0f;
+            if (onGround) {
+                coyoteTimeSeconds = COYOTE_TIME_SECONDS;
+                if (!swimming && jumpBufferSeconds > 0.0f) {
+                    velocityY = config.jumpSpeed();
+                    onGround = false;
+                    fallImpactSpeed = 0.0f;
+                    coyoteTimeSeconds = 0.0f;
+                    jumpBufferSeconds = 0.0f;
+                }
+            }
         } else {
             onGround = false;
         }
@@ -117,7 +140,9 @@ public final class PlayerPhysics {
                 velocityZ,
                 onGround,
                 water.headUnderwater(),
-                fallImpactSpeed
+                fallImpactSpeed,
+                coyoteTimeSeconds,
+                jumpBufferSeconds
         );
     }
 

@@ -13,6 +13,8 @@ uniform vec3 uCameraPosition;
 uniform vec3 uSunDirection;
 uniform int uAmbientOcclusionEnabled;
 uniform int uSoftShadowsEnabled;
+uniform int uSimpleWater;
+uniform int uWindEnabled;
 uniform float uTime;
 uniform float uShadowStrength;
 uniform sampler2D uMaterialLut;
@@ -36,8 +38,21 @@ bool animatedFluid(float materialIndex) {
     return materialTexel(materialIndex, 1).y > 0.5;
 }
 
+float biomeTintMode(float materialIndex) {
+    return materialTexel(materialIndex, 5).x;
+}
+
+float renderLayer(float materialIndex) {
+    return materialTexel(materialIndex, 5).z;
+}
+
+bool windAnimatedCutout(float materialIndex) {
+    float layer = renderLayer(materialIndex);
+    return uWindEnabled == 1 && layer > 0.5 && layer < 1.5 && biomeTintMode(materialIndex) > 0.5;
+}
+
 void main() {
-    vLight = max(aLight, 0.12);
+    vLight = clamp(aLight, 0.08, 1.20);
     vMaterialIndex = aMaterialIndex;
     float sun = max(dot(normalize(aNormal), normalize(uSunDirection)), 0.0);
     float floorShade = uSoftShadowsEnabled == 1 ? 0.34 : 0.50;
@@ -48,8 +63,13 @@ void main() {
     }
     vAo = uAmbientOcclusionEnabled == 1 ? aAo : 1.0;
     vec3 position = aPosition;
-    if (animatedFluid(aMaterialIndex)) {
+    if (animatedFluid(aMaterialIndex) && uSimpleWater == 0) {
         position.y += sin(uTime * 2.2 + aPosition.x * 0.45 + aPosition.z * 0.33) * 0.035;
+    }
+    if (windAnimatedCutout(aMaterialIndex)) {
+        float sway = sin(uTime * 1.7 + aPosition.x * 0.29 + aPosition.z * 0.41) * 0.028;
+        position.x += sway;
+        position.z += sway * 0.45;
     }
     vWorldPosition = position;
     vNormal = aNormal;

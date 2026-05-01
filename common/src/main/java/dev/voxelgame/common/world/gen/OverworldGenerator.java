@@ -282,7 +282,7 @@ public final class OverworldGenerator implements WorldGenerator {
         } else if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
             template = Structures.watchtower();
         } else if ("voxel:mushroom_grove".equals(biome.key())) {
-            template = Structures.smallRuin();
+            template = roll < biome.structureChance() * 0.70 ? Structures.mushroomCircle() : Structures.smallRuin();
         } else {
             template = Structures.smallRuin();
         }
@@ -419,13 +419,19 @@ public final class OverworldGenerator implements WorldGenerator {
                 yield Blocks.AIR;
             }
             case "voxel:mushroom_grove" -> {
-                if (roll < 0.024) {
+                if (roll < 0.004) {
+                    yield Blocks.SPORE_BLOSSOM;
+                }
+                if (roll < 0.016) {
+                    yield Blocks.GLOW_MUSHROOM;
+                }
+                if (roll < 0.032) {
                     yield Blocks.MUSHROOM_CLUSTER;
                 }
-                if (roll < 0.038) {
+                if (roll < 0.044) {
                     yield Blocks.RED_MUSHROOM;
                 }
-                if (roll < 0.046) {
+                if (roll < 0.052) {
                     yield Blocks.CLAY_DEPOSIT;
                 }
                 yield Blocks.AIR;

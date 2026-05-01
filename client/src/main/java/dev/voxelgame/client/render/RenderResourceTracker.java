@@ -16,6 +16,9 @@ public final class RenderResourceTracker {
     private static int liveShaderPrograms;
     private static long createdShaderPrograms;
     private static long disposedShaderPrograms;
+    private static long shaderReloadCount;
+    private static long failedShaderReloadCount;
+    private static double lastShaderReloadMilliseconds;
     private static int liveParticleVertexArrays;
     private static int liveParticleBuffers;
     private static long liveParticleBufferBytes;
@@ -76,6 +79,14 @@ public final class RenderResourceTracker {
         }
         liveShaderPrograms--;
         disposedShaderPrograms++;
+    }
+
+    static synchronized void recordShaderReload(double elapsedMilliseconds, int failedPrograms) {
+        shaderReloadCount++;
+        failedShaderReloadCount += Math.max(0, failedPrograms);
+        lastShaderReloadMilliseconds = !Double.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0.0
+                ? 0.0
+                : elapsedMilliseconds;
     }
 
     public static synchronized void registerParticleBuffers(long estimatedBytes) {
@@ -140,6 +151,9 @@ public final class RenderResourceTracker {
                 liveShaderPrograms,
                 createdShaderPrograms,
                 disposedShaderPrograms,
+                shaderReloadCount,
+                failedShaderReloadCount,
+                lastShaderReloadMilliseconds,
                 liveParticleVertexArrays,
                 liveParticleBuffers,
                 liveParticleBufferBytes,
@@ -166,6 +180,9 @@ public final class RenderResourceTracker {
         liveShaderPrograms = 0;
         createdShaderPrograms = 0L;
         disposedShaderPrograms = 0L;
+        shaderReloadCount = 0L;
+        failedShaderReloadCount = 0L;
+        lastShaderReloadMilliseconds = 0.0;
         liveParticleVertexArrays = 0;
         liveParticleBuffers = 0;
         liveParticleBufferBytes = 0L;
@@ -191,6 +208,9 @@ public final class RenderResourceTracker {
             int liveShaderPrograms,
             long createdShaderPrograms,
             long disposedShaderPrograms,
+            long shaderReloadCount,
+            long failedShaderReloadCount,
+            double lastShaderReloadMilliseconds,
             int liveParticleVertexArrays,
             int liveParticleBuffers,
             long liveParticleBufferBytes,
@@ -200,7 +220,7 @@ public final class RenderResourceTracker {
             int liveFramebuffers
     ) {
         public static Snapshot empty() {
-            return new Snapshot(0, 0, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0, 0, 0L, 0, 0, 0L, 0);
+            return new Snapshot(0, 0, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0.0, 0, 0, 0L, 0, 0, 0L, 0);
         }
     }
 }

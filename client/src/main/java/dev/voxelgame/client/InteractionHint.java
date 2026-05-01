@@ -111,6 +111,8 @@ public record InteractionHint(String title, String action, String detail, Tone t
             case Blocks.BERRY_BUSH -> new InteractionHint(title, "Right click harvest berries", "Left click breaks the bush", Tone.READY);
             case Blocks.HERB_PLANTER -> new InteractionHint(title, "Right click pick herbs", "Left click breaks the planter", Tone.READY);
             case Blocks.REEDS -> new InteractionHint(title, "Right click cut reeds", "Used for water containers and fuel", Tone.READY);
+            case Blocks.GLOW_MUSHROOM -> new InteractionHint(title, "Right click gather cap", "Cook into glow mushroom stew", Tone.READY);
+            case Blocks.SPORE_BLOSSOM -> new InteractionHint(title, "Right click pick blossom", "Brew with glow caps into spore tea", Tone.READY);
             case Blocks.PINE_LOG -> new InteractionHint(title, "Right click collect resin", "Hold left to chop log", Tone.READY);
             case Blocks.TREE_STUMP -> new InteractionHint(title, "Right click peel bark", "Used for tool handles and fuel", Tone.READY);
             default -> null;

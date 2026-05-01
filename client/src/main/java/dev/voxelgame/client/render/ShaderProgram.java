@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.FloatBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 import static org.lwjgl.opengl.GL20.GL_COMPILE_STATUS;
 import static org.lwjgl.opengl.GL20.GL_FRAGMENT_SHADER;
@@ -34,27 +35,21 @@ import static org.lwjgl.opengl.GL20.glUniform4fv;
 import static org.lwjgl.opengl.GL20.glUseProgram;
 
 public final class ShaderProgram implements AutoCloseable {
-    private final int programId;
+    private final String vertexPath;
+    private final String fragmentPath;
+    private int programId;
     private boolean closed;
 
-    private ShaderProgram(int programId) {
+    private ShaderProgram(String vertexPath, String fragmentPath, int programId) {
+        this.vertexPath = Objects.requireNonNull(vertexPath, "vertexPath");
+        this.fragmentPath = Objects.requireNonNull(fragmentPath, "fragmentPath");
         this.programId = programId;
         RenderResourceTracker.registerShaderProgram();
+        ShaderRegistry.register(this);
     }
 
     public static ShaderProgram fromResources(String vertexPath, String fragmentPath) {
-        int vertexShader = compile(GL_VERTEX_SHADER, loadResource(vertexPath));
-        int fragmentShader = compile(GL_FRAGMENT_SHADER, loadResource(fragmentPath));
-        int program = glCreateProgram();
-        glAttachShader(program, vertexShader);
-        glAttachShader(program, fragmentShader);
-        glLinkProgram(program);
-        if (glGetProgrami(program, GL_LINK_STATUS) == 0) {
-            throw new IllegalStateException("Shader link failed: " + glGetProgramInfoLog(program));
-        }
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-        return new ShaderProgram(program);
+        return new ShaderProgram(vertexPath, fragmentPath, linkFromResources(vertexPath, fragmentPath));
     }
 
     public void bind() {
@@ -98,8 +93,56 @@ public final class ShaderProgram implements AutoCloseable {
             return;
         }
         closed = true;
+        ShaderRegistry.unregister(this);
         glDeleteProgram(programId);
         RenderResourceTracker.releaseShaderProgram();
+    }
+
+    void reloadFromResources() {
+        if (closed) {
+            throw new IllegalStateException("Shader is already closed: " + resourceLabel());
+        }
+        int replacementProgram = linkFromResources(vertexPath, fragmentPath);
+        RenderResourceTracker.registerShaderProgram();
+        int previousProgram = programId;
+        programId = replacementProgram;
+        glDeleteProgram(previousProgram);
+        RenderResourceTracker.releaseShaderProgram();
+    }
+
+    String resourceLabel() {
+        return vertexPath + " + " + fragmentPath;
+    }
+
+    private static int linkFromResources(String vertexPath, String fragmentPath) {
+        int vertexShader = 0;
+        int fragmentShader = 0;
+        int program = 0;
+        try {
+            vertexShader = compile(GL_VERTEX_SHADER, loadResource(vertexPath));
+            fragmentShader = compile(GL_FRAGMENT_SHADER, loadResource(fragmentPath));
+            program = glCreateProgram();
+            glAttachShader(program, vertexShader);
+            glAttachShader(program, fragmentShader);
+            glLinkProgram(program);
+            if (glGetProgrami(program, GL_LINK_STATUS) == 0) {
+                String log = glGetProgramInfoLog(program);
+                glDeleteProgram(program);
+                program = 0;
+                throw new IllegalStateException("Shader link failed: " + log);
+            }
+            return program;
+        } finally {
+            if (vertexShader != 0) {
+                glDeleteShader(vertexShader);
+            }
+            if (fragmentShader != 0) {
+                glDeleteShader(fragmentShader);
+            }
+            if (program != 0 && glGetProgrami(program, GL_LINK_STATUS) == 0) {
+                glDeleteProgram(program);
+            }
+        }
     }
 
     private static int compile(int type, String source) {
@@ -107,7 +150,9 @@ public final class ShaderProgram implements AutoCloseable {
         glShaderSource(shader, source);
         glCompileShader(shader);
         if (glGetShaderi(shader, GL_COMPILE_STATUS) == 0) {
-            throw new IllegalStateException("Shader compile failed: " + glGetShaderInfoLog(shader));
+            String log = glGetShaderInfoLog(shader);
+            glDeleteShader(shader);
+            throw new IllegalStateException("Shader compile failed: " + log);
         }
         return shader;
     }

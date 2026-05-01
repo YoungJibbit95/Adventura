@@ -3,9 +3,9 @@ package dev.voxelgame.client;
 import java.util.Locale;
 
 public enum RenderPreset {
-    LOW("Low", 4, 3, 1, 1.5, 1.0, true, false, false, false, true),
-    MEDIUM("Medium", 8, 4, 2, 3.0, 2.0, true, true, false, true, true),
-    HIGH("High", 12, 6, 4, 5.0, 4.0, true, true, true, true, true);
+    LOW("Low", 4, 3, 1, 1.5, 1.0, true, false, false, false, true, true, 0.55),
+    MEDIUM("Medium", 8, 4, 2, 3.0, 2.0, true, true, false, true, true, false, 0.80),
+    HIGH("High", 12, 6, 4, 5.0, 4.0, true, true, true, true, true, false, 1.00);
 
     private final String label;
     private final int renderDistanceChunks;
@@ -18,6 +18,8 @@ public enum RenderPreset {
     private final boolean softShadowsEnabled;
     private final boolean bloomEnabled;
     private final boolean transparentWaterEnabled;
+    private final boolean simpleWaterEnabled;
+    private final double particleQuality;
 
     RenderPreset(
             String label,
@@ -30,7 +32,9 @@ public enum RenderPreset {
             boolean ambientOcclusionEnabled,
             boolean softShadowsEnabled,
             boolean bloomEnabled,
-            boolean transparentWaterEnabled
+            boolean transparentWaterEnabled,
+            boolean simpleWaterEnabled,
+            double particleQuality
     ) {
         this.label = label;
         this.renderDistanceChunks = renderDistanceChunks;
@@ -43,6 +47,8 @@ public enum RenderPreset {
         this.softShadowsEnabled = softShadowsEnabled;
         this.bloomEnabled = bloomEnabled;
         this.transparentWaterEnabled = transparentWaterEnabled;
+        this.simpleWaterEnabled = simpleWaterEnabled;
+        this.particleQuality = particleQuality;
     }
 
     public String label() {
@@ -87,6 +93,14 @@ public enum RenderPreset {
 
     public boolean transparentWaterEnabled() {
         return transparentWaterEnabled;
+    }
+
+    public boolean simpleWaterEnabled() {
+        return simpleWaterEnabled;
+    }
+
+    public double particleQuality() {
+        return particleQuality;
     }
 
     public static RenderPreset parse(String value) {

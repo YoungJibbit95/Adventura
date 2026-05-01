@@ -20,10 +20,13 @@ import static org.lwjgl.glfw.GLFW.glfwGetKey;
 
 final class ClientPlayerController {
     private static final PlayerPhysicsConfig PHYSICS = PlayerPhysicsConfig.defaults();
+    private static final float GROUND_JUMP_GRACE_SECONDS = 0.10f;
 
     private final Vector3f velocity = new Vector3f();
     private boolean onGround;
     private float lastFallImpactSpeed;
+    private float coyoteTimeSeconds;
+    private float jumpBufferSeconds;
 
     void updateFreecam(long window, float deltaSeconds, Vector3f position, Vector3f forward) {
         float speed = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ? 58.0f : 24.0f;
@@ -51,6 +54,8 @@ final class ClientPlayerController {
         }
         velocity.zero();
         onGround = false;
+        coyoteTimeSeconds = 0.0f;
+        jumpBufferSeconds = 0.0f;
     }
 
     void updateFlying(long window, float deltaSeconds, Vector3f position, ClientWorld world, Vector3f forward) {
@@ -64,6 +69,8 @@ final class ClientPlayerController {
                 velocity.z,
                 onGround,
                 world.playerWaterState(position).headUnderwater(),
+                0.0f,
+                0.0f,
                 0.0f
         );
         PlayerState next = PlayerPhysics.stepFlying(
@@ -101,7 +108,9 @@ final class ClientPlayerController {
                 velocity.z,
                 onGround,
                 water.headUnderwater(),
-                0.0f
+                0.0f,
+                coyoteTimeSeconds,
+                jumpBufferSeconds
         );
         PlayerState next = PlayerPhysics.stepSurvival(state, input, water, deltaSeconds, PHYSICS, world::collidesPlayer);
         applyState(position, next);
@@ -111,6 +120,8 @@ final class ClientPlayerController {
             position.set(spawn);
             resetVelocity();
             onGround = false;
+            coyoteTimeSeconds = 0.0f;
+            jumpBufferSeconds = 0.0f;
         }
     }
 
@@ -131,10 +142,12 @@ final class ClientPlayerController {
 
     void resetVelocity() {
         velocity.zero();
+        jumpBufferSeconds = 0.0f;
     }
 
     void reconcileGrounded(boolean grounded) {
         onGround = grounded;
+        coyoteTimeSeconds = grounded ? GROUND_JUMP_GRACE_SECONDS : 0.0f;
         if (grounded && velocity.y < 0.0f) {
             velocity.y = 0.0f;
         }
@@ -150,6 +163,8 @@ final class ClientPlayerController {
         position.set((float) next.x(), (float) next.y(), (float) next.z());
         velocity.set(next.velocityX(), next.velocityY(), next.velocityZ());
         onGround = next.onGround();
+        coyoteTimeSeconds = next.coyoteTimeSeconds();
+        jumpBufferSeconds = next.jumpBufferSeconds();
     }
 
     private Vector3f movementInput(long window, Vector3f cameraForward, boolean vertical) {

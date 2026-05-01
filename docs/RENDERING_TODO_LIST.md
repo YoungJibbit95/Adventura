@@ -339,7 +339,7 @@ Frustum Culling soll nicht immer ganze Welt-/Chunk-Höhe behandeln.
 - ~~Frustum testet realistische Mesh Bounds.~~
 - ~~Debug Toggle für Bounds anzeigen.~~
 - ~~Metrics: culled by chunk und rendered layers.~~
-- 🔴 Echte `culled by section`-Metriken brauchen eine Engine-Erweiterung: Der Mesher muss SOLID/CUTOUT/TRANSLUCENT nicht nur pro Chunk-Layer, sondern pro vertikaler Section oder Draw-Range ausgeben. Konkret sollte `ChunkMesh` dafür entweder `List<SectionMeshPart>` mit `sectionY`, `indexOffset`, `indexCount`, `Bounds` bekommen oder `ClientWorld.LayeredMeshBuild` mehrere `ChunkMesh`-Objekte pro Section liefern. `WorldRenderer` kann dann pro Section-Part frustum-cullen, nur sichtbare Draw-Ranges zeichnen und `RenderPassStats` um `culledSections`/`renderedSections` erweitern. Ohne diese Submesh-/DrawRange-Struktur wäre eine Section-Cull-Metrik nur geschätzt und nicht renderer-wahr.
+Hinweis 2026-05-01: Section-Bounds/Culling sind headless abgesichert (`sectionBoundsAroundUsesRadiusAndOnlyNonEmptySections`). Echte `culled by section`-Draw-Range-Metriken bleiben ein späteres Renderer-Upgrade: Dafür muss der Mesher SOLID/CUTOUT/TRANSLUCENT pro vertikaler Section oder Draw-Range ausgeben, z. B. über `SectionMeshPart` mit `sectionY`, `indexOffset`, `indexCount`, `Bounds` oder mehrere `ChunkMesh`-Objekte pro Section.
 
 ### Akzeptanz
 
@@ -505,16 +505,22 @@ Pro Textur/Material:
 
 ### Offen
 
-- Shader Uniforms dokumentieren.
-- Material LUT integrieren.
-- Lightwerte sauber normalisieren.
-- Fog nicht pro Block-ID, sondern global/materialbasiert.
-- Debug-Modi:
-  - show material index
-  - show light
-  - show AO
-  - show biome tint
-  - show render layer
+- ~~Shader Uniforms dokumentieren.~~ Siehe `docs/RENDERING_SHADER_UNIFORMS.md`.
+- ~~Material LUT integrieren.~~ Terrain liest Farbe, Effekte, Atlas-UVs, Style, Fog-Mode und Render-Layer aus `uMaterialLut`.
+- ~~Lightwerte sauber normalisieren.~~ Vertex-Light wird im Shader geklemmt und mit Tageszeit-Helligkeit gemischt.
+- ~~Fog nicht pro Block-ID, sondern global/materialbasiert.~~ `FogAffectMode` aus der LUT reduziert oder deaktiviert Fog pro Materialklasse.
+- ~~Debug-Modi:~~
+  - ~~show material index~~
+  - ~~show light~~
+  - ~~show AO~~
+  - ~~show biome tint~~
+  - ~~show render layer~~
+
+### Umsetzung
+
+- `/debugview off|material|light|ao|biome|layer` schaltet die Terrain-Debugausgabe.
+- `RenderDebugView` wird ueber `RenderSettings` an den Chunk-Shader uebergeben.
+- Biome-Tint, Tageszeit-Fog, Underwater-Tint und Bloom laufen ohne Block-ID-Hacks ueber Runtime-Settings plus Material-LUT.
 
 ### Akzeptanz
 
@@ -532,11 +538,11 @@ Vegetation, kleine Props und Zäune sollen scharf und günstig rendern.
 
 ### Offen
 
-- Alpha-Test statt sortiertem Alpha-Blending.
-- Cutout Threshold aus Materialdaten.
-- leichte Windbewegung optional und materialgesteuert.
-- biome tint für Gras/Leaves optional.
-- distance fade optional, aber nicht gegen Lesbarkeit.
+- ~~Alpha-Test statt sortiertem Alpha-Blending.~~ Cutout-Materialien verwerfen Alpha unter Threshold im Terrain-Shader.
+- ~~Cutout Threshold aus Materialdaten.~~ `ROW_EFFECTS.w` ist der Material-Cutout-Threshold.
+- ~~leichte Windbewegung optional und materialgesteuert.~~ Cutout-Materialien mit Biome-Tint bekommen shaderseitig sanften Wind.
+- ~~biome tint für Gras/Leaves optional.~~ Gras, Leaves, Reeds, Bushes und verwandte Vegetation nutzen `BiomeTintMode`.
+- ~~distance fade optional, aber nicht gegen Lesbarkeit.~~ Bewusst nicht als Extra-Fade umgesetzt; Fog uebernimmt Distanzkaschierung ohne Vegetation auszufransen.
 
 ### Akzeptanz
 
@@ -554,14 +560,14 @@ Wasser soll cozy und klar lesbar sein, ohne teure Refraction/Reflection-Pipeline
 
 ### Offen
 
-- eigener Water/Translucent Pass.
-- Wasserflächen back-to-front sortieren.
-- Depth test an, depth write aus.
-- animated UV/wave offset materialgesteuert.
-- underwater tint/overlay.
-- Wasserfarbe nach Biome optional.
-- Edge foam optional später.
-- Low-End Toggle für simple water.
+- ~~eigener Water/Translucent Pass.~~ Wasser laeuft im `terrain.translucent` Pass.
+- ~~Wasserflächen back-to-front sortieren.~~ Translucent Meshes werden bounds-basiert von hinten nach vorne sortiert.
+- ~~Depth test an, depth write aus.~~ Translucent Pass rendert mit aktivem Depth Test und deaktiviertem Depth Write.
+- ~~animated UV/wave offset materialgesteuert.~~ `animatedFluid` aus der LUT steuert Vertex-Welle und UV-Offset.
+- ~~underwater tint/overlay.~~ `uUnderwater` verkuerzt Fog und tintet Terrain/Entities.
+- ~~Wasserfarbe nach Biome optional.~~ Wasser/ICE nutzen `BiomeTintMode.WATER`; Runtime-Biome-Tint kommt aus der Kamera-Region.
+- ~~Low-End Toggle für simple water.~~ `/simplewater` und Low-Preset reduzieren Wasserwellen/UV-Bewegung.
+Optionaler Engine-Hinweis: Edge foam braucht spaeter pro Wasserface eine Shore-Maske oder wenigstens einen `edgeFoam`-Vertexkanal. Der Mesher sollte bei Wasserfaces Nachbarn in X/Z pruefen und `foam = 1.0` setzen, wenn neben dem Face ein Nicht-Wasser-Block oder ein niedrigeres Wasserlevel liegt. Der Vertex-Buffer braucht dann ein zusaetzliches Attribut oder die Info muss in ungenutzte Material-/AO-Daten gepackt werden.
 
 ### Akzeptanz
 
@@ -580,12 +586,12 @@ Entities sollen visuell konsistent zur Blockwelt wirken und später mehr Animati
 
 ### Offen
 
-- Entity Materialdaten definieren.
-- einfache diffuse Beleuchtung.
-- optional block/sky light sample an Entity Position.
-- hit flash optional.
-- distance fade optional.
-- debug bounds kompatibel mit Physics.
+- ~~Entity Materialdaten definieren.~~ Entity-Part-Farben und Emissive-Flags aus `EntityModelRegistry`/Parts werden an den Shader gegeben.
+- ~~einfache diffuse Beleuchtung.~~ Entity-Shader nutzt gewrapptes Lambert-Licht.
+- ~~optional block/sky light sample an Entity Position.~~ `EntityRenderer` sampled Sky-/Block-Light an der Entity-Mitte.
+- ~~distance fade optional.~~ Entity-Fog nutzt dieselben Fog-Settings wie Terrain.
+- ~~debug bounds kompatibel mit Physics.~~ Bestehende Entity-Hitbox/Bounds-Debugausgabe bleibt unabhaengig vom Entity-Shader.
+Optionaler Engine-Hinweis: Hit flash braucht spaeter ein zeitlich begrenztes Hit-/Damage-Signal im `EntitySnapshot`, z. B. `lastHurtTimeSeconds` oder `hurtFlashTicks`. Der Server/Client-Entity-State muss dieses Feld setzen, der Snapshot muss es serialisieren, und `EntityRenderer` kann daraus `uHitFlash = max(0, 1 - age / duration)` pro Entity setzen.
 
 ### Akzeptanz
 
@@ -603,13 +609,13 @@ Partikel sollen cozy Effekte tragen, aber budgetierbar bleiben.
 
 ### Offen
 
-- billboards mit Atlas.
-- alpha blending.
-- depth test an.
-- depth write aus.
-- soft fade optional.
-- additive glow optional für Fireflies/Glow Spores.
-- Particle Quality Settings.
+- ~~alpha blending.~~ Partikel rendern mit `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`.
+- ~~depth test an.~~ Der Particle-Renderer aktiviert Depth Test vor dem Draw.
+- ~~depth write aus.~~ Particle-Draws laufen mit `glDepthMask(false)`.
+- ~~soft fade optional.~~ Lifetime-Alpha fadet Partikel weich aus.
+- ~~additive glow optional für Fireflies/Glow Spores.~~ Helle Partikelfarben bekommen einen subtilen Shader-Glow-Boost ohne separaten Blend-Pass.
+- ~~Particle Quality Settings.~~ Presets und `/particles 0.25-1.0` begrenzen die Live-Partikelkapazitaet.
+Optionaler Engine-Hinweis: Particle-Billboards mit Atlas brauchen spaeter `ParticleSpriteAtlas` analog zum Block-Atlas: JSON oder Registry mit Sprite-Key, Tile-Rect, Pivot und optional Blend-Modus. `Particle` braucht `spriteId`/`uvRect`, der VBO muss `aUv` und ggf. `aSpriteFlags` tragen, und `particle.frag` muss `uParticleAtlas` sampeln.
 
 ### Akzeptanz
 
@@ -623,14 +629,13 @@ Partikel sollen cozy Effekte tragen, aber budgetierbar bleiben.
 
 ### Offen
 
-- Sky gradient mit Tageszeit.
-- Horizon fog.
-- Fog-Farbe nach Tageszeit.
-- Biome-Fog optional.
-- Sun/Moon Disc optional.
-- Stars optional.
-- Bloom/Glow nur auf High/Medium oder Toggle.
-- Color grading subtil.
+- ~~Sky gradient mit Tageszeit.~~ Clear-/Fog-Farbe folgt dem lokalen Tageszyklus.
+- ~~Horizon fog.~~ Render-Distance-Fog kaschiert den Horizont mit Tageszeitfarbe.
+- ~~Fog-Farbe nach Tageszeit.~~ Morgen, Mittag, Abend und Nacht haben eigene Farbverlaeufe.
+- ~~Biome-Fog optional.~~ Kamera-Biome tintet Sky/Fog leicht.
+- ~~Bloom/Glow nur auf High/Medium oder Toggle.~~ Presets schalten Bloom; `/bloom` bleibt Runtime-Toggle.
+- ~~Color grading subtil.~~ Terrain-Shader nutzt leichte Gamma-/Saturation-Korrektur.
+Optionaler Engine-Hinweis: Sun/Moon Disc und Stars brauchen spaeter einen eigenen Sky-Pass vor Terrain, z. B. `SkyRenderer` mit fullscreen/hemisphere geometry, `uDayPhase`, `uSunDirection`, `uMoonDirection`, Star-Seed und Depth Write aus. Aktuell gibt es nur Clear-Color plus Fog; echte Himmelskoerper gehoeren nicht in den Chunk-Shader.
 
 ### Akzeptanz
 
@@ -650,11 +655,11 @@ Transparente Chunk-Sortierung ist begonnen.
 
 ### Offen
 
-- Sortierung nach Kameraabstand stabilisieren.
-- nur transparente Layer sortieren.
-- Wasserflächen ggf. separat sortieren.
-- bei gleicher Distanz stabile Reihenfolge nutzen.
-- Debug: sorted transparent count.
+- ~~Sortierung nach Kameraabstand stabilisieren.~~ Translucent-Sort nutzt Mesh-Bounds-Center statt nur Chunk-Center.
+- ~~nur transparente Layer sortieren.~~ Nur `TerrainPass.TRANSLUCENT` ruft die Sortierung auf.
+- ~~Wasserflächen ggf. separat sortieren.~~ Aktuell nicht separat noetig: Wasser/Glass bleiben im Translucent-Layer, bounds-basiert sortiert.
+- ~~bei gleicher Distanz stabile Reihenfolge nutzen.~~ Tie-Breaker sortiert deterministisch nach Chunk-X/Z.
+- ~~Debug: sorted transparent count.~~ HUD zeigt `SORT` fuer sortierte Translucent-Meshes.
 
 ### Akzeptanz
 
@@ -667,11 +672,17 @@ Transparente Chunk-Sortierung ist begonnen.
 
 ### Regeln
 
-- so wenig echte Transparenz wie möglich.
-- Vegetation als Cutout.
-- Wasser als Spezialfall.
-- Glass nur sparsam.
-- Partikel separat.
+- ~~so wenig echte Transparenz wie möglich.~~ Material-Layer validieren Alpha/Translucent-Kompatibilitaet.
+- ~~Vegetation als Cutout.~~ Pflanzen/Props bleiben im Cutout-Layer mit Alpha-Test.
+- ~~Wasser als Spezialfall.~~ Wasser nutzt `animatedFluid`, Translucent Pass, Underwater-Fog und Simple-Water-Toggle.
+- ~~Glass nur sparsam.~~ Translucent-Layer ist isoliert und zaehlbar, neue Alpha-Materialien fallen in Stats/Validation auf.
+- ~~Partikel separat.~~ Particle-Renderer hat eigene Buffer, Blend-State und Quality-Budget.
+
+### Umsetzung
+
+- `WorldRenderer.transparentRenderOrderByBounds(...)` ist testbar und stabil.
+- Debug-HUD trennt `WATER`/Transparent Draw Count von `SORT`-Count.
+- Cutout bleibt ausserhalb des Transparenz-Sortierproblems.
 
 ### Akzeptanz
 
@@ -686,17 +697,23 @@ Transparente Chunk-Sortierung ist begonnen.
 
 ### Offen
 
-- Chunk bounds view.
-- Section bounds view.
-- Render layer view.
-- Material index view.
-- UV atlas view.
-- Light level view.
-- AO view.
-- Biome tint view.
-- Entity bounds view.
-- Particle bounds/budget view.
-- Overdraw/transparent debug optional.
+- ~~Chunk bounds view.~~ `/debugchunks` zeichnet Chunk-Bounds.
+- ~~Section bounds view.~~ `/debugsections` zeichnet non-empty Section-Bounds.
+- ~~Render layer view.~~ `/debugview layer` faerbt Solid/Cutout/Transparent.
+- ~~Material index view.~~ `/debugview material` faerbt Material-IDs stabil.
+- ~~UV atlas view.~~ `/debugview uv` zeigt Face-UV/checker und `/debugatlas uv <block>` listet Atlas-Rects.
+- ~~Light level view.~~ `/debugview light` zeigt Terrain-Light.
+- ~~AO view.~~ `/debugview ao` zeigt Ambient-Occlusion.
+- ~~Biome tint view.~~ `/debugview biome` zeigt die aktive Biome-Tint-Farbe.
+- ~~Entity bounds view.~~ Debug-HUD/Hitbox-Debug bleibt per Entity-Bounds-Renderer sichtbar.
+- ~~Particle bounds/budget view.~~ `/debugparticles` zeichnet Particle-Bounds; HUD zeigt Particle-Budget und PBOUNDS.
+- ~~Overdraw/transparent debug optional.~~ `/debugview transparent` hebt Transparent-/Cutout-Layer sichtbar hervor.
+
+### Umsetzung
+
+- `RenderDebugView` deckt Shader-Modi `off/material/light/ao/biome/layer/uv/transparent` ab und kann per `/debugview` oder F6 durchgeschaltet werden.
+- `ChunkBorderRenderer` rendert Chunk-, Mesh-, Section-, Entity-, Particle-, Block- und Mining-Face-Linien ueber denselben Debug-Line-Pfad.
+- `ClientWorld.sectionBoundsAround(...)` liefert Section-Bounds aus echten non-empty Sections; `ParticleSystem.particleBounds()` liefert Live-Particle-Bounds.
 
 ### Akzeptanz
 
@@ -709,14 +726,14 @@ Transparente Chunk-Sortierung ist begonnen.
 
 ### Offen
 
-- Draw Calls pro Pass.
-- Triangles pro Pass.
-- Mesh count pro Layer.
-- culled chunks/layers/entities.
-- upload bytes pro Frame.
-- atlas size.
-- material count.
-- shader reload count optional.
+- ~~Draw Calls pro Pass.~~ HUD zeigt `PDC S/C/W`.
+- ~~Triangles pro Pass.~~ HUD zeigt `TRIS S/C/W/TOTAL`.
+- ~~Mesh count pro Layer.~~ HUD zeigt `MESH S/C/W`.
+- ~~culled chunks/layers/entities.~~ HUD zeigt `CULLM`, `CULLC`, `CD`, `CB`, `ECULL`.
+- ~~upload bytes pro Frame.~~ `WorldRenderer` sammelt Upload-Bytes pro Rebuild-Frame; HUD zeigt `UPB`.
+- ~~atlas size.~~ HUD und `/debugatlas` zeigen Atlas-Anzahl, Breite/Hoehe und Bytes.
+- ~~material count.~~ HUD zeigt Materialanzahl, LUT-Bytes und Missing-Material-Count.
+- ~~shader reload count optional.~~ `ShaderRegistry` registriert alle `ShaderProgram.fromResources(...)`-Programme, `/shaderreload` kompiliert alle Shader neu, laesst bei Fehlern den alten Program-Handle aktiv und schreibt Status/letzten Fehler in den Chat. `RenderResourceTracker.Snapshot` fuehrt `shaderReloadCount`, `failedShaderReloadCount` und `lastShaderReloadMilliseconds`; das Debug-HUD zeigt die Werte neben `SHD`.
 
 ### Akzeptanz
 
@@ -735,20 +752,26 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 
 ### Offen
 
-- globale Daylight-Farben definieren:
-  - Morning warm
-  - Noon klar
-  - Evening amber
-  - Night soft blue
-- Fog-Farben definieren.
-- Biome Tint optional:
-  - Meadow warm green
-  - Pine forest deeper green
-  - Mushroom grove muted purple/green
-  - Lakeside cooler blue/green
-  - Frost peaks pale blue
-  - Old ruins dusty moss
-- Color grading im Shader minimal halten.
+- ~~globale Daylight-Farben definieren:~~ `CozyColorPipeline.skyColorForMinute(...)` blendet Morning/Noon/Evening/Night.
+  - ~~Morning warm~~
+  - ~~Noon klar~~
+  - ~~Evening amber~~
+  - ~~Night soft blue~~
+- ~~Fog-Farben definieren.~~ `CozyColorPipeline.fogColorForMinute(...)` trennt Fog-Palette von Sky-Palette.
+- ~~Biome Tint optional:~~ `CozyColorPipeline.biomeTint(...)` priorisiert bekannte Biome-Keys und nutzt Climate-Fallback.
+  - ~~Meadow warm green~~
+  - ~~Pine forest deeper green~~
+  - ~~Mushroom grove muted purple/green~~
+  - ~~Lakeside cooler blue/green~~
+  - ~~Frost peaks pale blue~~
+  - ~~Old ruins dusty moss~~
+- ~~Color grading im Shader minimal halten.~~ Terrain-Shader bleibt bei leichter Gamma-/Saturation-Korrektur.
+
+### Umsetzung
+
+- `RenderSettings` fuehrt separate Sky-, Fog- und Biome-Tint-Farben.
+- Terrain- und Entity-Shader lesen `uFogColor`; Terrain nutzt zusaetzlich `uBiomeTintColor`.
+- Underwater ueberschreibt Sky/Fog lokal, damit Wasser lesbar bleibt.
 
 ### Akzeptanz
 
@@ -762,12 +785,17 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 
 ### Offen
 
-- Block outline sauber rendern.
-- valid placement weich markieren.
-- invalid placement weich rot markieren.
-- mining progress als Face Overlay.
-- tool requirement hint visuell unterstützen.
-- distance/range invalid dezent anzeigen.
+- ~~Block outline sauber rendern.~~ Zielblock wird per Debug-Line-Box markiert.
+- ~~valid placement weich markieren.~~ Placement-Ziel wird gruen markiert.
+- ~~invalid placement weich rot markieren.~~ Blockiert/ungueltig wird rot markiert.
+- ~~mining progress als Face Overlay.~~ Mining-Fortschritt rendert als wachsendes Face-Overlay.
+- ~~tool requirement hint visuell unterstützen.~~ Nicht-harvestbare Zielbloecke bekommen rote Outline plus bestehenden Interaction-Hint.
+- ~~distance/range invalid dezent anzeigen.~~ Zu weit entfernte Hits werden mit transparenter roter Outline markiert.
+
+### Umsetzung
+
+- `GameClient.renderSelectionVisuals(...)` zentralisiert Block-Ziel, Placement-Preview, Mining-Face und Range-Feedback.
+- `PlacementPreview` prueft Hoehe, Luft/Wasser-Belegung, Player-Kollision und Entity-Kollision vor dem Rendern.
 
 ### Akzeptanz
 

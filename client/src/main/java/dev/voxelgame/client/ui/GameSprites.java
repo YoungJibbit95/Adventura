@@ -54,7 +54,7 @@ public final class GameSprites implements AutoCloseable {
         sprites.hud("button_green", ui.sprite(29, 584, 114, 64));
         sprites.hud("button_close", ui.sprite(386, 584, 91, 64));
 
-        sprites.item("voxel:grass_block", blocks.sprite(29, 49, 150, 158));
+        sprites.item("voxel:grass_block", blocks.sprite(1123, 259, 150, 158));
         sprites.item("voxel:dirt", blocks.sprite(211, 50, 150, 158));
         sprites.item("voxel:clay", blocks.sprite(394, 50, 150, 158));
         sprites.item("voxel:stone", blocks.sprite(576, 50, 150, 158));
@@ -73,6 +73,9 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:red_mushroom", food.sprite(812, 132, 110, 94));
         sprites.item("voxel:mushroom", food.sprite(958, 132, 110, 94));
         sprites.item("voxel:mushroom_cluster", food.sprite(958, 132, 110, 94));
+        sprites.item("voxel:glow_mushroom", ores.sprite(961, 519, 132, 116));
+        sprites.item("voxel:glow_mushroom_cap", ores.sprite(961, 519, 132, 116));
+        sprites.item("voxel:spore_blossom", food.sprite(982, 678, 106, 70));
         sprites.item("voxel:berries", food.sprite(214, 132, 125, 93));
         sprites.item("voxel:cooked_berries", food.sprite(360, 327, 128, 98));
         sprites.item("voxel:berry_jam", food.sprite(360, 327, 128, 98));
@@ -80,8 +83,10 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:healing_snack", food.sprite(638, 324, 130, 100));
         sprites.item("voxel:mushroom_stew", food.sprite(1137, 325, 126, 94));
         sprites.item("voxel:hearty_stew", food.sprite(1137, 325, 126, 94));
+        sprites.item("voxel:glow_mushroom_stew", food.sprite(1137, 325, 126, 94));
         sprites.item("voxel:herb_soup", food.sprite(971, 326, 124, 94));
         sprites.item("voxel:calming_tea", food.sprite(971, 326, 124, 94));
+        sprites.item("voxel:spore_tea", food.sprite(971, 326, 124, 94));
         sprites.item("voxel:roasted_mushroom", food.sprite(222, 326, 116, 90));
         sprites.item("voxel:twig", food.sprite(218, 496, 106, 63));
         sprites.item("voxel:pebble", food.sprite(374, 499, 99, 65));
@@ -122,6 +127,9 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:copper_pickaxe", tools.sprite(805, 116, 145, 145));
         sprites.item("voxel:iron_axe", tools.sprite(621, 115, 145, 145));
         sprites.item("voxel:iron_pickaxe", tools.sprite(805, 116, 145, 145));
+        sprites.item("voxel:crystal_axe", tools.sprite(621, 115, 145, 145));
+        sprites.item("voxel:crystal_pickaxe", tools.sprite(805, 116, 145, 145));
+        sprites.item("voxel:crystal_knife", tools.sprite(270, 542, 150, 150));
         sprites.item("voxel:stone_shovel", tools.sprite(91, 318, 144, 150));
         sprites.item("voxel:stone_knife", tools.sprite(270, 542, 150, 150));
         sprites.item("voxel:simple_rope", tools.sprite(1265, 547, 125, 129));

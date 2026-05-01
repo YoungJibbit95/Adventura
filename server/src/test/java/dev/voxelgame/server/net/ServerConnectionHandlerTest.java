@@ -18,6 +18,7 @@ import dev.voxelgame.server.save.PlayerSaveStore;
 import dev.voxelgame.server.save.SaveMetadata;
 import dev.voxelgame.server.world.ServerWorld;
 import io.netty.channel.embedded.EmbeddedChannel;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -543,9 +544,51 @@ class ServerConnectionHandlerTest {
 
             assertEquals(Blocks.AIR, viewerPackets.blockUpdate().blockId());
             assertFalse(readBlockUpdateResponse(distantViewer).hasBlockUpdate());
+            assertEquals(1, viewer.pipeline().get(ServerConnectionHandler.class).interestStats().sentBlockUpdates());
+            assertEquals(
+                    1,
+                    distantViewer.pipeline()
+                            .get(ServerConnectionHandler.class)
+                            .interestStats()
+                            .discardedUpdatesOutsideInterest()
+            );
         } finally {
             viewer.finishAndReleaseAll();
             distantViewer.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void interestStatsTrackInitialChunkSubscriptionAndPacketEstimate() {
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L));
+        try {
+            ServerConnectionHandler.InterestStats stats = handler(channel).interestStats();
+
+            assertEquals(1, stats.chunkSubscriptions());
+            assertEquals(1, stats.sentChunkPackets());
+            assertTrue(stats.averagePacketBytes() > 0);
+            assertTrue(stats.packetRatePerSecond() > 0.0);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void broadcastsServerStatsSnapshotsForClientDebugOverlay() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            ServerConnectionHandler.broadcastServerStats(world);
+
+            GamePacket.ServerStatsSnapshot stats = readLastServerStats(channel);
+
+            assertEquals(1, stats.chunkSubscriptions());
+            assertEquals(1L, stats.sentChunkPackets());
+            assertTrue(stats.sentPackets() > 0L);
+            assertTrue(stats.averagePacketBytes() > 0L);
+            assertTrue(stats.packetRatePerSecond() > 0.0);
+        } finally {
+            channel.finishAndReleaseAll();
         }
     }
 
@@ -623,6 +666,23 @@ class ServerConnectionHandlerTest {
         EmbeddedChannel channel = loggedInChannel(world);
         try {
             channel.writeInbound(new GamePacket.StorageOpenRequest(80, 120, 80));
+
+            StorageOpenResponse response = readStorageOpenResponse(channel);
+
+            assertFalse(response.hasStorageOpen());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void storageOpenRequestRejectsCrateBehindSolidOccluder() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 10, Blocks.STONE);
+        world.setBlock(8, 120, 12, Blocks.STORAGE_CRATE);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.StorageOpenRequest(8, 120, 12));
 
             StorageOpenResponse response = readStorageOpenResponse(channel);
 
@@ -811,6 +871,40 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void blockInteractHarvestsGlowMushroomCapsForCooking() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.GLOW_MUSHROOM);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.BlockInteract(0, 8, 120, 9));
+
+            List<ItemStack> slots = readLastInventory(channel);
+
+            assertEquals(1, count(slots, items, "voxel:glow_mushroom_cap"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void blockInteractHarvestsSporeBlossomsForTea() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.SPORE_BLOSSOM);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.BlockInteract(0, 8, 120, 9));
+
+            List<ItemStack> slots = readLastInventory(channel);
+
+            assertEquals(1, count(slots, items, "voxel:spore_blossom"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void blockInteractRejectsFarTargets() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         ServerWorld world = new ServerWorld(123L);
@@ -938,6 +1032,8 @@ class ServerConnectionHandlerTest {
 
             far.writeInbound(new GamePacket.PlayerMove(120.0, 180.0, 8.5, 0.0f, 0.0f, false));
 
+            long nearPacketsBefore = handler(near).interestStats().sentEntitySnapshotPackets();
+            long farPacketsBefore = handler(far).interestStats().sentEntitySnapshotPackets();
             ServerConnectionHandler.broadcastEntitySnapshots(world, tracker);
             GamePacket.EntitySnapshots nearSnapshots = readLastEntitySnapshots(near);
             GamePacket.EntitySnapshots farSnapshots = readLastEntitySnapshots(far);
@@ -948,6 +1044,8 @@ class ServerConnectionHandlerTest {
             assertFalse(containsEntity(nearSnapshots, farPlayerEntityId));
             assertTrue(containsEntity(farSnapshots, farPlayerEntityId));
             assertFalse(containsEntity(farSnapshots, nearPlayerEntityId));
+            assertEquals(nearPacketsBefore + 1, handler(near).interestStats().sentEntitySnapshotPackets());
+            assertEquals(farPacketsBefore + 1, handler(far).interestStats().sentEntitySnapshotPackets());
         } finally {
             near.finishAndReleaseAll();
             far.finishAndReleaseAll();
@@ -1314,6 +1412,85 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    @Tag("physicsRegression")
+    void playerMoveClassifiesRejectReasonsAndTracksStrikes() throws Exception {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 8.75, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ageLastAcceptedMove(channel, 0.5);
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 9.25, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ageLastAcceptedMove(channel, 0.5);
+            channel.writeInbound(new GamePacket.PlayerMove(2L, 20.0, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ServerConnectionHandler.MovementRejectStats stats = handler(channel).movementRejectStats();
+            assertEquals(2, stats.totalRejects());
+            assertEquals(1, stats.sequenceRejects());
+            assertEquals(1, stats.speedRejects());
+            assertTrue(stats.strikes() >= 4);
+            assertEquals(ServerConnectionHandler.MovementRejectReason.SPEED, stats.lastReason());
+            assertEquals(ServerConnectionHandler.AuthoritativeCorrectionClass.HARD, stats.lastCorrectionClass());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void aggregateMovementRejectStatsAreExportedPerWorld() throws Exception {
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        try {
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 8.75, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ageLastAcceptedMove(channel, 0.5);
+            channel.writeInbound(new GamePacket.PlayerMove(2L, 40.0, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ServerConnectionHandler.MovementRejectStats stats = ServerConnectionHandler.movementRejectStats(world);
+            assertEquals(1, stats.totalRejects());
+            assertEquals(1, stats.speedRejects());
+            assertTrue(stats.strikes() >= 3);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void physicsDebugChatCommandsSpawnServerAuthorizedScenarios() {
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        try {
+            channel.writeInbound(new GamePacket.Chat("!phys projectile"));
+            GamePacket.Chat projectileResponse = readLastChat(channel);
+
+            assertEquals(1, tracker.projectileCount());
+            assertTrue(projectileResponse.message().contains("projectile"));
+
+            channel.writeInbound(new GamePacket.Chat("!phys entity voxel:moss_snail"));
+            GamePacket.Chat entityResponse = readLastChat(channel);
+
+            assertTrue(tracker.snapshots().stream().anyMatch(snapshot -> "voxel:moss_snail".equals(snapshot.typeKey())));
+            assertTrue(entityResponse.message().contains("entity"));
+
+            channel.writeInbound(new GamePacket.Chat("!phys stats"));
+            GamePacket.Chat statsResponse = readLastChat(channel);
+            assertTrue(statsResponse.message().contains("phys rejects="));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveRejectsExcessiveMovementPacketRate() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
@@ -1370,6 +1547,48 @@ class ServerConnectionHandlerTest {
             assertEquals(8.5, player.x(), 0.001);
             assertEquals(180.0, player.y(), 0.001);
             assertEquals(8.5, player.z(), 0.001);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void playerMoveAllowsCreativeFlyingWithinFlyingEnvelope() throws Exception {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            setGameMode(channel, "creative");
+            channel.writeInbound(new GamePacket.PlayerMove(8.75, 180.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ageLastAcceptedMove(channel, 0.5);
+            channel.writeInbound(new GamePacket.PlayerMove(8.75, 190.0, 8.75, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            EntitySnapshot player = playerSnapshot(tracker);
+            assertEquals(190.0, player.y(), 0.001);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void playerMoveAllowsSpectatorThroughCollision() throws Exception {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(9, 179, 8, Blocks.STONE);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        try {
+            setGameMode(channel, "spectator");
+            channel.writeInbound(new GamePacket.PlayerMove(8.5, 180.0, 8.5, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            ageLastAcceptedMove(channel, 0.5);
+            channel.writeInbound(new GamePacket.PlayerMove(10.5, 180.0, 8.5, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            EntitySnapshot player = playerSnapshot(tracker);
+            assertEquals(10.5, player.x(), 0.001);
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1617,7 +1836,7 @@ class ServerConnectionHandlerTest {
             channel.writeInbound(new GamePacket.PlayerMove(8.5, groundedEyeY, 8.5, 0.0f, 0.0f, true));
 
             GamePacket.PlayerStatsSnapshot stats = readLastPlayerStats(channel);
-            assertEquals(4, stats.health());
+            assertEquals(6, stats.health());
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1878,6 +2097,34 @@ class ServerConnectionHandlerTest {
         return entitySnapshots;
     }
 
+    private static GamePacket.ServerStatsSnapshot readLastServerStats(EmbeddedChannel channel) {
+        GamePacket.ServerStatsSnapshot serverStats = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.ServerStatsSnapshot stats) {
+                serverStats = stats;
+            }
+        }
+        if (serverStats == null) {
+            throw new AssertionError("Expected server stats snapshot");
+        }
+        return serverStats;
+    }
+
+    private static GamePacket.Chat readLastChat(EmbeddedChannel channel) {
+        GamePacket.Chat chat = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.Chat message) {
+                chat = message;
+            }
+        }
+        if (chat == null) {
+            throw new AssertionError("Expected chat packet");
+        }
+        return chat;
+    }
+
     private static GamePacket.EntitySnapshots flushEntitySnapshots(
             ServerWorld world,
             ServerEntityTracker tracker,
@@ -1950,6 +2197,16 @@ class ServerConnectionHandlerTest {
                 channel.pipeline().get(ServerConnectionHandler.class),
                 System.nanoTime() / 1_000_000_000.0 - seconds
         );
+    }
+
+    private static void setGameMode(EmbeddedChannel channel, String gameMode) throws Exception {
+        Field gameModeField = ServerConnectionHandler.class.getDeclaredField("gameMode");
+        gameModeField.setAccessible(true);
+        gameModeField.set(handler(channel), gameMode);
+    }
+
+    private static ServerConnectionHandler handler(EmbeddedChannel channel) {
+        return channel.pipeline().get(ServerConnectionHandler.class);
     }
 
     private static boolean containsEntity(GamePacket.EntitySnapshots snapshots, long entityId) {

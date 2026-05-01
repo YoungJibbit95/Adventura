@@ -8,6 +8,7 @@ public record UiColor(float r, float g, float b, float a) {
     public static final UiColor BUTTON_HOVER = new UiColor(0.22f, 0.30f, 0.28f, 0.96f);
     public static final UiColor BUTTON_DISABLED = new UiColor(0.10f, 0.12f, 0.13f, 0.72f);
     public static final UiColor ACCENT = new UiColor(0.45f, 0.74f, 0.42f, 1.0f);
+    public static final UiColor WARNING = new UiColor(0.96f, 0.68f, 0.28f, 1.0f);
     public static final UiColor HEART = new UiColor(0.86f, 0.24f, 0.27f, 1.0f);
     public static final UiColor HUNGER = new UiColor(0.92f, 0.58f, 0.28f, 1.0f);
     public static final UiColor ENERGY = new UiColor(0.98f, 0.82f, 0.32f, 1.0f);

@@ -1,6 +1,6 @@
 # Adventura – Engine TODO List
 
-Stand: 2026-04-30
+Stand: 2026-05-01
 Bereich: Engine, Runtime, Streaming, Persistenz, Networking, Datenqualität, Entity-Runtime, Combat-Grundlagen
 
 ---
@@ -110,9 +110,9 @@ Offen:
   - ~~LWJGL/macOS `-XstartOnFirstThread`~~
   - ~~Gradle Wrapper Probleme~~
 
-🔴 Hinweis: JDK 21 liegt lokal unter `/home/youngjibbit/.local/share/adventura-jdk/jdk-21.0.11+10`; die nicht vorbereitete Shell findet `java`/`javac` weiterhin erst nach `JAVA_HOME`/`PATH`-Export.
+~~Hinweis: JDK 21 liegt lokal unter `/home/youngjibbit/.local/share/adventura-jdk/jdk-21.0.11+10`; die nicht vorbereitete Shell findet `java`/`javac` weiterhin erst nach `JAVA_HOME`/`PATH`-Export.~~
 
-Status 2026-04-30: `./gradlew test` und `./gradlew buildGame` laufen mit diesem `JAVA_HOME` erfolgreich.
+Status 2026-05-01: `gradlew` nutzt den lokalen Adventura-JDK-21-Pfad automatisch, wenn `JAVA_HOME` fehlt oder auf kein ausführbares `java` zeigt. Override bleibt über `ADVENTURA_JAVA_HOME` möglich.
 
 ### Akzeptanzkriterien
 
@@ -283,7 +283,7 @@ Eine feste Liste von Test-Seeds definieren für:
 - ~~GPU-Mesh wird freigegeben.~~
 - ~~erneutes Laden erzeugt keine doppelten Meshes.~~
 
-🔴 Hinweis: echter GPU-Release bleibt zusätzlich ein manueller GL-Smoke-Test, weil Unit-Tests ohne OpenGL-Kontext nur Release-Stats/Tracker prüfen.
+Hinweis 2026-05-01: Echter GPU-Release bleibt zusätzlich ein manueller GL-Smoke-Test, weil Unit-Tests ohne OpenGL-Kontext nur Release-Stats/Tracker prüfen.
 
 #### BlockEntity Lifecycle
 
@@ -761,32 +761,44 @@ P4 stärkt Server-Autorität, Streaming, Movement und Netzwerk-Sicherheit.
 - `PacketCodec` prüft Listen-/Array-Längen gegen Maximalwerte und verbleibendes Payload-Budget.
 - Packet-Textfelder für Login, Recipe Keys und Chat haben domänenspezifische Blank-/Längenlimits.
 - Protokoll-Decoder lehnt trailing bytes nach Paketdecode ab.
+- Entity-Snapshots werden pro Verbindung auf eigene Spieler-Entity und Radius-Interest gefiltert.
+- Chunk-Subscriptions werden pro Client geführt und Blockupdates daran gefiltert.
+- Server-Interest-Stats erfassen Snapshots, Chunk-Packets, Blockupdates, Drops außerhalb Interest, Packet-Schätzung und Packet-Rate.
+- `GameServer.interestStats()` stellt die aktuellen Server-Interest-Werte für Logs/Debug-Auswertung bereit.
+- `ServerStatsSnapshot` überträgt Interest-/Packet-Stats pro Verbindung an den Client.
+- Client-Debug-HUD zeigt Serverwerte in der `SRVSTAT`-Zeile.
 
-### Offene Aufgaben
+Status 2026-05-01: Interest-Filterung ist aktiv, serverseitig messbar, per Debug-Packet im Client sichtbar und durch `ServerConnectionHandlerTest` abgesichert.
 
-- Entity-Snapshots nur an relevante Spieler senden.
-- Chunk-Updates nur an Spieler senden, die Chunk geladen haben.
-- Block-Updates nach Chunk-/Radius-Interest filtern.
-- Partielle Snapshot-Updates statt immer vollständiger Listen prüfen.
-- Chunk-Subscription pro Client verwalten.
-- Interest-Bereich mit Render-/Simulation-Distance koppeln.
-- Debug Overlay / Server Log um Interest-Stats erweitern.
+~~Hinweis: Für Anzeige im Client-Debug-Overlay fehlt noch ein dediziertes ServerStats-/Debug-Packet. Die Engine-Seite liefert die Daten bereits serverseitig.~~
+
+### Aufgaben
+
+- ~~Entity-Snapshots nur an relevante Spieler senden.~~
+- ~~Chunk-Updates nur an Spieler senden, die Chunk geladen haben.~~
+- ~~Block-Updates nach Chunk-/Radius-Interest filtern.~~
+- ~~Partielle Snapshot-Updates statt immer vollständiger Listen prüfen.~~
+- ~~Chunk-Subscription pro Client verwalten.~~
+- ~~Interest-Bereich mit Render-/Simulation-Distance koppeln.~~
+- ~~Debug Overlay / Server Log um Interest-Stats erweitern.~~
+
+Hinweis zu partiellen Snapshots: Für das bestehende Protokoll bleiben gefilterte Full-Snapshot-Listen absichtlich erhalten; Delta-Snapshots lohnen erst mit einem separaten Entity-Diff-Packet.
 
 ### Zu messende Werte
 
-- gesendete Entity Snapshots pro Client
-- gesendete Chunk Packets pro Client
-- verworfene Updates außerhalb Interest
-- durchschnittliche Packetgröße
-- Packetrate pro Client
-- Chunk subscriptions pro Client
+- ~~gesendete Entity Snapshots pro Client~~
+- ~~gesendete Chunk Packets pro Client~~
+- ~~verworfene Updates außerhalb Interest~~
+- ~~durchschnittliche Packetgröße~~
+- ~~Packetrate pro Client~~
+- ~~Chunk subscriptions pro Client~~
 
 ### Akzeptanzkriterien
 
-- Spieler erhalten keine unnötigen Entity-Snapshots aus weit entfernten Gebieten.
-- Spieler erhalten keine Blockupdates aus nicht geladenen Chunks.
-- Multiplayer skaliert besser mit mehreren Spielern.
-- Debugwerte zeigen Interest-Filterung.
+- ~~Spieler erhalten keine unnötigen Entity-Snapshots aus weit entfernten Gebieten.~~
+- ~~Spieler erhalten keine Blockupdates aus nicht geladenen Chunks.~~
+- ~~Multiplayer skaliert besser mit mehreren Spielern.~~
+- ~~Debugwerte zeigen Interest-Filterung.~~
 
 ---
 
@@ -802,30 +814,32 @@ Server-Chunkgen läuft über Worker Queue.
 
 ### Aufgaben
 
-- Server Chunk Request Queue einführen.
-- Worker Threads für Chunkgen nutzen.
-- Packet-Auslieferung nach Fertigstellung.
-- Priorität nach Spielerposition.
-- Requests deduplizieren.
-- bereits laufende Generation nicht mehrfach starten.
-- Fehler sauber behandeln.
-- maximale Queue-Größe definieren.
-- Backpressure bei zu vielen Requests.
+- ~~Server Chunk Request Queue einführen.~~
+- ~~Worker Threads für Chunkgen nutzen.~~
+- ~~Packet-Auslieferung nach Fertigstellung.~~
+- ~~Priorität nach Spielerposition.~~
+- ~~Requests deduplizieren.~~
+- ~~bereits laufende Generation nicht mehrfach starten.~~
+- ~~Fehler sauber behandeln.~~
+- ~~maximale Queue-Größe definieren.~~
+- ~~Backpressure bei zu vielen Requests.~~
+
+Status 2026-05-01: `ServerChunkStreamer` streamt Chunks über priorisierte Worker-Queue, dedupliziert In-Flight-Requests, begrenzt Queue/In-Flight-Druck und liefert fertige Packets zurück auf den Channel-EventLoop. Tests prüfen Dedupe und Backpressure.
 
 ### Risiken
 
-- Race Conditions bei gleichzeitigen Chunk Requests.
-- doppelte Chunkgenerierung.
-- Chunk wird an Spieler gesendet, der ihn nicht mehr braucht.
-- Server schickt veralteten Chunk nach World Edit.
+- ~~Race Conditions bei gleichzeitigen Chunk Requests.~~
+- ~~doppelte Chunkgenerierung.~~
+- ~~Chunk wird an Spieler gesendet, der ihn nicht mehr braucht.~~
+- ~~Server schickt veralteten Chunk nach World Edit.~~
 
 ### Akzeptanzkriterien
 
-- Netty-Handler bleibt responsiv.
-- Chunkgen blockiert nicht den Netzwerkthread.
-- doppelte Requests werden zusammengeführt.
-- Chunks werden nur an relevante Clients gesendet.
-- Server bleibt bei schnellem Bewegen stabil.
+- ~~Netty-Handler bleibt responsiv.~~
+- ~~Chunkgen blockiert nicht den Netzwerkthread.~~
+- ~~doppelte Requests werden zusammengeführt.~~
+- ~~Chunks werden nur an relevante Clients gesendet.~~
+- ~~Server bleibt bei schnellem Bewegen stabil.~~
 
 ---
 
@@ -839,43 +853,48 @@ Movement soll langfristig server-validiert oder server-simuliert werden.
 
 Server prüft bereits grundlegende Plausibilität:
 
-- finite Position/Rotation
-- vertikale World-Bounds
-- Initial-Sync-Radius
-- grobe Delta-Grenzen
+- ~~finite Position/Rotation~~
+- ~~vertikale World-Bounds~~
+- ~~Initial-Sync-Radius~~
+- ~~grobe Delta-Grenzen~~
 
-Offen bleiben:
+Zusätzlich erreicht:
 
-- Kollision
-- Ground-State
-- Wasserzustand
-- Speed anhand von Movement Mode
-- Reconciliation
-- Sequenznummern
+- ~~Kollision~~
+- ~~Ground-State~~
+- ~~Wasserzustand~~
+- ~~Speed anhand von Movement Mode~~
+- ~~Reconciliation~~
+- ~~Sequenznummern~~
+- ~~Movement-Rate-Limit~~
+- ~~Fallschaden serverseitig~~
+- ~~Creative/Flying- und Spectator-Movement-Mode-Validierung~~
 
 ### Aufgaben
 
-- Server nutzt gemeinsame Physics-Regeln zur Validierung.
-- Client sendet Movement mit Sequenznummer.
-- später optional Input-State statt finaler Position.
-- Server antwortet mit autoritativem State.
-- Client korrigiert Position sanft.
-- Teleport/Spawn/Respawn sauber vom normalen Movement unterscheiden.
-- Movement Modes validieren:
-  - survival
-  - creative
-  - spectator
-- Movement-Rate limitieren.
-- Speed-Hacks erkennen.
-- Fallschaden serverseitig sicher berechnen.
+- ~~Server nutzt gemeinsame Physics-Regeln zur Validierung.~~
+- ~~Client sendet Movement mit Sequenznummer.~~
+- ~~später optional Input-State statt finaler Position.~~
+- ~~Server antwortet mit autoritativem State.~~
+- ~~Client korrigiert Position sanft.~~
+- ~~Teleport/Spawn/Respawn sauber vom normalen Movement unterscheiden.~~
+- ~~Movement Modes validieren:~~
+  - ~~survival~~
+  - ~~creative~~
+  - ~~spectator~~
+- ~~Movement-Rate limitieren.~~
+- ~~Speed-Hacks erkennen.~~
+- ~~Fallschaden serverseitig sicher berechnen.~~
+
+Status 2026-05-01: Server-Movement nutzt `PlayerMovementRules`, Sequenzen, authoritative snapshots, Rate-Limits, Kollisions-/Ground-/Water-Checks, Mode-Delta-Regeln und serverseitigen Fallschaden. Creative wird als Flying validiert, Spectator darf Kollisionen durchqueren.
 
 ### Akzeptanzkriterien
 
-- extreme Teleports werden abgelehnt.
-- zu schnelle Bewegung wird abgelehnt oder korrigiert.
-- survival movement kann nicht durch creative speed gefälscht werden.
-- Client-Korrekturen fühlen sich nicht hart an.
-- Movement bleibt im Singleplayer unverändert flüssig.
+- ~~extreme Teleports werden abgelehnt.~~
+- ~~zu schnelle Bewegung wird abgelehnt oder korrigiert.~~
+- ~~survival movement kann nicht durch creative speed gefälscht werden.~~
+- ~~Client-Korrekturen fühlen sich nicht hart an.~~
+- ~~Movement bleibt im Singleplayer unverändert flüssig.~~
 
 ---
 
@@ -901,19 +920,21 @@ Beispiele:
 
 ### Aufgaben
 
-- eindeutige Canonical Keys festlegen.
-- alte Keys als Aliase erhalten.
-- Tooltips und UI-Namen vereinheitlichen.
-- Rezepte auf Canonical Keys mappen.
-- Save-Ladepfad nutzt Aliase.
-- keine stillen Duplikate in Registries.
+- ~~eindeutige Canonical Keys festlegen.~~
+- ~~alte Keys als Aliase erhalten.~~
+- ~~Tooltips und UI-Namen vereinheitlichen.~~
+- ~~Rezepte auf Canonical Keys mappen.~~
+- ~~Save-Ladepfad nutzt Aliase.~~
+- ~~keine stillen Duplikate in Registries.~~
+
+Status 2026-05-01: `Registry.aliases()` macht Aliase validierbar; Item- und Block-Aliase decken alte Keys für Berries/Planks/Ores/Grass/Campfire-Varianten ab. Rezepte und Placeables nutzen Canonical Keys.
 
 ### Akzeptanzkriterien
 
-- alte Saves bleiben kompatibel.
-- UI zeigt saubere Namen.
-- Rezepte nutzen eindeutige Keys.
-- Aliase sind dokumentiert.
+- ~~alte Saves bleiben kompatibel.~~
+- ~~UI zeigt saubere Namen.~~
+- ~~Rezepte nutzen eindeutige Keys.~~
+- ~~Aliase sind dokumentiert.~~
 
 ---
 
@@ -929,22 +950,24 @@ Beispiele:
 
 ### Offene Ergänzungen
 
-- Test: alle BlockEntity Type IDs sind eindeutig.
-- Test: alle Item-Aliase zeigen auf existierende Items.
-- Test: alle Block-Aliase zeigen auf existierende Blocks.
-- Test: alle StationType-Recipes haben gültige Station Blocks.
-- Test: alle Tools haben sinnvolle ToolType-/ToolLevel-Werte.
-- Test: alle Ores haben passende requiredToolLevel-Werte.
-- Test: alle Comfort Blocks haben gültige Comfort-Werte.
-- Test: alle Loot Tables haben mindestens einen gültigen Eintrag.
-- Test: keine Registry-ID-Kollisionen.
-- Test: keine leeren Display-Namen.
+- ~~Test: alle BlockEntity Type IDs sind eindeutig.~~
+- ~~Test: alle Item-Aliase zeigen auf existierende Items.~~
+- ~~Test: alle Block-Aliase zeigen auf existierende Blocks.~~
+- ~~Test: alle StationType-Recipes haben gültige Station Blocks.~~
+- ~~Test: alle Tools haben sinnvolle ToolType-/ToolLevel-Werte.~~
+- ~~Test: alle Ores haben passende requiredToolLevel-Werte.~~
+- ~~Test: alle Comfort Blocks haben gültige Comfort-Werte.~~
+- ~~Test: alle Loot Tables haben mindestens einen gültigen Eintrag.~~
+- ~~Test: keine Registry-ID-Kollisionen.~~
+- ~~Test: keine leeren Display-Namen.~~
+
+Status 2026-05-01: Registry-Validation ist über `BlockAliasTest`, `ItemAliasTest`, `BlockRegistryDataTest`, `ItemRegistryDataTest`, `CraftingRecipeTest`, `ComfortRulesTest`, `LootTableTest` und `BlockEntityStoreTest` abgesichert.
 
 ### Akzeptanzkriterien
 
-- kaputte Daten fallen im Test auf, nicht erst im Spiel.
-- fehlende Texturen sind sichtbar gemeldet.
-- Registry-Änderungen bleiben save-kompatibel.
+- ~~kaputte Daten fallen im Test auf, nicht erst im Spiel.~~
+- ~~fehlende Texturen sind sichtbar gemeldet.~~
+- ~~Registry-Änderungen bleiben save-kompatibel.~~
 
 ---
 
@@ -962,26 +985,28 @@ Entities sollen sauber gespawnt, getickt, synchronisiert, gecullt und entfernt w
 
 ### Aufgaben
 
-- Entity IDs stabil vergeben.
+- ~~Entity IDs stabil vergeben.~~ Player-, Ambient-, ItemDrop- und Projectile-IDs laufen deterministisch bzw. aus getrennten Server-ID-Bereichen.
 - Entity Lifecycle definieren:
-  - spawn
-  - tick
-  - sleep/inactive
-  - despawn
-  - unload/park
+  - ~~spawn~~ Ambient, ItemDrops und Projectiles haben zentrale Spawnpfade.
+  - ~~tick~~ Ambient-, ItemDrop- und Projectile-Ticks laufen serverseitig.
+  - ~~sleep/inactive~~ Ambient-Entities parken außerhalb aktiver Player-Chunk-Tickets.
+  - ~~despawn~~ tote Ambient-Entities, eingesammelte ItemDrops und terminale Projectiles werden entfernt.
+  - ~~unload/park~~ Client bereinigt Entity-Runtime außerhalb geladener Chunks; Server parkt entfernte Ambient-Entities.
   - save optional
 - Entity Snapshots differenzieren:
-  - Position
-  - Rotation/Yaw
-  - Velocity optional
-  - State
-  - Health
+  - ~~Position~~
+  - ~~Rotation/Yaw~~
+  - ~~Velocity optional~~
+  - ~~State~~
+  - ~~Health~~
   - Target optional
-  - Animation State
-- Entity Updates nach Interest Management filtern.
-- Entity Culling clientseitig verbessern.
-- Entity Debug-Hitboxen mit Physics Bounds abgleichen.
+  - Animation State optional über `stateKey`/Velocity vorbereitet
+- ~~Entity Updates nach Interest Management filtern.~~ Server sendet Entity-Snapshots pro Viewer-Interest.
+- ~~Entity Culling clientseitig verbessern.~~ Client filtert eigenen Player, entladene Chunks und Renderer-Frustum; eigene Projectiles bleiben sichtbar.
+- ~~Entity Debug-Hitboxen mit Physics Bounds abgleichen.~~ Debug-Hitboxen nutzen `EntityBounds.forType(...)`.
 - Entity Spawnrate budgetieren.
+
+Status 2026-05-01: Entity Runtime hat getrennte Snapshot-Pfade für Player, Ambient, ItemDrops und Projectiles. `AmbientTickStats` misst aktive, geparkte, geblockte und emittierte Entity-Updates; Damage entfernt tote Ambient-Entities inklusive Follow-/Cooldown-State.
 
 ### Akzeptanzkriterien
 
@@ -1016,23 +1041,25 @@ Ambient Entities sollen lebendiger wirken, ohne Server-Performance zu gefährden
 
 - AI-State-Machine in Common oder Server sauber modellieren.
 - Sensoren einführen:
-  - Spieler in Nähe
-  - Gefahr in Nähe
-  - Futter in Nähe
-  - Wasser/Abgrund vor Entity
-  - Heimat-/Spawnpunkt
+  - ~~Spieler in Nähe~~ Bunny/Sheep/Boar-Flee und Sleep-Danger prüfen Player-/Danger-Nähe.
+  - ~~Gefahr in Nähe~~ `hasDangerNear` nutzt gefährliche Ambient-Typen für Schlafsicherheit.
+  - ~~Futter in Nähe~~ Feed-Interaction setzt Follow-Target serverseitig.
+  - ~~Wasser/Abgrund vor Entity~~ Server-World validiert Ambient-Movement gegen Solid/Water/Support.
+  - ~~Heimat-/Spawnpunkt~~ Ambient-Anchors begrenzen Wander/Flee-Bewegung.
 - einfache Pfadlogik einbauen:
   - kein großes Pathfinding nötig
-  - lokale Avoidance reicht zuerst
-  - Blocked-Movement erkennen
+  - ~~lokale Avoidance reicht zuerst~~ Player-/Entity-AABB-Overlap blockiert lokale Ambient-Bewegung.
+  - ~~Blocked-Movement erkennen~~ `AmbientTickStats.blockedAmbientMoves` macht geblockte Moves sichtbar.
 - Verhalten pro Entity-Typ konfigurieren:
-  - Bunny flieht schneller.
-  - Sheep folgt Futter und grast.
+  - ~~Bunny flieht schneller.~~
+  - ~~Sheep folgt Futter und grast.~~
   - Boar sucht Mushrooms.
-  - Snail bewegt sich langsam und meidet Sonne optional.
-  - Firefly bleibt nachts in Schwärmen.
-- Server tickt AI autoritativ.
-- Client interpoliert nur.
+  - ~~Snail bewegt sich langsam~~ und meidet Sonne optional.
+  - ~~Firefly bleibt in Schwärmen/luftigem Movement.~~ Nacht-Bindung bleibt Polish.
+- ~~Server tickt AI autoritativ.~~
+- ~~Client interpoliert nur.~~
+
+Status 2026-05-01: `IDLE`, `WANDER`, `FLEE`, `FOLLOW` und `GRAZE` sind serverseitig aktiv; `SLEEP`, `EAT`, `INVESTIGATE`, `RETURN_HOME`, `AVOID_WATER` und `AVOID_DANGER` bleiben als spätere AI-Ausbaustufen.
 
 ### Akzeptanzkriterien
 
@@ -1057,7 +1084,7 @@ Entity-Spawns sollen biome-, zeit- und umgebungsabhängig sein.
 - Lichtlevel optional berücksichtigen.
 - Nähe zu Spieler berücksichtigen.
 - Max Entities pro Chunk/Region.
-- Despawn-Regeln definieren.
+- ~~Despawn-Regeln definieren.~~ Kills entfernen Ambient-Entities, terminale Projectiles despawnen, ItemDrops werden atomar geclaimt.
 - Rare Spawn Chancen definieren.
 - Spawn-Cooldowns einbauen.
 - Spawn Debug Overlay oder Command.
@@ -1094,30 +1121,32 @@ Entities und Spieler brauchen ein gemeinsames, serverseitiges Damage-System.
 
 ### Aufgaben
 
-- `DamageSource` modellieren:
-  - player_melee
-  - projectile
-  - fall
-  - fire
-  - drowning
-  - environment
-  - unknown
-- `DamageResult` modellieren:
-  - accepted
-  - rejected
-  - amount
-  - killed
-  - knockback optional
-- Health für relevante Entities serverseitig halten.
-- Damage Cooldown / invulnerability frames.
+- ~~`DamageSource` modellieren:~~
+  - ~~player_melee~~
+  - ~~projectile~~
+  - ~~fall~~
+  - ~~fire~~
+  - ~~drowning~~
+  - ~~environment~~
+  - ~~unknown~~
+- ~~`DamageResult` modellieren:~~
+  - ~~accepted~~
+  - ~~rejected~~
+  - ~~amount~~
+  - ~~killed~~
+  - ~~knockback optional~~
+- ~~Health für relevante Entities serverseitig halten.~~ Ambient-Health bleibt serverseitig im `ServerEntityTracker`.
+- ~~Damage Cooldown / invulnerability frames.~~ Ambient-Damage hat serverseitige Invulnerability-Frames.
 - Server validiert:
-  - Reichweite
+  - ~~Reichweite~~
   - Sichtlinie optional
-  - Cooldown
-  - Waffe
+  - ~~Cooldown~~
+  - ~~Waffe~~
   - Gamemode
-  - Ziel existiert
-- Client zeigt nur Feedback.
+  - ~~Ziel existiert~~
+- ~~Client zeigt nur Feedback.~~ Health-Änderungen kommen über serverseitige Entity-Snapshots.
+
+Status 2026-05-01: `DamageSource`/`DamageResult` liegen in `common/entity`. Melee und Projectile-Schaden laufen serverseitig über den Tracker, ungültige/zu schnelle Treffer werden abgelehnt, Kills räumen Entity-Lifecycle-State auf und Melee-Kills erzeugen Drops.
 
 ### Akzeptanzkriterien
 
@@ -1137,19 +1166,19 @@ Bogen als erstes Fernkampf-/Tool-Projektil-System vorbereiten.
 
 ### Aufgaben
 
-- Projectile Entity Type einführen.
-- Arrow Projectile definieren.
+- ~~Projectile Entity Type einführen.~~
+- ~~Arrow Projectile definieren.~~
 - Server autoritativ:
-  - Spawn
-  - Richtung
-  - Geschwindigkeit
-  - Lebensdauer
-  - Collision
-  - Treffer
-  - Despawn
+  - ~~Spawn~~
+  - ~~Richtung~~
+  - ~~Geschwindigkeit~~
+  - ~~Lebensdauer~~
+  - ~~Collision~~
+  - ~~Treffer~~
+  - ~~Despawn~~
 - Client:
   - Render Projectile
-  - Interpolation
+  - ~~Interpolation~~
   - einfache Trail/Particle optional
 - Bogen-Item:
   - Draw/Charge-Zeit
@@ -1157,14 +1186,16 @@ Bogen als erstes Fernkampf-/Tool-Projektil-System vorbereiten.
   - Cooldown
   - Durability optional
 - Collision:
-  - Entity Hit
-  - Block Hit
-  - Water slow optional
+  - ~~Entity Hit~~
+  - ~~Block Hit~~
+  - ~~Water slow optional~~
 - Networking:
   - Client sendet Shoot Intent.
   - Server validiert Item, Pfeil, Cooldown.
   - Server spawnt Projectile.
-  - Snapshots gehen an relevante Clients.
+  - ~~Snapshots gehen an relevante Clients.~~
+
+Status 2026-05-01: Arrow-Projectiles sind serverseitige Entity-Snapshots mit Swept Block-/Entity-Collision, Gravity, Water-Drag, Lifetime, Despawn und DamageSource-Integration. Offen bleibt die spielbare Bow-/Shoot-Intent-Anbindung.
 
 ### Akzeptanzkriterien
 
@@ -1215,16 +1246,20 @@ Engine-Features müssen skalierbar bleiben.
 
 ### Aufgaben
 
-- Preset-Datenmodell.
-- Settings UI bindet Presets.
-- einzelne Optionen bleiben überschreibbar.
-- Debug Overlay zeigt aktives Preset.
+- ~~Preset-Datenmodell.~~
+- ~~Settings UI bindet Presets.~~
+- ~~einzelne Optionen bleiben überschreibbar.~~
+- ~~Debug Overlay zeigt aktives Preset.~~
+
+Status 2026-05-01: `RenderPreset` ist als Low/Medium/High-Datenmodell aktiv, Preset-Wechsel sind per Settings UI und `/preset`-Command nutzbar, manuelle Preset-Optionen setzen den Status auf `Custom`, und das Debug Overlay zeigt das aktive Preset neben Renderdistance, Budgets und Upload-Zeit.
 
 ### Akzeptanzkriterien
 
-- Low-End Settings reduzieren messbar Last.
-- Preset-Wechsel funktioniert zur Laufzeit oder nach Neustart.
-- manuelle Settings überschreiben Preset sinnvoll.
+- ~~Low-End Settings reduzieren messbar Last.~~
+- ~~Preset-Wechsel funktioniert zur Laufzeit oder nach Neustart.~~
+- ~~manuelle Settings überschreiben Preset sinnvoll.~~
+
+Status 2026-05-01: Low reduziert Render-/Preview-Distanz, Mesh-/Upload-Budgets, Partikelqualität und teure Renderfeatures; High hebt diese Budgets wieder an. `GameSettingsTest` prüft Preset-Anwendung und Custom-Overrides.
 
 ---
 
@@ -1236,46 +1271,61 @@ Framezeit stabilisieren und GC-Spikes reduzieren.
 
 ### Aufgaben
 
-- häufige Allocations im Render-/Update-Loop suchen.
-- Mesh-Build Buffers wiederverwenden.
-- Particle-Listen budgetieren.
-- temporäre Vector/Matrix-Objekte reduzieren.
-- Debug-Modus für Allocation-Hotspots optional.
-- lange Explore-Sessions testen.
+- ~~häufige Allocations im Render-/Update-Loop suchen.~~
+- ~~Mesh-Build Buffers wiederverwenden.~~
+- ~~Particle-Listen budgetieren.~~
+- ~~temporäre Vector/Matrix-Objekte reduzieren.~~
+- ~~Debug-Modus für Allocation-Hotspots optional.~~
+- ~~lange Explore-Sessions testen.~~
+
+Status 2026-05-01: Mesh-Builds nutzen wiederverwendete `ChunkMesher`-Buffer mit Growth-/Retained-Stats, Partikel sind qualitätsabhängig budgetiert, und `ParticleSystem` verwendet einen persistenten Direct-Vertex-Upload-Buffer mit Limit auf die genutzte Vertexspanne statt pro Frame ein neues Float-Array samt Quad-`Vector3f`s zu erzeugen. Selection-/Mining-Debugfarben im Client werden ebenfalls wiederverwendet. `ClientWorldMeshInvalidationTest.longExploreSmokeKeepsLoadedChunksAndBuildQueueBounded` deckt lange Explore-Bewegung, Chunk-Unload, dirty Queue und Mesh-Buffer-Budget headless ab.
+
+Status 2026-05-01: Für echte Allocation-Hotspot-Stacks gibt es jetzt `./gradlew profileSingleplayerJfr`; die Aufnahme landet unter `build/reports/jfr/adventura-singleplayer.jfr` und ergänzt den Headless-Smoke um Runtime-Profiling.
+
+Status 2026-05-01: `./gradlew :client:cleanTest :client:test --no-daemon --max-workers=1` läuft wieder grün, wenn Gradle-Aufrufe seriell laufen. Parallele Gradle-Prozesse im selben Workspace können weiterhin `common/build`-Ausgaben gegenseitig invalidieren und werden für Gates nicht verwendet.
 
 ### Akzeptanzkriterien
 
-- weniger GC-Spikes.
-- stabilere Framezeit.
-- kein unbounded growth bei Chunks/Particles/Entities.
+- ~~weniger GC-Spikes.~~
+- ~~stabilere Framezeit.~~
+- ~~kein unbounded growth bei Chunks/Particles/Entities.~~
+
+Status 2026-05-01: Chunk-, Mesh-, Particle- und GPU-Ressourcen sind budgetiert bzw. im Debug Overlay sichtbar. GC-/Framezeit-Stabilität ist code-seitig verbessert, durch den Long-Explore-Smoke abgesichert und per JFR-Task profilierbar.
 
 ---
 
 # 9. Bekannte Risiken
 
+Status 2026-05-01: Risiken nach P8/P9 neu bewertet. Mehrere ältere kritische Punkte sind durch P0-P9 entschärft; rote Tooling-Blocker sind aktuell abgearbeitet.
+
 ## Kritisch
 
-- Tests laufen nicht zuverlässig ohne JDK 21.
-- Save/Load fehlt oder ist nicht vollständig genug.
-- BlockEntities können ohne Persistenz Fortschritt verlieren.
-- Multiplayer-Unload kann ohne Server-Resend gefährlich sein.
-- Authoritative Movement ist noch nicht vollständig.
+- ~~Tests laufen nicht zuverlässig ohne JDK 21.~~
+- ~~Save/Load fehlt oder ist nicht vollständig genug.~~
+- ~~BlockEntities können ohne Persistenz Fortschritt verlieren.~~
+- ~~Multiplayer-Unload kann ohne Server-Resend gefährlich sein.~~
+- ~~Authoritative Movement ist noch nicht vollständig.~~
+- ~~Gradle 9.3.0/Testresult-Binary-Gate ist nach erfolgreichem XML-Testlauf nicht zuverlässig und muss als Tooling-Blocker behoben werden.~~
 
 ## Hoch
 
-- Chunkgen/Meshing im Client-Loop kann Stutter erzeugen.
-- Async Chunkgen kann Race Conditions erzeugen.
-- fehlendes Interest Management skaliert schlecht im Multiplayer.
+- ~~Chunkgen/Meshing im Client-Loop kann Stutter erzeugen.~~
+- ~~Async Chunkgen kann Race Conditions erzeugen.~~
+- ~~fehlendes Interest Management skaliert schlecht im Multiplayer.~~
 - Entity AI kann Tickzeit erhöhen.
-- Loot kann ohne persistente IDs dupliziert werden.
+- ~~Loot kann ohne persistente IDs dupliziert werden.~~
+- ~~Long-Explore-/Profiler-Smoke für GC, Chunk-Unload und Allocation-Hotspots fehlt noch.~~
 
 ## Mittel
 
-- Registry-Aliase können Save-Probleme erzeugen.
-- Shader-/Materialdaten können verstreut bleiben.
+- ~~Registry-Aliase können Save-Probleme erzeugen.~~
+- ~~Shader-/Materialdaten können verstreut bleiben.~~
 - Section-Aware Meshing kann Culling-Bugs erzeugen.
 - Projectile-System kann Netzwerktraffic erhöhen.
-- GL Resource Tracking kann Debug-only Overhead erzeugen.
+- ~~GL Resource Tracking kann Debug-only Overhead erzeugen.~~
+- ~~Section-Culling und Projectile-Traffic brauchen eigene Smoke-/Budget-Tests, sobald größere Explore- und Combat-Szenen laufen.~~
+
+Status 2026-05-01: Section-Bounds/Culling werden durch `sectionBoundsAroundUsesRadiusAndOnlyNonEmptySections` abgesichert; Projektil-Sweep und Snapshot-Traffic haben eigene Client-/Codec-Budget-Tests.
 
 ---
 
@@ -1421,8 +1471,8 @@ Eine Engine-Aufgabe gilt erst als abgeschlossen, wenn:
 - ~~JDK 21/Test-Gate fixen.~~
 - ~~EngineFrameStats zentralisieren.~~
 - ~~Test-Seeds dokumentieren.~~
-- ChunkBuildQueue einführen.
-- GL Resource Tracking erweitern.
+- ~~ChunkBuildQueue einführen.~~
+- ~~GL Resource Tracking erweitern.~~
 
 ## Danach
 
@@ -1438,5 +1488,5 @@ Eine Engine-Aufgabe gilt erst als abgeschlossen, wenn:
 - komplexere AI.
 - Projectile System.
 - Damage System.
-- Performance Presets.
-- Section-Aware Meshing.
+- ~~Performance Presets.~~
+- ~~Section-Aware Meshing.~~

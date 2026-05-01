@@ -16,10 +16,13 @@ import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.net.GameClientConnection;
 import dev.voxelgame.client.render.BlockRenderProperties;
 import dev.voxelgame.client.render.ChunkBorderRenderer;
+import dev.voxelgame.client.render.CozyColorPipeline;
 import dev.voxelgame.client.render.LightDebugInfo;
 import dev.voxelgame.client.render.RenderMaterial;
+import dev.voxelgame.client.render.RenderDebugView;
 import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.RenderResourceTracker;
+import dev.voxelgame.client.render.ShaderRegistry;
 import dev.voxelgame.client.render.WorldRenderer;
 import dev.voxelgame.client.render.assets.BlockTextureAtlas;
 import dev.voxelgame.client.render.entity.EntityRenderer;
@@ -45,6 +48,7 @@ import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
+import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
@@ -58,6 +62,8 @@ import org.lwjgl.opengl.GL;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.DoubleBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -81,6 +87,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_KEY_E;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F1;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F3;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_F4;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_F6;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_J;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_O;
@@ -132,6 +139,12 @@ public final class GameClient {
     private static final int INVENTORY_MAIN_ROWS = 3;
     private static final int INVENTORY_ROWS = 4;
     private static final UiPulse SELECTED_SLOT_PULSE = UiPulse.selectedHotbarSlot();
+    private static final Vector3f BLOCK_SELECT_COLOR = new Vector3f(0.95f, 0.82f, 0.42f);
+    private static final Vector3f BLOCK_SELECT_BLOCKED_COLOR = new Vector3f(0.96f, 0.34f, 0.34f);
+    private static final Vector3f BLOCK_MINE_PROGRESS_COLOR = new Vector3f(1.0f, 0.90f, 0.58f);
+    private static final Vector3f PLACE_PREVIEW_VALID_COLOR = new Vector3f(0.38f, 0.88f, 0.48f);
+    private static final Vector3f PLACE_PREVIEW_INVALID_COLOR = new Vector3f(0.96f, 0.28f, 0.28f);
+    private static final Vector3f FAR_TARGET_COLOR = new Vector3f(0.95f, 0.42f, 0.34f);
 
     private final ConnectionOptions connectionOptions;
     private final GameSettings settings;
@@ -189,6 +202,7 @@ public final class GameClient {
     private boolean previousJournal;
     private boolean previousHudToggle;
     private boolean previousModeCycle;
+    private boolean previousDebugViewCycle;
     private boolean previousSettingsKey;
     private boolean previousSpawnKey;
     private boolean onlineMode;
@@ -218,6 +232,10 @@ public final class GameClient {
     private int lastRenderedEntityHitboxes;
     private int lastChunkBorderDebugChunks;
     private int lastMeshBoundsDebugBoxes;
+    private int lastSectionBoundsDebugBoxes;
+    private int lastParticleBoundsDebugBoxes;
+    private int lastCollisionShapeDebugBoxes;
+    private int lastProjectileSweepDebugBoxes;
     private CraftingCategory craftingCategoryFilter;
     private boolean craftableRecipesOnly;
     private boolean craftingSearchFocused;
@@ -231,6 +249,7 @@ public final class GameClient {
     private double nextAmbientParticleSourceScanTime;
     private double nextStepAudioTime;
     private double nextAmbientAudioTime;
+    private double nextLandingFeedbackTime;
     private double nextToolHintTime;
     private double nextComfortScanTime;
     private double nextRecipeUnlockScanTime;
@@ -328,10 +347,11 @@ public final class GameClient {
                 boolean sprinting = camera.wantsSprint(window) && moving && playerStats.canSprint();
                 camera.update(window, deltaSeconds, settings.mouseSensitivity(), world, gameMode, playerStats.canSprint());
                 float fallImpact = camera.consumeFallImpactSpeed();
+                PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(camera.position());
                 if (gameMode == GameMode.SURVIVAL && fallImpact > 13.0f) {
                     playerStats.hurt(Math.round((fallImpact - 12.0f) * 0.55f));
                 }
-                PlayerWaterState water = world == null ? new PlayerWaterState(false, false, false) : world.playerWaterState(camera.position());
+                emitLandingFeedback(fallImpact, water.movementAffected(), now);
                 headUnderwaterNow = water.headUnderwater();
                 refreshLocalComfort(now);
                 playerStats.tick(deltaSeconds, gameMode, headUnderwaterNow, sprinting, moving);
@@ -370,7 +390,8 @@ public final class GameClient {
             }
             double updateMilliseconds = (System.nanoTime() - updateStartNanos) / 1_000_000.0;
 
-            glClearColor(0.52f, 0.72f, 0.95f, 1.0f);
+            RenderSettings renderSettings = currentRenderSettings();
+            glClearColor(renderSettings.skyR(), renderSettings.skyG(), renderSettings.skyB(), 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             int visibleEntitySnapshotCount = 0;
             if (world != null) {
@@ -396,15 +417,29 @@ public final class GameClient {
                 Matrix4f view = camera.viewMatrix();
                 List<EntitySnapshot> visibleEntities = world.visibleEntities(now);
                 visibleEntitySnapshotCount = visibleEntities.size();
-                lastRenderStats = worldRenderer.render(projection, view, world, camera.position(), currentRenderSettings(), now);
-                lastEntityRenderStats = entityRenderer.renderDetailed(projection, view, visibleEntities, now);
+                lastRenderStats = worldRenderer.render(projection, view, world, camera.position(), renderSettings, now);
+                lastEntityRenderStats = entityRenderer.renderDetailed(projection, view, visibleEntities, now, renderSettings, world, camera.position());
                 emitEntityParticles(visibleEntities, now);
+                particleSystem.setQuality(settings.particleQuality());
                 lastParticleRenderStats = particleSystem.render(projection, view, now);
+                renderSelectionVisuals(projection, view, now);
                 lastChunkBorderDebugChunks = settings.debugChunkBordersEnabled()
                         ? chunkBorderRenderer.render(projection, view, camera.position(), world.dimension(), settings.renderDistanceChunks())
                         : 0;
                 lastMeshBoundsDebugBoxes = settings.debugMeshBoundsEnabled()
                         ? chunkBorderRenderer.renderMeshBounds(projection, view, worldRenderer.meshBounds())
+                        : 0;
+                lastSectionBoundsDebugBoxes = settings.debugSectionBoundsEnabled()
+                        ? chunkBorderRenderer.renderSectionBounds(projection, view, world.sectionBoundsAround(camera.position(), settings.renderDistanceChunks()))
+                        : 0;
+                lastParticleBoundsDebugBoxes = settings.debugParticleBoundsEnabled()
+                        ? chunkBorderRenderer.renderParticleBounds(projection, view, particleSystem.particleBounds())
+                        : 0;
+                lastCollisionShapeDebugBoxes = settings.debugOverlayEnabled()
+                        ? chunkBorderRenderer.renderCollisionShapeBounds(projection, view, world.collisionShapeBoundsAround(camera.position(), 7))
+                        : 0;
+                lastProjectileSweepDebugBoxes = settings.debugOverlayEnabled()
+                        ? chunkBorderRenderer.renderProjectileSweepBounds(projection, view, world.projectileSweepBoundsAround(camera.position(), 32, now))
                         : 0;
                 lastRenderedEntityHitboxes = settings.debugOverlayEnabled()
                         ? chunkBorderRenderer.renderEntityHitboxes(projection, view, visibleEntities)
@@ -419,6 +454,10 @@ public final class GameClient {
                 lastRenderedEntityHitboxes = 0;
                 lastChunkBorderDebugChunks = 0;
                 lastMeshBoundsDebugBoxes = 0;
+                lastSectionBoundsDebugBoxes = 0;
+                lastParticleBoundsDebugBoxes = 0;
+                lastCollisionShapeDebugBoxes = 0;
+                lastProjectileSweepDebugBoxes = 0;
                 lastWorldRenderMilliseconds = 0.0;
                 lastRenderStats = new WorldRenderer.RenderStats(0, 0);
                 previousUnderwater = false;
@@ -442,6 +481,8 @@ public final class GameClient {
                     lastRenderedEntityHitboxes,
                     lastChunkBorderDebugChunks,
                     lastMeshBoundsDebugBoxes,
+                    lastSectionBoundsDebugBoxes,
+                    lastParticleBoundsDebugBoxes,
                     lastParticleRenderStats,
                     onlineMode,
                     connection == null ? ClientNetworkStats.Snapshot.offline() : connection.stats(world == null ? 0 : world.dirtyChunkCount()),
@@ -584,12 +625,12 @@ public final class GameClient {
                 }
                 short blockId = placeBlockId.get();
                 org.joml.Vector3f eyePosition = camera.position();
-                if (InteractionRules.placementIntersectsPlayer(eyePosition.x, eyePosition.y, eyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ())) {
+                if (InteractionRules.placementIntersectsPlayer(eyePosition.x, eyePosition.y, eyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ(), blockId)) {
                     setStatus("Too close to place");
                     nextBlockActionTime = now + 0.10;
                     return;
                 }
-                if (world.placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ(), now)) {
+                if (world.placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ(), blockId, now)) {
                     setStatus("Blocked by entity");
                     nextBlockActionTime = now + 0.10;
                     return;
@@ -623,6 +664,90 @@ public final class GameClient {
                     }
                 }
             });
+        }
+    }
+
+    private void renderSelectionVisuals(Matrix4f projection, Matrix4f view, double now) {
+        if (gameState != GameState.PLAYING || world == null || chunkBorderRenderer == null) {
+            return;
+        }
+        Optional<Raycast.Hit> reachable = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH);
+        if (reachable.isPresent()) {
+            Raycast.Hit hit = reachable.get();
+            Optional<BlockType> target = world.targetBlock(hit);
+            if (target.isPresent()) {
+                boolean canHarvest = gameMode == GameMode.CREATIVE || hotbar.canHarvestSelected(target.get());
+                Vector3f outline = canHarvest ? BLOCK_SELECT_COLOR : BLOCK_SELECT_BLOCKED_COLOR;
+                chunkBorderRenderer.renderBlockOutline(projection, view, hit.x(), hit.y(), hit.z(), outline, 0.70f, true);
+                if (blockBreakAnimation.active()) {
+                    chunkBorderRenderer.renderMiningFaceProgress(
+                            projection,
+                            view,
+                            hit,
+                            blockBreakAnimation.progress(now),
+                            BLOCK_MINE_PROGRESS_COLOR,
+                            0.78f
+                    );
+                }
+            }
+            hotbar.selectedPlaceBlockId().ifPresent(blockId -> {
+                PlacementPreview preview = placementPreview(hit, blockId, now);
+                Vector3f color = preview.valid() ? PLACE_PREVIEW_VALID_COLOR : PLACE_PREVIEW_INVALID_COLOR;
+                chunkBorderRenderer.renderBlockOutline(
+                        projection,
+                        view,
+                        hit.placeX(),
+                        hit.placeY(),
+                        hit.placeZ(),
+                        color,
+                        preview.valid() ? 0.48f : 0.62f,
+                        true
+                );
+            });
+            return;
+        }
+        Optional<Raycast.Hit> far = world.pick(camera.position(), camera.forward(), InteractionRules.BLOCK_REACH + 3.0);
+        far.ifPresent(hit -> chunkBorderRenderer.renderBlockOutline(
+                projection,
+                view,
+                hit.x(),
+                hit.y(),
+                hit.z(),
+                FAR_TARGET_COLOR,
+                0.34f,
+                true
+        ));
+    }
+
+    private PlacementPreview placementPreview(Raycast.Hit hit, short blockId, double now) {
+        if (!world.dimension().containsY(hit.placeY())) {
+            return PlacementPreview.invalid("height");
+        }
+        Optional<BlockType> placed = blocks.findById(blockId);
+        if (placed.isEmpty() || blockId == Blocks.AIR || blockId == Blocks.WATER) {
+            return PlacementPreview.invalid("block");
+        }
+        short currentId = world.blockIdAt(hit.placeX(), hit.placeY(), hit.placeZ());
+        if (currentId != Blocks.AIR && currentId != Blocks.WATER) {
+            return PlacementPreview.invalid("occupied");
+        }
+        Vector3f eye = camera.position();
+        if (InteractionRules.placementIntersectsPlayer(eye.x, eye.y, eye.z, hit.placeX(), hit.placeY(), hit.placeZ(), blockId)) {
+            return PlacementPreview.invalid("player");
+        }
+        if (world.placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ(), blockId, now)) {
+            return PlacementPreview.invalid("entity");
+        }
+        return PlacementPreview.allowed();
+    }
+
+    private record PlacementPreview(boolean valid, String reason) {
+        static PlacementPreview allowed() {
+            return new PlacementPreview(true, "");
+        }
+
+        static PlacementPreview invalid(String reason) {
+            return new PlacementPreview(false, reason);
         }
     }
 
@@ -966,6 +1091,17 @@ public final class GameClient {
         previousUnderwater = underwater;
     }
 
+    private void emitLandingFeedback(float impactSpeed, boolean waterAffected, double now) {
+        if (impactSpeed < 13.0f || waterAffected || now < nextLandingFeedbackTime) {
+            return;
+        }
+        if (particleSystem != null) {
+            particleSystem.spawnLandingDust(camera.position(), impactSpeed, now);
+        }
+        audio.play(AudioCue.HARD_LANDING);
+        nextLandingFeedbackTime = now + 0.35;
+    }
+
     private void emitMovementAudio(boolean moving, boolean sprinting, boolean waterAffected, double now) {
         if (!moving || waterAffected || !camera.onGround() || world == null || now < nextStepAudioTime) {
             return;
@@ -1062,6 +1198,7 @@ public final class GameClient {
         boolean journal = glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS;
         boolean hudToggle = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
         boolean modeCycle = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
+        boolean debugViewCycle = glfwGetKey(window, GLFW_KEY_F6) == GLFW_PRESS;
         boolean settingsKey = glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS;
         boolean spawnKey = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
         boolean craftingTextInput = gameState == GameState.CRAFTING && craftingSearchFocused;
@@ -1096,6 +1233,10 @@ public final class GameClient {
         if (gameplayHotkeys && modeCycle && !previousModeCycle) {
             cycleGameMode();
         }
+        if (!craftingTextInput && debugViewCycle && !previousDebugViewCycle) {
+            settings.cycleRenderDebugView();
+            chatLog.add("Render debug view: " + settings.renderDebugView().commandName());
+        }
         if (gameplayHotkeys && settingsKey && !previousSettingsKey) {
             openSettings(gameState);
         }
@@ -1111,6 +1252,7 @@ public final class GameClient {
         previousJournal = journal;
         previousHudToggle = hudToggle;
         previousModeCycle = modeCycle;
+        previousDebugViewCycle = debugViewCycle;
         previousSettingsKey = settingsKey;
         previousSpawnKey = spawnKey;
     }
@@ -1192,7 +1334,7 @@ public final class GameClient {
         String command = parts[0].toLowerCase(Locale.ROOT);
         try {
             switch (command) {
-                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /meshms n /uploadms n /greedymesh /fov n /fog /ao /shadows /bloom /hud /debug /debugchunks /debugbounds /debuglight /debugbiome /debugmaterial /debugatlas /water /settings /clear /say text");
+                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /meshms n /uploadms n /greedymesh /fov n /fog /ao /shadows /bloom /hud /debug /debugchunks /debugbounds /debugsections /debugparticles /debugview off|material|light|ao|biome|layer|uv|transparent /debuglight /debugbiome /debugmaterial /debugatlas [dump|uv block] /shaderreload /water /simplewater /particles 0.25-1.0 /settings /clear /say text or !phys projectile|entity|water|unloaded|stats");
                 case "keys", "keybinds" -> showKeybinds();
                 case "seed" -> chatLog.add("Seed: " + connectionOptions.seed());
                 case "pos" -> chatLog.add(positionLine());
@@ -1249,16 +1391,25 @@ public final class GameClient {
                 case "debug" -> toggleCommand("Debug overlay", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
                 case "debugchunks" -> toggleCommand("Chunk borders", settings.debugChunkBordersEnabled(), settings::toggleDebugChunkBorders);
                 case "debugbounds" -> toggleCommand("Mesh bounds", settings.debugMeshBoundsEnabled(), settings::toggleDebugMeshBounds);
+                case "debugsections" -> toggleCommand("Section bounds", settings.debugSectionBoundsEnabled(), settings::toggleDebugSectionBounds);
+                case "debugparticles" -> toggleCommand("Particle bounds", settings.debugParticleBoundsEnabled(), settings::toggleDebugParticleBounds);
+                case "debugview" -> setRenderDebugView(parts);
                 case "debuglight" -> chatLog.add(lightDebugLine());
                 case "debugbiome" -> chatLog.add(biomeDebugLine());
                 case "debugmaterial" -> chatLog.add(materialDebugLine());
-                case "debugatlas" -> chatLog.add(atlasDebugLine());
+                case "debugatlas" -> debugAtlasCommand(parts);
+                case "shaderreload" -> reloadShadersCommand();
                 case "water" -> {
                     settings.toggleTransparentWater();
                     if (world != null) {
                         world.markAllLoadedDirty();
                     }
                     chatLog.add("Transparent water: " + onOff(settings.transparentWaterEnabled()));
+                }
+                case "simplewater" -> toggleCommand("Simple water", settings.simpleWaterEnabled(), settings::toggleSimpleWater);
+                case "particles" -> {
+                    settings.setParticleQuality(parseDouble(parts, 1));
+                    chatLog.add("Particle quality: " + formatPercent(settings.particleQuality()));
                 }
                 case "settings" -> openSettings(GameState.PLAYING);
                 case "clear" -> chatLog.clear();
@@ -1285,6 +1436,60 @@ public final class GameClient {
             world.markAllLoadedDirty();
             refreshPreview();
         }
+    }
+
+    private void setRenderDebugView(String[] parts) {
+        if (parts.length < 2) {
+            throw new IllegalArgumentException("Usage: /debugview off|material|light|ao|biome|layer|uv|transparent");
+        }
+        RenderDebugView view = RenderDebugView.parse(parts[1]);
+        settings.setRenderDebugView(view);
+        chatLog.add("Render debug view: " + view.commandName());
+    }
+
+    private void reloadShadersCommand() {
+        ShaderRegistry.ReloadReport report = ShaderRegistry.reloadAll();
+        String line = "Shader reload: "
+                + report.reloadedPrograms()
+                + "/"
+                + report.attemptedPrograms()
+                + " ok, "
+                + report.failedPrograms()
+                + " failed in "
+                + formatMilliseconds(report.elapsedMilliseconds());
+        if (!report.successful() && !report.lastError().isBlank()) {
+            line += " " + clampText(report.lastError(), 72);
+        }
+        chatLog.add(line);
+    }
+
+    private void debugAtlasCommand(String[] parts) {
+        if (parts.length >= 2 && "dump".equalsIgnoreCase(parts[1])) {
+            try {
+                Path output = Path.of("build", "debug", "block-atlas.png");
+                Files.createDirectories(output.getParent());
+                BlockTextureAtlas.AtlasValidationReport report = BlockTextureAtlas.writeDebugAtlas(Blocks.createDefaultRegistry(), output);
+                chatLog.add("Atlas debug PNG: " + output + " (" + report.atlasWidth() + "x" + report.atlasHeight() + ")");
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Atlas dump failed: " + e.getMessage());
+            }
+            return;
+        }
+        if (parts.length >= 3 && "uv".equalsIgnoreCase(parts[1])) {
+            String query = parts[2].toLowerCase(Locale.ROOT);
+            BlockTextureAtlas.AtlasValidationReport report = BlockTextureAtlas.validationReport(Blocks.createDefaultRegistry());
+            List<String> lines = report.uvRectDebugLines().stream()
+                    .filter(line -> line.toLowerCase(Locale.ROOT).contains(query))
+                    .limit(3)
+                    .toList();
+            if (lines.isEmpty()) {
+                chatLog.add("Atlas UV: no match for " + parts[2]);
+                return;
+            }
+            lines.forEach(chatLog::add);
+            return;
+        }
+        chatLog.add(atlasDebugLine());
     }
 
     private void sendSay(String commandLine) {
@@ -1375,7 +1580,7 @@ public final class GameClient {
 
     private void showKeybinds() {
         chatLog.add("Keys: WASD move, Space jump/up, Ctrl down, Shift sprint");
-        chatLog.add("Keys: E crafting, J journal, O settings, R spawn, F1 HUD, F3 debug, F4 mode");
+        chatLog.add("Keys: E crafting, J journal, O settings, R spawn, F1 HUD, F3 debug, F4 mode, F6 debug view");
         chatLog.add("Keys: T chat, / command, 1-9 or mouse wheel hotbar, mouse break/place");
     }
 
@@ -2342,7 +2547,7 @@ public final class GameClient {
 
         drawAssetPanel("frame_moss", x, y + 352.0f, panelWidth, 54.0f, new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
         uiRenderer.rect(x + 8.0f, y + 360.0f, panelWidth - 16.0f, 38.0f, new UiColor(0.02f, 0.032f, 0.030f, 0.26f));
-        uiRenderer.text("PRESET", x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
+        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT), x + 18.0f, y + 372.0f, 1.45f, UiColor.MUTED);
         float presetButtonWidth = 106.0f;
         float presetX = x + 112.0f;
         drawButton(new UiButton(presetX, y + 362.0f, presetButtonWidth, 34.0f, "LOW", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.LOW));
@@ -3898,7 +4103,9 @@ public final class GameClient {
         EngineFrameStats.Entities entities = engineFrameStats.entities();
         EngineFrameStats.Particles particles = engineFrameStats.particles();
         EngineFrameStats.Network network = engineFrameStats.network();
+        GamePacket.ServerStatsSnapshot serverStats = network.serverStats();
         EngineFrameStats.GpuResources resources = engineFrameStats.gpuResources();
+        ClientWorld.PhysicsLoadingStatus physicsLoading = world == null ? null : world.physicsLoadingStatus(position);
         String selectedItem = hotbar.selectedLabel();
         String lookingAt = "none";
         if (world != null) {
@@ -3910,22 +4117,33 @@ public final class GameClient {
                         .orElse("none");
             }
         }
-        uiRenderer.rect(12.0f, 12.0f, 860.0f, 338.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
+        uiRenderer.rect(12.0f, 12.0f, 910.0f, 360.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
         uiRenderer.text("FPS " + frame.fps() + " FRAME " + formatMilliseconds(frame.frameMilliseconds()) + " UPD " + formatMilliseconds(frame.updateMilliseconds()) + " RENDER " + formatMilliseconds(frame.renderMilliseconds()) + " UI " + formatMilliseconds(frame.uiMilliseconds()), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome), 22.0f, 64.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("RD " + chunks.renderDistanceChunks() + " PRE " + chunks.previewRadiusChunks() + " RET " + chunks.retentionRadiusChunks() + " MB " + chunks.meshBuildBudgetChunks() + "/" + formatMilliseconds(chunks.meshBuildBudgetMilliseconds()) + " UP " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()) + " GREEDY " + onOff(settings.greedyMeshingEnabled()) + " DIRTY " + chunks.dirtyChunks() + " BUILT " + chunks.builtChunks(), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT) + " RD " + chunks.renderDistanceChunks() + " PRE " + chunks.previewRadiusChunks() + " RET " + chunks.retentionRadiusChunks() + " MB " + chunks.meshBuildBudgetChunks() + "/" + formatMilliseconds(chunks.meshBuildBudgetMilliseconds()) + " UP " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()) + " GREEDY " + onOff(settings.greedyMeshingEnabled()) + " DIRTY " + chunks.dirtyChunks() + " BUILT " + chunks.builtChunks(), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOADED " + chunks.loadedChunks() + " VIS " + chunks.visibleChunks() + " UNLD " + chunks.unloadedChunks() + "/" + formatCount(chunks.totalUnloadedChunks()) + " FREED " + chunks.releasedGpuMeshLayers() + " GPU MESH " + rendering.loadedGpuMeshes() + " GPU CHUNK " + rendering.loadedGpuChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("QUEUE " + chunks.queuedChunks() + " REP " + formatCount(chunks.replacedChunkBuilds()) + " CAN " + formatCount(chunks.canceledChunkBuilds()) + " WAIT " + formatMilliseconds(chunks.averageChunkBuildWaitMilliseconds()) + " GEN " + formatMilliseconds(chunks.chunkGenerationMilliseconds()) + " MESH " + formatMilliseconds(chunks.meshingMilliseconds()) + " LIGHT " + formatMilliseconds(chunks.lightingMilliseconds()) + " UP " + formatMilliseconds(chunks.gpuUploadMilliseconds()) + " B/s " + formatRate(chunks.chunksBuiltPerSecond()), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SECTIONS " + chunks.nonEmptySections() + "/" + chunks.totalSections() + " EMPTY " + chunks.emptySections() + " BOUNDS " + chunks.chunksWithSectionBounds(), 22.0f, 144.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + rendering.drawCalls() + " SOLID " + rendering.solidMeshCount() + " CUTOUT " + rendering.cutoutMeshCount() + " WATER " + rendering.transparentMeshCount() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " EVAO " + resources.liveEntityVertexArrays() + " EBUF " + resources.liveEntityBuffers() + " TEX " + resources.liveTextures() + " SHD " + resources.liveShaderPrograms() + " PVAO " + resources.liveParticleVertexArrays() + " PBUF " + resources.liveParticleBuffers() + " FB " + resources.liveFramebuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " BORDERS " + rendering.debugChunkBorders() + " MBOUNDS " + rendering.debugMeshBounds(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("PART " + particles.particleCount() + " SPAWN/s " + formatRate(particles.spawnRate()) + " BUD " + formatPercent(particles.budgetUsage()) + " EVICT " + particles.evictedParticles() + " PDC " + particles.drawCalls() + " PTRI " + particles.triangles() + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 244.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SORT " + rendering.sortedTransparentMeshes() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " UPB " + formatMegabytes(rendering.gpuUploadBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " EVAO " + resources.liveEntityVertexArrays() + " EBUF " + resources.liveEntityBuffers() + " TEX " + resources.liveTextures() + " SHD " + resources.liveShaderPrograms() + " RLD " + resources.shaderReloadCount() + " F " + resources.failedShaderReloadCount() + " " + formatMilliseconds(resources.lastShaderReloadMilliseconds()) + " PVAO " + resources.liveParticleVertexArrays() + " PBUF " + resources.liveParticleBuffers() + " FB " + resources.liveFramebuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " " + rendering.atlasWidth() + "x" + rendering.atlasHeight() + " " + formatMegabytes(rendering.atlasBytes()) + " DEBUGVIEW " + settings.renderDebugView().commandName(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PART " + particles.particleCount() + " SPAWN/s " + formatRate(particles.spawnRate()) + " BUD " + formatPercent(particles.budgetUsage()) + " Q " + formatPercent(settings.particleQuality()) + " EVICT " + particles.evictedParticles() + " PDC " + particles.drawCalls() + " PTRI " + particles.triangles() + " BORDERS " + rendering.debugChunkBorders() + " MBOUNDS " + rendering.debugMeshBounds() + " SBOUNDS " + rendering.debugSectionBounds() + " PBOUNDS " + particles.debugBounds() + " SHAPES " + lastCollisionShapeDebugBoxes + " PSWEEP " + lastProjectileSweepDebugBoxes + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 244.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("NET " + onOff(network.online()) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " TX/s " + formatRate(network.sentPacketsPerSecond()) + " RX/s " + formatRate(network.receivedPacketsPerSecond()) + " AVG " + formatCount(Math.round(network.averagePacketBytes())) + "B BAD " + formatCount(network.invalidPacketsDropped()) + " Q " + network.chunkStreamQueueLength() + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 264.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("SEL " + clampText(selectedItem, 72), 22.0f, 284.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("LOOK " + clampText(lookingAt, 72), 22.0f, 304.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SRVSTAT PKT " + formatCount(network.serverStatsPackets()) + " SUB " + serverStats.chunkSubscriptions() + " CH " + formatCount(serverStats.sentChunkPackets()) + " ES " + formatCount(serverStats.sentEntitySnapshots()) + "/" + formatCount(serverStats.sentEntitySnapshotPackets()) + " BLK " + formatCount(serverStats.sentBlockUpdates()) + " DROP " + formatCount(serverStats.discardedUpdatesOutsideInterest()) + " REJ " + formatCount(serverStats.rejectedChunkRequests()) + " FAIL " + formatCount(serverStats.failedChunkRequests()) + " AVG " + formatCount(serverStats.averagePacketBytes()) + "B PPS " + formatRate(serverStats.packetRatePerSecond()), 22.0f, 284.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SEL " + clampText(selectedItem, 72), 22.0f, 304.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("LOOK " + clampText(lookingAt, 72), 22.0f, 324.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PHYS " + physicsLoadingLabel(physicsLoading), 22.0f, 344.0f, 1.65f, physicsLoading != null && physicsLoading.blocked() ? UiColor.WARNING : UiColor.MUTED);
+    }
+
+    private static String physicsLoadingLabel(ClientWorld.PhysicsLoadingStatus status) {
+        if (status == null) {
+            return "no world";
+        }
+        return (status.blocked() ? "blocked by loading" : "ready")
+                + " C " + status.center().x() + " " + status.center().z()
+                + " " + status.loadedChunks() + "/" + status.requiredChunks();
     }
 
     private void renderBreakOverlay() {
@@ -4275,19 +4493,51 @@ public final class GameClient {
 
     private RenderSettings currentRenderSettings() {
         float fogEnd = Math.max(72.0f, settings.renderDistanceChunks() * 16.0f);
+        float fogStart = fogEnd * 0.58f;
+        int dayMinute = localDayMinutes();
+        Vector3f sky = CozyColorPipeline.skyColorForMinute(dayMinute);
+        Vector3f fog = CozyColorPipeline.fogColorForMinute(dayMinute);
+        Vector3f biomeTint = currentBiomeTint();
+        sky = CozyColorPipeline.mix(sky, biomeTint, 0.045f);
+        fog = CozyColorPipeline.mix(fog, biomeTint, 0.10f);
+        if (headUnderwaterNow) {
+            sky = new Vector3f(0.10f, 0.34f, 0.48f);
+            fog = new Vector3f(0.08f, 0.28f, 0.38f);
+            fogStart = 2.0f;
+            fogEnd = Math.min(28.0f, Math.max(10.0f, fogEnd * 0.28f));
+        }
         return new RenderSettings(
                 settings.renderDistanceChunks(),
                 settings.fogEnabled(),
                 settings.ambientOcclusionEnabled(),
                 settings.softShadowsEnabled(),
                 settings.bloomEnabled(),
+                headUnderwaterNow,
+                settings.simpleWaterEnabled(),
                 settings.bloomEnabled() ? 0.22f : 0.0f,
-                fogEnd * 0.58f,
+                fogStart,
                 fogEnd,
-                0.52f,
-                0.72f,
-                0.95f
+                sky.x,
+                sky.y,
+                sky.z,
+                fog.x,
+                fog.y,
+                fog.z,
+                biomeTint.x,
+                biomeTint.y,
+                biomeTint.z,
+                settings.renderDebugView()
         );
+    }
+
+    private Vector3f currentBiomeTint() {
+        if (world == null) {
+            return CozyColorPipeline.biomeTint("", null);
+        }
+        Vector3f position = camera.position();
+        String biomeKey = world.biomeKeyAt((int) Math.floor(position.x), (int) Math.floor(position.z));
+        BiomeType biome = biomes.findByKey(biomeKey).orElse(null);
+        return CozyColorPipeline.biomeTint(biomeKey, biome);
     }
 
     private static String clampText(String text, int maxChars) {

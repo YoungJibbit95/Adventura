@@ -1,5 +1,7 @@
 package dev.voxelgame.client;
 
+import dev.voxelgame.client.render.RenderDebugView;
+
 public final class GameSettings {
     private int renderDistanceChunks;
     private int previewRadiusChunks;
@@ -18,9 +20,15 @@ public final class GameSettings {
     private boolean debugOverlayEnabled = false;
     private boolean debugChunkBordersEnabled = false;
     private boolean debugMeshBoundsEnabled = false;
+    private boolean debugSectionBoundsEnabled = false;
+    private boolean debugParticleBoundsEnabled = false;
     private boolean chatEnabled = true;
     private boolean transparentWaterEnabled = true;
+    private boolean simpleWaterEnabled;
     private boolean greedyMeshingEnabled = true;
+    private double particleQuality = 1.0;
+    private RenderDebugView renderDebugView = RenderDebugView.NONE;
+    private RenderPreset activePreset;
 
     private GameSettings(ConnectionOptions options) {
         this.renderDistanceChunks = clamp(options.renderDistance(), 2, 18);
@@ -115,6 +123,14 @@ public final class GameSettings {
         return debugMeshBoundsEnabled;
     }
 
+    public boolean debugSectionBoundsEnabled() {
+        return debugSectionBoundsEnabled;
+    }
+
+    public boolean debugParticleBoundsEnabled() {
+        return debugParticleBoundsEnabled;
+    }
+
     public boolean chatEnabled() {
         return chatEnabled;
     }
@@ -123,15 +139,33 @@ public final class GameSettings {
         return transparentWaterEnabled;
     }
 
+    public boolean simpleWaterEnabled() {
+        return simpleWaterEnabled;
+    }
+
     public boolean greedyMeshingEnabled() {
         return greedyMeshingEnabled;
     }
 
+    public double particleQuality() {
+        return particleQuality;
+    }
+
+    public RenderDebugView renderDebugView() {
+        return renderDebugView;
+    }
+
+    public String activePresetLabel() {
+        return activePreset == null ? "Custom" : activePreset.label();
+    }
+
     public void setRenderDistanceChunks(int value) {
+        markPresetCustom();
         renderDistanceChunks = clamp(value, 2, 18);
     }
 
     public void setPreviewRadiusChunks(int value) {
+        markPresetCustom();
         previewRadiusChunks = clamp(value, 1, 8);
     }
 
@@ -140,6 +174,7 @@ public final class GameSettings {
     }
 
     public void setMeshBuildBudgetChunks(int value) {
+        markPresetCustom();
         meshBuildBudgetChunks = clamp(value, 1, 12);
     }
 
@@ -147,6 +182,7 @@ public final class GameSettings {
         if (!Double.isFinite(value)) {
             return;
         }
+        markPresetCustom();
         meshBuildBudgetMilliseconds = clamp(value, 0.5, 16.0);
     }
 
@@ -154,6 +190,7 @@ public final class GameSettings {
         if (!Double.isFinite(value)) {
             return;
         }
+        markPresetCustom();
         gpuUploadBudgetMilliseconds = clamp(value, 0.5, 16.0);
     }
 
@@ -172,13 +209,18 @@ public final class GameSettings {
         softShadowsEnabled = preset.softShadowsEnabled();
         bloomEnabled = preset.bloomEnabled();
         transparentWaterEnabled = preset.transparentWaterEnabled();
+        simpleWaterEnabled = preset.simpleWaterEnabled();
+        particleQuality = clamp(preset.particleQuality(), 0.25, 1.0);
+        activePreset = preset;
     }
 
     public void adjustRenderDistance(int delta) {
+        markPresetCustom();
         renderDistanceChunks = clamp(renderDistanceChunks + delta, 2, 18);
     }
 
     public void adjustPreviewRadius(int delta) {
+        markPresetCustom();
         previewRadiusChunks = clamp(previewRadiusChunks + delta, 1, 8);
     }
 
@@ -187,6 +229,7 @@ public final class GameSettings {
     }
 
     public void adjustMeshBuildBudget(int delta) {
+        markPresetCustom();
         meshBuildBudgetChunks = clamp(meshBuildBudgetChunks + delta, 1, 12);
     }
 
@@ -207,18 +250,22 @@ public final class GameSettings {
     }
 
     public void toggleFog() {
+        markPresetCustom();
         fogEnabled = !fogEnabled;
     }
 
     public void toggleAmbientOcclusion() {
+        markPresetCustom();
         ambientOcclusionEnabled = !ambientOcclusionEnabled;
     }
 
     public void toggleSoftShadows() {
+        markPresetCustom();
         softShadowsEnabled = !softShadowsEnabled;
     }
 
     public void toggleBloom() {
+        markPresetCustom();
         bloomEnabled = !bloomEnabled;
     }
 
@@ -242,16 +289,52 @@ public final class GameSettings {
         debugMeshBoundsEnabled = !debugMeshBoundsEnabled;
     }
 
+    public void toggleDebugSectionBounds() {
+        debugSectionBoundsEnabled = !debugSectionBoundsEnabled;
+    }
+
+    public void toggleDebugParticleBounds() {
+        debugParticleBoundsEnabled = !debugParticleBoundsEnabled;
+    }
+
     public void toggleChat() {
         chatEnabled = !chatEnabled;
     }
 
     public void toggleTransparentWater() {
+        markPresetCustom();
         transparentWaterEnabled = !transparentWaterEnabled;
     }
 
+    public void toggleSimpleWater() {
+        markPresetCustom();
+        simpleWaterEnabled = !simpleWaterEnabled;
+    }
+
     public void toggleGreedyMeshing() {
+        markPresetCustom();
         greedyMeshingEnabled = !greedyMeshingEnabled;
+    }
+
+    public void setParticleQuality(double value) {
+        if (!Double.isFinite(value)) {
+            return;
+        }
+        markPresetCustom();
+        particleQuality = clamp(value, 0.25, 1.0);
+    }
+
+    public void adjustParticleQuality(double delta) {
+        setParticleQuality(particleQuality + delta);
+    }
+
+    public void setRenderDebugView(RenderDebugView view) {
+        renderDebugView = view == null ? RenderDebugView.NONE : view;
+    }
+
+    public void cycleRenderDebugView() {
+        RenderDebugView[] views = RenderDebugView.values();
+        renderDebugView = views[(renderDebugView.ordinal() + 1) % views.length];
     }
 
     private static int clamp(int value, int min, int max) {
@@ -275,5 +358,9 @@ public final class GameSettings {
             factor = 0.80;
         }
         return clamp(baseMilliseconds * factor, 0.5, baseMilliseconds);
+    }
+
+    private void markPresetCustom() {
+        activePreset = null;
     }
 }

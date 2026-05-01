@@ -62,6 +62,26 @@ class OverworldContentTest {
     }
 
     @Test
+    void mushroomCircleTemplateCreatesGroveAdventureHook() {
+        StructureTemplate circle = Structures.mushroomCircle();
+
+        assertEquals("voxel:mushroom_circle", circle.key());
+        assertTrue(circle.blocks().stream().anyMatch(block -> block.blockId() == Blocks.SPORE_BLOSSOM));
+        assertTrue(circle.blocks().stream().anyMatch(block -> block.blockId() == Blocks.GLOW_MUSHROOM));
+        assertTrue(circle.blocks().stream().anyMatch(block -> block.blockId() == Blocks.GLOW_CRYSTAL_NODE));
+        assertTrue(circle.markers("metadata").stream().anyMatch(marker -> marker.key().equals("voxel:mushroom_circle_center")));
+    }
+
+    @Test
+    void mushroomGroveCanGenerateMushroomCircleStructures() {
+        OverworldGenerator generator = new OverworldGenerator(1337L);
+        OverworldGenerator.GeneratedStructure structure = generator.structureAtChunk(new ChunkPos(20, -45)).orElseThrow();
+
+        assertEquals("voxel:mushroom_grove", generator.biomeAt(20 * ChunkPos.SIZE + 8, -45 * ChunkPos.SIZE + 8).key());
+        assertEquals(Structures.mushroomCircle().key(), structure.template().key());
+    }
+
+    @Test
     void structureTemplateKeepsTypedMarkers() {
         StructureMarker loot = StructureMarker.loot("voxel:test_crate", 1, 2, 3);
         StructureMarker entity = StructureMarker.entity("voxel:test_spawn", 4, 5, 6);

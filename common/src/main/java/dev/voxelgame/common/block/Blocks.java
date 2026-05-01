@@ -52,6 +52,8 @@ public final class Blocks {
     public static final short ANCIENT_LANTERN = 46;
     public static final short WORKBENCH = 47;
     public static final short FORGE = 48;
+    public static final short GLOW_MUSHROOM = 49;
+    public static final short SPORE_BLOSSOM = 50;
 
     private Blocks() {
     }
@@ -107,7 +109,18 @@ public final class Blocks {
         register(registry, ANCIENT_LANTERN, "voxel:ancient_lantern", 0.2f, ToolType.NONE, false, false, false, 15, BlockRenderLayer.CUTOUT, "voxel:ancient_lantern");
         register(registry, WORKBENCH, "voxel:workbench", 1.1f, ToolType.AXE, true, false, true, 0, BlockRenderLayer.CUTOUT, "voxel:workbench");
         register(registry, FORGE, "voxel:forge", 2.4f, ToolType.PICKAXE, 1, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:forge");
+        register(registry, GLOW_MUSHROOM, "voxel:glow_mushroom", 0.0f, ToolType.KNIFE, false, false, false, 8, BlockRenderLayer.CUTOUT, "voxel:glow_mushroom_cap");
+        register(registry, SPORE_BLOSSOM, "voxel:spore_blossom", 0.0f, ToolType.KNIFE, false, false, false, 5, BlockRenderLayer.CUTOUT, "voxel:spore_blossom");
+        aliases(registry);
         return registry;
+    }
+
+    private static void aliases(Registry<BlockType> registry) {
+        registry.registerAlias("voxel:grass", "voxel:grass_block");
+        registry.registerAlias("voxel:planks", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:wooden_plank", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:active_campfire", "voxel:campfire_active");
+        registry.registerAlias("voxel:burned_out_campfire", "voxel:campfire_burned_out");
     }
 
     private static void register(

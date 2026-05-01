@@ -107,6 +107,26 @@ class InteractionHintTest {
     }
 
     @Test
+    void glowMushroomsShowCookingHarvestHint() {
+        InteractionHint hint = InteractionHint.forBlock(blocks.requireById(Blocks.GLOW_MUSHROOM), context(true, false, false, false, true, 1.0f, 0.0f));
+
+        assertEquals("Glow mushroom", hint.title());
+        assertEquals("Right click gather cap", hint.action());
+        assertEquals("Cook into glow mushroom stew", hint.detail());
+        assertEquals(InteractionHint.Tone.READY, hint.tone());
+    }
+
+    @Test
+    void sporeBlossomsShowRareTeaHint() {
+        InteractionHint hint = InteractionHint.forBlock(blocks.requireById(Blocks.SPORE_BLOSSOM), context(true, false, false, false, true, 1.0f, 0.0f));
+
+        assertEquals("Spore blossom", hint.title());
+        assertEquals("Right click pick blossom", hint.action());
+        assertEquals("Brew with glow caps into spore tea", hint.detail());
+        assertEquals(InteractionHint.Tone.READY, hint.tone());
+    }
+
+    @Test
     void tierGatedMiningShowsRequiredToolLevel() {
         InteractionHint hint = InteractionHint.forBlock(blocks.requireById(Blocks.IRON_ORE), context(true, false, false, false, false, 0.55f, 0.0f));
 

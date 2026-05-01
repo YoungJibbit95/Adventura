@@ -43,6 +43,19 @@ class ServerPlayerSurvivalStateTest {
     }
 
     @Test
+    void sprintingDrainsServerStaminaAndExtraHunger() {
+        ServerPlayerSurvivalState walking = new ServerPlayerSurvivalState();
+        ServerPlayerSurvivalState sprinting = new ServerPlayerSurvivalState();
+
+        walking.tick(3.0, true, false, false);
+        sprinting.tick(3.0, true, false, true);
+
+        assertTrue(sprinting.stamina() < walking.stamina());
+        assertTrue(sprinting.hunger() < walking.hunger());
+        assertTrue(sprinting.canSprint());
+    }
+
+    @Test
     void drowningDamageIsServerAuthoritative() {
         ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
 
@@ -84,13 +97,13 @@ class ServerPlayerSurvivalStateTest {
         assertEquals(0, state.applyFallImpact(3.75, false));
         assertEquals(20, state.health());
 
-        assertEquals(6, state.applyFallImpact(9.5, false));
-        assertEquals(14, state.health());
+        assertEquals(5, state.applyFallImpact(9.5, false));
+        assertEquals(15, state.health());
     }
 
     @Test
     void waterCushionsFallImpact() {
-        assertEquals(16, ServerPlayerSurvivalState.fallDamageFor(20.0, false));
+        assertEquals(14, ServerPlayerSurvivalState.fallDamageFor(20.0, false));
         assertEquals(4, ServerPlayerSurvivalState.fallDamageFor(20.0, true));
     }
 }

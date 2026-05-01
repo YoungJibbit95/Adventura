@@ -41,6 +41,10 @@ public final class CraftingRecipes {
         short cookedBerries = items.requireByKey("voxel:cooked_berries").id();
         short mushroom = items.requireByKey("voxel:mushroom").id();
         short roastedMushroom = items.requireByKey("voxel:roasted_mushroom").id();
+        short glowMushroomCap = items.requireByKey("voxel:glow_mushroom_cap").id();
+        short glowMushroomStew = items.requireByKey("voxel:glow_mushroom_stew").id();
+        short sporeBlossom = items.requireByKey("voxel:spore_blossom").id();
+        short sporeTea = items.requireByKey("voxel:spore_tea").id();
         short herbs = items.requireByKey("voxel:wild_herbs").id();
         short dryGrass = items.requireByKey("voxel:dry_grass").id();
         short snack = items.requireByKey("voxel:healing_snack").id();
@@ -66,6 +70,9 @@ public final class CraftingRecipes {
         short ironIngot = items.requireByKey("voxel:iron_ingot").id();
         short ironAxe = items.requireByKey("voxel:iron_axe").id();
         short ironPickaxe = items.requireByKey("voxel:iron_pickaxe").id();
+        short crystalAxe = items.requireByKey("voxel:crystal_axe").id();
+        short crystalPickaxe = items.requireByKey("voxel:crystal_pickaxe").id();
+        short crystalKnife = items.requireByKey("voxel:crystal_knife").id();
         short resin = items.requireByKey("voxel:resin").id();
         short campfire = items.requireByKey("voxel:campfire").id();
         short workbench = items.requireByKey("voxel:workbench").id();
@@ -239,6 +246,34 @@ public final class CraftingRecipes {
                         CraftingCategory.FOOD
                 ),
                 stationRecipe(
+                        "voxel:glow_mushroom_stew",
+                        "Cook Glow Mushroom Stew",
+                        List.of(
+                                new CraftingRecipe.Ingredient(glowMushroomCap, 2),
+                                new CraftingRecipe.Ingredient(mushroom, 1),
+                                new CraftingRecipe.Ingredient(waterContainer, 1),
+                                new CraftingRecipe.Ingredient(clayBowl, 1)
+                        ),
+                        new ItemStack(glowMushroomStew, 1),
+                        CraftingStationType.COOKING_POT,
+                        150,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
+                        "voxel:spore_tea",
+                        "Brew Spore Tea",
+                        List.of(
+                                new CraftingRecipe.Ingredient(sporeBlossom, 1),
+                                new CraftingRecipe.Ingredient(glowMushroomCap, 1),
+                                new CraftingRecipe.Ingredient(waterContainer, 1),
+                                new CraftingRecipe.Ingredient(clayBowl, 1)
+                        ),
+                        new ItemStack(sporeTea, 1),
+                        CraftingStationType.COOKING_POT,
+                        140,
+                        CraftingCategory.FOOD
+                ),
+                stationRecipe(
                         "voxel:charcoal",
                         "Char Logs",
                         List.of(new CraftingRecipe.Ingredient(log, 1)),
@@ -399,6 +434,49 @@ public final class CraftingRecipes {
                         new ItemStack(ironPickaxe, 1),
                         CraftingStationType.WORKBENCH,
                         0,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:crystal_axe",
+                        "Bind Crystal Axe",
+                        List.of(
+                                new CraftingRecipe.Ingredient(ironAxe, 1),
+                                new CraftingRecipe.Ingredient(glowCrystal, 2),
+                                new CraftingRecipe.Ingredient(ruinSeal, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(crystalAxe, 1),
+                        CraftingStationType.FORGE,
+                        240,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:crystal_pickaxe",
+                        "Bind Crystal Pickaxe",
+                        List.of(
+                                new CraftingRecipe.Ingredient(ironPickaxe, 1),
+                                new CraftingRecipe.Ingredient(glowCrystal, 3),
+                                new CraftingRecipe.Ingredient(ruinSeal, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(crystalPickaxe, 1),
+                        CraftingStationType.FORGE,
+                        260,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:crystal_knife",
+                        "Bind Crystal Knife",
+                        List.of(
+                                new CraftingRecipe.Ingredient(knife, 1),
+                                new CraftingRecipe.Ingredient(ironIngot, 1),
+                                new CraftingRecipe.Ingredient(glowCrystal, 2),
+                                new CraftingRecipe.Ingredient(ruinSeal, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(crystalKnife, 1),
+                        CraftingStationType.FORGE,
+                        220,
                         CraftingCategory.TOOLS
                 ),
                 recipe(

@@ -41,8 +41,12 @@ class LootTableTest {
         var items = Items.createDefaultRegistry();
 
         for (LootTable table : LootTables.createDefaultRegistry().values()) {
+            assertFalse(table.entries().isEmpty(), table.key());
             for (LootEntry entry : table.entries()) {
                 assertFalse(items.findByKey(entry.itemKey()).isEmpty(), table.key() + " drops missing item " + entry.itemKey());
+                assertTrue(entry.minCount() >= 1, table.key() + " has invalid min count");
+                assertTrue(entry.maxCount() >= entry.minCount(), table.key() + " has invalid max count");
+                assertTrue(entry.chance() > 0.0, table.key() + " has inert loot entry");
             }
         }
     }

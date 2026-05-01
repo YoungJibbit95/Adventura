@@ -8,6 +8,7 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.BlockCollisionShapes;
 import dev.voxelgame.common.registry.Registry;
 
 import java.util.Optional;
@@ -30,6 +31,63 @@ public final class InteractionRules {
         return dx * dx + dy * dy + dz * dz <= BLOCK_REACH * BLOCK_REACH;
     }
 
+    public static boolean hasBlockLineOfSight(
+            double eyeX,
+            double eyeY,
+            double eyeZ,
+            int blockX,
+            int blockY,
+            int blockZ,
+            BlockOcclusionQuery occlusionQuery
+    ) {
+        if (occlusionQuery == null
+                || !Double.isFinite(eyeX) || !Double.isFinite(eyeY) || !Double.isFinite(eyeZ)) {
+            return false;
+        }
+        double targetX = blockX + 0.5;
+        double targetY = blockY + 0.5;
+        double targetZ = blockZ + 0.5;
+        int x = floor(eyeX);
+        int y = floor(eyeY);
+        int z = floor(eyeZ);
+        if (x == blockX && y == blockY && z == blockZ) {
+            return true;
+        }
+
+        double dx = targetX - eyeX;
+        double dy = targetY - eyeY;
+        double dz = targetZ - eyeZ;
+        int stepX = sign(dx);
+        int stepY = sign(dy);
+        int stepZ = sign(dz);
+        double tMaxX = firstBoundaryT(eyeX, dx, stepX);
+        double tMaxY = firstBoundaryT(eyeY, dy, stepY);
+        double tMaxZ = firstBoundaryT(eyeZ, dz, stepZ);
+        double tDeltaX = deltaT(dx);
+        double tDeltaY = deltaT(dy);
+        double tDeltaZ = deltaT(dz);
+
+        for (int i = 0; i < 512; i++) {
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+                x += stepX;
+                tMaxX += tDeltaX;
+            } else if (tMaxY <= tMaxZ) {
+                y += stepY;
+                tMaxY += tDeltaY;
+            } else {
+                z += stepZ;
+                tMaxZ += tDeltaZ;
+            }
+            if (x == blockX && y == blockY && z == blockZ) {
+                return true;
+            }
+            if (occlusionQuery.occludes(x, y, z)) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     public static boolean canReachEntity(double eyeX, double eyeY, double eyeZ, EntitySnapshot snapshot, double range) {
         if (snapshot == null || !Double.isFinite(eyeX) || !Double.isFinite(eyeY) || !Double.isFinite(eyeZ)
                 || !Double.isFinite(range) || range < 0.0) {
@@ -50,8 +108,22 @@ public final class InteractionRules {
         return PlayerBounds.DEFAULT.intersectsBlock(eyeX, eyeY, eyeZ, blockX, blockY, blockZ);
     }
 
+    public static boolean placementIntersectsPlayer(double eyeX, double eyeY, double eyeZ, int blockX, int blockY, int blockZ, short blockId) {
+        return BlockCollisionShapes.placementShape(blockId)
+                .intersectsPlayer(PlayerBounds.DEFAULT, eyeX, eyeY, eyeZ, blockX, blockY, blockZ);
+    }
+
     public static boolean placementIntersectsEntity(EntitySnapshot snapshot, int blockX, int blockY, int blockZ) {
         return snapshot != null && EntityBounds.intersectsBlock(snapshot, blockX, blockY, blockZ);
+    }
+
+    public static boolean placementIntersectsEntity(EntitySnapshot snapshot, int blockX, int blockY, int blockZ, short blockId) {
+        if (snapshot == null) {
+            return false;
+        }
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        return BlockCollisionShapes.placementShape(blockId)
+                .intersectsEntity(bounds, snapshot.x(), EntityBounds.baseY(snapshot), snapshot.z(), blockX, blockY, blockZ);
     }
 
     public static float breakMultiplier(ItemStack selectedStack, Registry<ItemType> items, BlockType target) {
@@ -109,7 +181,16 @@ public final class InteractionRules {
     }
 
     public static int dropCount(BlockType target, float breakMultiplier) {
-        return target.preferredTool() == ToolType.KNIFE && breakMultiplier > 2.0f ? 2 : 1;
+        if (target.preferredTool() == ToolType.KNIFE) {
+            return breakMultiplier > 5.0f ? 3 : breakMultiplier > 2.0f ? 2 : 1;
+        }
+        if (target.preferredTool() == ToolType.PICKAXE && isOreLike(target.id()) && breakMultiplier > 5.0f) {
+            return 2;
+        }
+        if (target.preferredTool() == ToolType.AXE && isWoodLike(target.id()) && breakMultiplier > 4.5f) {
+            return 2;
+        }
+        return 1;
     }
 
     public static double breakDelaySeconds(BlockType target, float breakMultiplier) {
@@ -126,14 +207,61 @@ public final class InteractionRules {
             case Blocks.BERRY_BUSH -> Optional.of(new BlockInteraction("voxel:berries", 2, 0.35, "Harvested berries"));
             case Blocks.HERB_PLANTER -> Optional.of(new BlockInteraction("voxel:wild_herbs", 1, 0.35, "Picked wild herbs"));
             case Blocks.REEDS -> Optional.of(new BlockInteraction("voxel:reed_bundle", 1, 0.35, "Cut reed bundle"));
+            case Blocks.GLOW_MUSHROOM -> Optional.of(new BlockInteraction("voxel:glow_mushroom_cap", 1, 0.40, "Gathered glow mushroom cap"));
+            case Blocks.SPORE_BLOSSOM -> Optional.of(new BlockInteraction("voxel:spore_blossom", 1, 0.45, "Picked spore blossom"));
             case Blocks.PINE_LOG -> Optional.of(new BlockInteraction("voxel:resin", 1, 0.45, "Collected resin"));
             case Blocks.TREE_STUMP -> Optional.of(new BlockInteraction("voxel:bark_strip", 2, 0.45, "Peeled bark strips"));
             default -> Optional.empty();
         };
     }
 
+    private static boolean isOreLike(short blockId) {
+        return blockId == Blocks.COAL_ORE
+                || blockId == Blocks.COPPER_ORE
+                || blockId == Blocks.IRON_ORE
+                || blockId == Blocks.GLOW_CRYSTAL_NODE;
+    }
+
+    private static boolean isWoodLike(short blockId) {
+        return blockId == Blocks.SKYROOT_LOG
+                || blockId == Blocks.PINE_LOG
+                || blockId == Blocks.TREE_STUMP
+                || blockId == Blocks.SKYROOT_PLANKS;
+    }
+
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static int floor(double value) {
+        return (int) Math.floor(value);
+    }
+
+    private static int sign(double value) {
+        if (value > 0.0) {
+            return 1;
+        }
+        if (value < 0.0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    private static double firstBoundaryT(double origin, double delta, int step) {
+        if (step == 0) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double boundary = step > 0 ? Math.floor(origin) + 1.0 : Math.floor(origin);
+        return (boundary - origin) / delta;
+    }
+
+    private static double deltaT(double delta) {
+        return delta == 0.0 ? Double.POSITIVE_INFINITY : Math.abs(1.0 / delta);
+    }
+
+    @FunctionalInterface
+    public interface BlockOcclusionQuery {
+        boolean occludes(int x, int y, int z);
     }
 
     public record BlockInteraction(String itemKey, int count, double cooldownSeconds, String message) {

@@ -116,6 +116,15 @@ esac
 
 
 
+# Adventura workspace convenience: prefer the bundled local JDK 21 when the
+# surrounding shell has no usable Java configured.
+adventura_java_home=${ADVENTURA_JAVA_HOME:-"$HOME/.local/share/adventura-jdk/jdk-21.0.11+10"}
+if [ -x "$adventura_java_home/bin/java" ] ; then
+    if [ -z "$JAVA_HOME" ] || [ ! -x "$JAVA_HOME/bin/java" ] ; then
+        JAVA_HOME=$adventura_java_home
+    fi
+fi
+
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then

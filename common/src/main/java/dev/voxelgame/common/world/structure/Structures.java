@@ -152,6 +152,40 @@ public final class Structures {
         );
     }
 
+    public static StructureTemplate mushroomCircle() {
+        List<BlockPlacement> blocks = new ArrayList<>();
+        for (int z = -4; z <= 4; z++) {
+            for (int x = -4; x <= 4; x++) {
+                int distance = x * x + z * z;
+                if (distance >= 9 && distance <= 17) {
+                    blocks.add(new BlockPlacement(x, 0, z, Blocks.MOSSY_PATH));
+                }
+            }
+        }
+        blocks.add(new BlockPlacement(0, 0, 0, Blocks.MOSSY_STONE));
+        blocks.add(new BlockPlacement(0, 1, 0, Blocks.GLOW_CRYSTAL_NODE));
+
+        blocks.add(new BlockPlacement(0, 1, -4, Blocks.GLOW_MUSHROOM));
+        blocks.add(new BlockPlacement(4, 1, 0, Blocks.GLOW_MUSHROOM));
+        blocks.add(new BlockPlacement(0, 1, 4, Blocks.GLOW_MUSHROOM));
+        blocks.add(new BlockPlacement(-4, 1, 0, Blocks.GLOW_MUSHROOM));
+
+        blocks.add(new BlockPlacement(-3, 1, -2, Blocks.SPORE_BLOSSOM));
+        blocks.add(new BlockPlacement(3, 1, -2, Blocks.SPORE_BLOSSOM));
+        blocks.add(new BlockPlacement(-3, 1, 2, Blocks.SPORE_BLOSSOM));
+        blocks.add(new BlockPlacement(3, 1, 2, Blocks.SPORE_BLOSSOM));
+
+        blocks.add(new BlockPlacement(-2, 1, -3, Blocks.MUSHROOM_CLUSTER));
+        blocks.add(new BlockPlacement(2, 1, -3, Blocks.RED_MUSHROOM));
+        blocks.add(new BlockPlacement(-2, 1, 3, Blocks.RED_MUSHROOM));
+        blocks.add(new BlockPlacement(2, 1, 3, Blocks.MUSHROOM_CLUSTER));
+        return new StructureTemplate(
+                "voxel:mushroom_circle",
+                blocks,
+                List.of(StructureMarker.metadata("voxel:mushroom_circle_center", 0, 1, 0))
+        );
+    }
+
     public static StructureTemplate compactVillage() {
         List<BlockPlacement> blocks = new ArrayList<>();
         for (int z = -7; z <= 7; z++) {

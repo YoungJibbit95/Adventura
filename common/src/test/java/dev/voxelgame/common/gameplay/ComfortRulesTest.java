@@ -8,6 +8,7 @@ import dev.voxelgame.common.world.InMemoryWorld;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ComfortRulesTest {
     @Test
@@ -28,5 +29,28 @@ class ComfortRulesTest {
     void exposesSurvivalMultipliers() {
         assertEquals(0.75f, ComfortRules.hungerDrainMultiplier(25), 0.0001f);
         assertEquals(1.4f, ComfortRules.staminaRegenMultiplier(25), 0.0001f);
+    }
+
+    @Test
+    void comfortBlocksAreRegisteredAndPositive() {
+        Registry<BlockType> blocks = Blocks.createDefaultRegistry();
+
+        for (short blockId : new short[]{
+                Blocks.ANCIENT_LANTERN,
+                Blocks.CAMPFIRE_ACTIVE,
+                Blocks.SLEEPING_MAT,
+                Blocks.LANTERN,
+                Blocks.WOVEN_RUG,
+                Blocks.WOODEN_CHAIR,
+                Blocks.SMALL_TABLE,
+                Blocks.CAMPFIRE,
+                Blocks.FLOWER_POT,
+                Blocks.STORAGE_CRATE,
+                Blocks.GARDEN_FENCE,
+                Blocks.WORKBENCH
+        }) {
+            assertTrue(blocks.findById(blockId).isPresent(), Short.toString(blockId));
+            assertTrue(ComfortRules.comfortValue(blockId) > 0, Short.toString(blockId));
+        }
     }
 }

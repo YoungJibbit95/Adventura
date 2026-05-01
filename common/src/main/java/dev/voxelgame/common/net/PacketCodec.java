@@ -143,6 +143,20 @@ public final class PacketCodec {
                     out.writeInt(stats.armor());
                     out.writeInt(stats.comfort());
                 }
+                case GamePacket.ServerStatsSnapshot stats -> {
+                    out.writeInt(stats.chunkSubscriptions());
+                    out.writeLong(stats.sentEntitySnapshotPackets());
+                    out.writeLong(stats.sentEntitySnapshots());
+                    out.writeLong(stats.sentChunkPackets());
+                    out.writeLong(stats.sentBlockUpdates());
+                    out.writeLong(stats.discardedUpdatesOutsideInterest());
+                    out.writeLong(stats.rejectedChunkRequests());
+                    out.writeLong(stats.failedChunkRequests());
+                    out.writeLong(stats.sentPackets());
+                    out.writeLong(stats.estimatedPacketBytes());
+                    out.writeLong(stats.averagePacketBytes());
+                    out.writeDouble(stats.packetRatePerSecond());
+                }
                 case GamePacket.StorageOpenRequest storage -> {
                     out.writeInt(storage.x());
                     out.writeInt(storage.y());
@@ -308,6 +322,20 @@ public final class PacketCodec {
                         in.readInt(),
                         in.readInt()
                 );
+                case SERVER_STATS_SNAPSHOT -> new GamePacket.ServerStatsSnapshot(
+                        in.readInt(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readDouble()
+                );
                 case STORAGE_OPEN_REQUEST -> new GamePacket.StorageOpenRequest(in.readInt(), in.readInt(), in.readInt(), in.readInt());
                 case SLEEP_REQUEST -> new GamePacket.SleepRequest(in.readInt(), in.readInt(), in.readInt());
                 case COOK_REQUEST -> {
@@ -401,6 +429,9 @@ public final class PacketCodec {
     }
 
     private static void writeItemStacks(DataOutputStream out, List<ItemStack> stacks) throws IOException {
+        if (stacks.size() > MAX_ITEM_STACKS) {
+            throw new IllegalArgumentException("Invalid item stack count: " + stacks.size());
+        }
         out.writeInt(stacks.size());
         for (ItemStack stack : stacks) {
             out.writeShort(stack.itemId());

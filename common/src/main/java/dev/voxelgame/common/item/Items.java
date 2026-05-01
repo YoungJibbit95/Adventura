@@ -49,6 +49,7 @@ public final class Items {
         block(registry, (short) 78, "voxel:reeds");
         block(registry, (short) 84, "voxel:workbench");
         block(registry, (short) 85, "voxel:forge");
+        block(registry, (short) 100, "voxel:spore_blossom");
         registry.register((short) 20, "voxel:coal", new ItemType((short) 20, "voxel:coal", 64, ToolType.NONE, 0, null));
         registry.register((short) 21, "voxel:raw_iron", new ItemType((short) 21, "voxel:raw_iron", 64, ToolType.NONE, 0, null));
         registry.register((short) 22, "voxel:raw_copper", new ItemType((short) 22, "voxel:raw_copper", 64, ToolType.NONE, 0, null));
@@ -103,6 +104,12 @@ public final class Items {
         registry.register((short) 92, "voxel:iron_axe", new ItemType((short) 92, "voxel:iron_axe", 1, ToolType.AXE, 420, null));
         registry.register((short) 93, "voxel:iron_pickaxe", new ItemType((short) 93, "voxel:iron_pickaxe", 1, ToolType.PICKAXE, 410, null));
         registry.register((short) 94, "voxel:lost_charm", new ItemType((short) 94, "voxel:lost_charm", 16, ToolType.NONE, 0, null));
+        registry.register((short) 95, "voxel:crystal_axe", new ItemType((short) 95, "voxel:crystal_axe", 1, ToolType.AXE, 560, null));
+        registry.register((short) 96, "voxel:crystal_pickaxe", new ItemType((short) 96, "voxel:crystal_pickaxe", 1, ToolType.PICKAXE, 540, null));
+        registry.register((short) 97, "voxel:crystal_knife", new ItemType((short) 97, "voxel:crystal_knife", 1, ToolType.KNIFE, 320, null));
+        registry.register((short) 98, "voxel:glow_mushroom_cap", new ItemType((short) 98, "voxel:glow_mushroom_cap", 16, ToolType.NONE, 0, null, 2, 1));
+        registry.register((short) 99, "voxel:glow_mushroom_stew", new ItemType((short) 99, "voxel:glow_mushroom_stew", 8, ToolType.NONE, 0, null, 9, 4));
+        registry.register((short) 101, "voxel:spore_tea", new ItemType((short) 101, "voxel:spore_tea", 8, ToolType.NONE, 0, null, 5, 6));
         aliases(registry);
         return registry;
     }

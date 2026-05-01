@@ -1,5 +1,7 @@
 package dev.voxelgame.common.item;
 
+import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.registry.Registry;
 import org.junit.jupiter.api.Test;
 
@@ -144,6 +146,56 @@ class CraftingRecipeTest {
         stewInventory.add(waterContainer, 1, items);
         stewInventory.add(clayBowl, 1, items);
         assertStationFoodRecipe(recipeByKey(recipes, "voxel:hearty_stew"), stewInventory, items, CraftingStationType.COOKING_POT, 180);
+    }
+
+    @Test
+    void mushroomGroveCapsCookIntoGlowMushroomStew() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+        short glowMushroomCap = items.requireByKey("voxel:glow_mushroom_cap").id();
+        short mushroom = items.requireByKey("voxel:mushroom").id();
+        short waterContainer = items.requireByKey("voxel:water_container").id();
+        short clayBowl = items.requireByKey("voxel:clay_bowl").id();
+        short glowMushroomStew = items.requireByKey("voxel:glow_mushroom_stew").id();
+        Inventory inventory = new Inventory(6);
+        inventory.add(glowMushroomCap, 2, items);
+        inventory.add(mushroom, 1, items);
+        inventory.add(waterContainer, 1, items);
+        inventory.add(clayBowl, 1, items);
+
+        CraftingRecipe recipe = recipeByKey(recipes, "voxel:glow_mushroom_stew");
+
+        assertEquals(CraftingStationType.COOKING_POT, recipe.stationType());
+        assertEquals(150, recipe.craftingTimeTicks());
+        assertFalse(recipe.craft(inventory, items));
+        assertTrue(recipe.craft(inventory, items, CraftingStationType.COOKING_POT));
+        assertEquals(1, inventory.count(glowMushroomStew));
+        assertEquals(0, inventory.count(glowMushroomCap));
+    }
+
+    @Test
+    void mushroomCircleBlossomsBrewIntoSporeTea() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+        short sporeBlossom = items.requireByKey("voxel:spore_blossom").id();
+        short glowMushroomCap = items.requireByKey("voxel:glow_mushroom_cap").id();
+        short waterContainer = items.requireByKey("voxel:water_container").id();
+        short clayBowl = items.requireByKey("voxel:clay_bowl").id();
+        short sporeTea = items.requireByKey("voxel:spore_tea").id();
+        Inventory inventory = new Inventory(6);
+        inventory.add(sporeBlossom, 1, items);
+        inventory.add(glowMushroomCap, 1, items);
+        inventory.add(waterContainer, 1, items);
+        inventory.add(clayBowl, 1, items);
+
+        CraftingRecipe recipe = recipeByKey(recipes, "voxel:spore_tea");
+
+        assertEquals(CraftingStationType.COOKING_POT, recipe.stationType());
+        assertEquals(140, recipe.craftingTimeTicks());
+        assertFalse(recipe.craft(inventory, items));
+        assertTrue(recipe.craft(inventory, items, CraftingStationType.COOKING_POT));
+        assertEquals(1, inventory.count(sporeTea));
+        assertEquals(0, inventory.count(sporeBlossom));
     }
 
     @Test
@@ -383,6 +435,44 @@ class CraftingRecipeTest {
     }
 
     @Test
+    void crystalToolsUpgradeIronToolsWithRuinSealAtForge() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+        short ironPickaxe = items.requireByKey("voxel:iron_pickaxe").id();
+        short glowCrystal = items.requireByKey("voxel:glow_crystal").id();
+        short ruinSeal = items.requireByKey("voxel:ruin_seal").id();
+        short leatherStrip = items.requireByKey("voxel:leather_strip").id();
+        short crystalPickaxe = items.requireByKey("voxel:crystal_pickaxe").id();
+        short stoneKnife = items.requireByKey("voxel:stone_knife").id();
+        short ironIngot = items.requireByKey("voxel:iron_ingot").id();
+        short crystalKnife = items.requireByKey("voxel:crystal_knife").id();
+
+        Inventory pickaxeInventory = new Inventory(6);
+        pickaxeInventory.add(ironPickaxe, 1, items);
+        pickaxeInventory.add(glowCrystal, 3, items);
+        pickaxeInventory.add(ruinSeal, 1, items);
+        pickaxeInventory.add(leatherStrip, 1, items);
+        CraftingRecipe pickaxeRecipe = recipeByKey(recipes, "voxel:crystal_pickaxe");
+        assertEquals(CraftingStationType.FORGE, pickaxeRecipe.stationType());
+        assertEquals(260, pickaxeRecipe.craftingTimeTicks());
+        assertFalse(pickaxeRecipe.craft(pickaxeInventory, items));
+        assertTrue(pickaxeRecipe.craft(pickaxeInventory, items, CraftingStationType.FORGE));
+        assertEquals(1, pickaxeInventory.count(crystalPickaxe));
+        assertEquals(0, pickaxeInventory.count(ironPickaxe));
+
+        Inventory knifeInventory = new Inventory(6);
+        knifeInventory.add(stoneKnife, 1, items);
+        knifeInventory.add(ironIngot, 1, items);
+        knifeInventory.add(glowCrystal, 2, items);
+        knifeInventory.add(ruinSeal, 1, items);
+        knifeInventory.add(leatherStrip, 1, items);
+        CraftingRecipe knifeRecipe = recipeByKey(recipes, "voxel:crystal_knife");
+        assertEquals(CraftingStationType.FORGE, knifeRecipe.stationType());
+        assertTrue(knifeRecipe.craft(knifeInventory, items, CraftingStationType.FORGE));
+        assertEquals(1, knifeInventory.count(crystalKnife));
+    }
+
+    @Test
     void duplicateIngredientsConsumeTheRealTotal() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         short twig = items.requireByKey("voxel:twig").id();
@@ -502,6 +592,22 @@ class CraftingRecipeTest {
                         recipe.key() + " ingredient id " + ingredient.itemId() + " is not registered"
                 );
             }
+        }
+    }
+
+    @Test
+    void stationRecipesHaveARegisteredUsableStationBlock() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        var blocks = Blocks.createDefaultRegistry();
+
+        for (CraftingRecipe recipe : CraftingRecipes.createDefaultRecipes(items)) {
+            if (recipe.stationType() == CraftingStationType.INVENTORY) {
+                continue;
+            }
+            assertTrue(
+                    blocks.values().stream().anyMatch(block -> CraftingStationRules.accepts(recipe.stationType(), block.id())),
+                    recipe.key() + " has no usable station block for " + recipe.stationType()
+            );
         }
     }
 

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -201,6 +202,33 @@ class PacketCodecTest {
     }
 
     @Test
+    void projectileSnapshotTrafficStaysInsidePacketBudget() {
+        List<EntitySnapshot> projectiles = new ArrayList<>();
+        for (int i = 0; i < 128; i++) {
+            projectiles.add(new EntitySnapshot(
+                    10_000L + i,
+                    "voxel:arrow_projectile",
+                    null,
+                    8.0 + i,
+                    80.0,
+                    -4.0 - i,
+                    0.0f,
+                    0.0f,
+                    1,
+                    EntitySnapshot.STATE_PROJECTILE
+            ).withVelocity(32.0, -6.0, 4.0));
+        }
+
+        byte[] encoded = PacketCodec.encode(new GamePacket.EntitySnapshots(projectiles));
+        GamePacket.EntitySnapshots decoded = (GamePacket.EntitySnapshots) PacketCodec.decode(encoded);
+
+        assertTrue(encoded.length < 16 * 1024, "projectile snapshot burst should stay below a 16 KiB budget");
+        assertEquals(projectiles.size(), decoded.snapshots().size());
+        assertEquals(EntitySnapshot.STATE_PROJECTILE, decoded.snapshots().getLast().stateKey());
+        assertEquals(32.0, decoded.snapshots().getLast().velocityX(), 0.0001);
+    }
+
+    @Test
     void roundTripsEntityInteract() {
         GamePacket.EntityInteract decoded = (GamePacket.EntityInteract) PacketCodec.decode(PacketCodec.encode(
                 new GamePacket.EntityInteract(123L, 4, GamePacket.EntityInteract.Action.ATTACK)
@@ -234,6 +262,26 @@ class PacketCodecTest {
         assertEquals(15, decoded.breath());
         assertEquals(2, decoded.armor());
         assertEquals(9, decoded.comfort());
+    }
+
+    @Test
+    void roundTripsServerStatsSnapshot() {
+        GamePacket.ServerStatsSnapshot decoded = (GamePacket.ServerStatsSnapshot) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.ServerStatsSnapshot(9, 3L, 42L, 18L, 7L, 2L, 1L, 4L, 64L, 8192L, 128L, 12.5)
+        ));
+
+        assertEquals(9, decoded.chunkSubscriptions());
+        assertEquals(3L, decoded.sentEntitySnapshotPackets());
+        assertEquals(42L, decoded.sentEntitySnapshots());
+        assertEquals(18L, decoded.sentChunkPackets());
+        assertEquals(7L, decoded.sentBlockUpdates());
+        assertEquals(2L, decoded.discardedUpdatesOutsideInterest());
+        assertEquals(1L, decoded.rejectedChunkRequests());
+        assertEquals(4L, decoded.failedChunkRequests());
+        assertEquals(64L, decoded.sentPackets());
+        assertEquals(8192L, decoded.estimatedPacketBytes());
+        assertEquals(128L, decoded.averagePacketBytes());
+        assertEquals(12.5, decoded.packetRatePerSecond(), 0.0001);
     }
 
     @Test
@@ -432,5 +480,18 @@ class PacketCodecTest {
         );
 
         assertTrue(exception.getMessage().contains("remaining payload"));
+    }
+
+    @Test
+    void rejectsEncodingStorageOpenBeyondItemStackLimit() {
+        List<ItemStack> slots = new ArrayList<>();
+        for (int i = 0; i < 129; i++) {
+            slots.add(new ItemStack((short) 1, 1));
+        }
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.encode(new GamePacket.StorageOpen(0, 64, 0, slots))
+        );
     }
 }

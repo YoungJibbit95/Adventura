@@ -75,11 +75,16 @@ class ClientWorldCampfireTest {
         world.applyBlock(new GamePacket.BlockUpdate(9, 65, 9, Blocks.PINE_LEAVES));
         world.applyBlock(new GamePacket.BlockUpdate(3, 64, 3, Blocks.GLOW_CRYSTAL_NODE));
         world.applyBlock(new GamePacket.BlockUpdate(4, 64, 4, Blocks.MUSHROOM_CLUSTER));
+        world.applyBlock(new GamePacket.BlockUpdate(5, 64, 5, Blocks.SPORE_BLOSSOM));
 
-        ClientWorld.AmbientParticleSources sources = world.ambientParticleSourcesWithin(new Vector3f(2.5f, 64.5f, 2.5f), 10, 1, 1);
+        ClientWorld.AmbientParticleSources sources = world.ambientParticleSourcesWithin(new Vector3f(2.5f, 64.5f, 2.5f), 10, 1, 3);
 
         assertEquals(List.of(new ClientWorld.BlockPos(2, 65, 2)), sources.leafSources());
-        assertEquals(List.of(new ClientWorld.BlockPos(3, 64, 3)), sources.sporeSources());
+        assertEquals(List.of(
+                new ClientWorld.BlockPos(3, 64, 3),
+                new ClientWorld.BlockPos(4, 64, 4),
+                new ClientWorld.BlockPos(5, 64, 5)
+        ), sources.sporeSources());
     }
 
     @Test

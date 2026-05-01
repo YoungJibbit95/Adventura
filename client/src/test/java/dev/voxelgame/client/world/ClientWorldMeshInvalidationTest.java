@@ -1,6 +1,7 @@
 package dev.voxelgame.client.world;
 
 import dev.voxelgame.client.render.ChunkMesher;
+import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.net.GamePacket;
@@ -158,6 +159,39 @@ class ClientWorldMeshInvalidationTest {
     }
 
     @Test
+    void longExploreSmokeKeepsLoadedChunksAndBuildQueueBounded() {
+        ClientWorld world = new ClientWorld(424242L);
+        ChunkMesher mesher = new ChunkMesher();
+        int maxLoadedChunks = 0;
+        int maxDirtyChunks = 0;
+        long maxRetainedMeshBufferBytes = 0L;
+
+        for (int step = 0; step < 18; step++) {
+            Vector3f camera = new Vector3f(
+                    8.0f + step * ChunkPos.SIZE,
+                    88.0f,
+                    8.0f + ((step % 5) - 2) * ChunkPos.SIZE
+            );
+
+            world.ensurePreviewAround(camera, 2, 8);
+            for (int frame = 0; frame < 4; frame++) {
+                world.buildDirtyLayeredMeshes(mesher, true, true, 4, camera, 2, 2, 8.0);
+            }
+            world.unloadOutside(camera, 2);
+
+            ChunkBuildQueue.Snapshot queue = world.buildQueueStats();
+            maxLoadedChunks = Math.max(maxLoadedChunks, world.loadedChunkCount());
+            maxDirtyChunks = Math.max(maxDirtyChunks, world.dirtyChunkCount());
+            maxRetainedMeshBufferBytes = Math.max(maxRetainedMeshBufferBytes, queue.retainedMeshBufferBytes());
+        }
+
+        assertTrue(world.totalUnloadedChunkCount() > 0);
+        assertTrue(maxLoadedChunks <= 25, "loaded chunks should remain inside the retain square");
+        assertTrue(maxDirtyChunks <= 25, "dirty builds should not grow without bound while exploring");
+        assertTrue(maxRetainedMeshBufferBytes < 8L * 1024L * 1024L, "retained meshing buffers should stay below the smoke budget");
+    }
+
+    @Test
     void buildQueueTracksReplacementCancellationWaitAndTimings() {
         ClientWorld world = loadedCleanWorld();
 
@@ -202,6 +236,21 @@ class ClientWorldMeshInvalidationTest {
         assertEquals(1, stats.chunksWithSectionBounds());
         assertEquals(240, bounds.minY());
         assertEquals(256, bounds.maxYExclusive());
+    }
+
+    @Test
+    void sectionBoundsAroundUsesRadiusAndOnlyNonEmptySections() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 32, 8, Blocks.STONE));
+        world.applyBlock(new GamePacket.BlockUpdate(8, 250, 8, Blocks.STONE));
+        world.applyBlock(new GamePacket.BlockUpdate(80, 32, 80, Blocks.STONE));
+
+        List<ChunkMesh.Bounds> nearBounds = world.sectionBoundsAround(new Vector3f(8.0f, 80.0f, 8.0f), 0);
+
+        assertEquals(2, nearBounds.size());
+        assertTrue(nearBounds.stream().anyMatch(bounds -> bounds.minY() == 32.0f && bounds.maxY() == 48.0f));
+        assertTrue(nearBounds.stream().anyMatch(bounds -> bounds.minY() == 240.0f && bounds.maxY() == 256.0f));
+        assertEquals(3, world.sectionBoundsAround(new Vector3f(8.0f, 80.0f, 8.0f), 8).size());
     }
 
     @Test

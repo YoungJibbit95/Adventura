@@ -1,8 +1,13 @@
 package dev.voxelgame.server.entity;
 
+import dev.voxelgame.common.entity.DamageResult;
+import dev.voxelgame.common.entity.DamageSource;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.physics.ProjectileHit;
+import dev.voxelgame.common.physics.ProjectileState;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -139,6 +144,7 @@ class ServerEntityTrackerTest {
 
         List<EntitySnapshot> updates = tracker.tickAmbient(80L, (current, candidate) -> false);
         EntitySnapshot moved = tracker.snapshot(ambient.entityId()).orElseThrow();
+        ServerEntityTracker.AmbientTickStats stats = tracker.lastAmbientTickStats();
 
         assertEquals(1, updates.size());
         assertEquals(ambient.x(), moved.x(), 0.001);
@@ -146,6 +152,9 @@ class ServerEntityTrackerTest {
         assertEquals(0.0, moved.velocityX(), 0.001);
         assertEquals(0.0, moved.velocityZ(), 0.001);
         assertNotEquals(EntitySnapshot.STATE_IDLE, moved.stateKey());
+        assertEquals(1, stats.activeAmbient());
+        assertEquals(1, stats.blockedAmbientMoves());
+        assertEquals(1, stats.emittedSnapshots());
     }
 
     @Test
@@ -166,7 +175,7 @@ class ServerEntityTrackerTest {
     }
 
     @Test
-    void ambientEntitiesParkOutsideActivePlayerRadius() {
+    void ambientEntitiesParkOutsideActivePlayerChunkTickets() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         UUID playerId = UUID.randomUUID();
         tracker.registerPlayer(playerId);
@@ -176,10 +185,31 @@ class ServerEntityTrackerTest {
 
         List<EntitySnapshot> updates = tracker.tickAmbient(80L);
         EntitySnapshot parked = tracker.snapshot(ambient.entityId()).orElseThrow();
+        ServerEntityTracker.AmbientTickStats stats = tracker.lastAmbientTickStats();
 
         assertFalse(updates.stream().anyMatch(snapshot -> snapshot.entityId() == ambient.entityId()));
         assertEquals(ambient.x(), parked.x(), 0.001);
         assertEquals(ambient.z(), parked.z(), 0.001);
+        assertEquals(1, stats.parkedAmbient());
+        assertEquals(0, stats.activeAmbient());
+        assertEquals(0, stats.emittedSnapshots());
+    }
+
+    @Test
+    void ambientEntitiesStayActiveInsidePlayerChunkTickets() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        tracker.registerPlayer(playerId);
+        tracker.updatePlayer(playerId, 8 * 16.0 + 0.5, 80.0, 0.5, 0.0f, 0.0f);
+        EntitySnapshot ambient = new EntitySnapshot(701L, "voxel:cozy_sheep", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(ambient);
+
+        List<EntitySnapshot> updates = tracker.tickAmbient(80L);
+        ServerEntityTracker.AmbientTickStats stats = tracker.lastAmbientTickStats();
+
+        assertTrue(updates.stream().anyMatch(snapshot -> snapshot.entityId() == ambient.entityId()));
+        assertEquals(0, stats.parkedAmbient());
+        assertEquals(1, stats.activeAmbient());
     }
 
     @Test
@@ -197,6 +227,7 @@ class ServerEntityTrackerTest {
 
         assertTrue(moved.y() < spawned.y());
         assertTrue(moved.velocityY() < drop.velocityY());
+        assertEquals(1, tracker.lastAmbientTickStats().itemDropUpdates());
     }
 
     @Test
@@ -207,6 +238,160 @@ class ServerEntityTrackerTest {
         assertEquals(drop.entityId(), tracker.claimItemDrop(drop.entityId()).orElseThrow().entityId());
         assertTrue(tracker.claimItemDrop(drop.entityId()).isEmpty());
         assertEquals(0, tracker.itemDropCount());
+    }
+
+    @Test
+    void damageAmbientReturnsServerDamageResultAndKnockback() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        tracker.registerPlayer(playerId);
+        tracker.updatePlayer(playerId, 3.5, 80.0, 4.5, 0.0f, 0.0f);
+        EntitySnapshot ambient = new EntitySnapshot(750L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        tracker.addAmbient(ambient);
+
+        DamageResult result = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.0);
+
+        assertTrue(result.accepted());
+        assertEquals(3, result.amount());
+        assertFalse(result.killed());
+        assertEquals(7, result.snapshot().orElseThrow().health());
+        assertTrue(result.knockbackX() > 0.0);
+    }
+
+    @Test
+    void damageAmbientRejectsInvulnerabilityWindow() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        EntitySnapshot ambient = new EntitySnapshot(751L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        tracker.addAmbient(ambient);
+
+        DamageResult first = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.0);
+        DamageResult second = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.1);
+        DamageResult third = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.4);
+
+        assertTrue(first.accepted());
+        assertFalse(second.accepted());
+        assertEquals(DamageResult.RejectionReason.INVULNERABLE, second.rejectionReason());
+        assertTrue(third.accepted());
+        assertEquals(4, tracker.snapshot(ambient.entityId()).orElseThrow().health());
+    }
+
+    @Test
+    void damageAmbientKillRemovesLifecycleState() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot ambient = new EntitySnapshot(752L, "voxel:moss_snail", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 3);
+        tracker.addAmbient(ambient);
+
+        DamageResult result = tracker.damageAmbient(ambient.entityId(), 5, DamageSource.environment("test"), 1.0);
+
+        assertTrue(result.accepted());
+        assertTrue(result.killed());
+        assertEquals(3, result.amount());
+        assertTrue(tracker.snapshot(ambient.entityId()).isEmpty());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void arrowProjectilesUseSnapshotsAndDamageAmbientHits() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID owner = UUID.randomUUID();
+        EntitySnapshot target = new EntitySnapshot(800L, "voxel:cozy_sheep", null, 4.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(target);
+        ProjectileState arrow = tracker.spawnArrowProjectile(owner, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
+
+        assertTrue(tracker.snapshot(arrow.projectileId()).isPresent());
+
+        List<ProjectileHit> hits = tracker.tickProjectiles(0.2, (x, y, z, bounds) -> false, (x, y, z) -> false);
+        EntitySnapshot damaged = tracker.snapshot(target.entityId()).orElseThrow();
+
+        assertEquals(ProjectileHit.Type.ENTITY, hits.getFirst().type());
+        assertEquals(target.entityId(), hits.getFirst().entityId());
+        assertTrue(tracker.snapshot(arrow.projectileId()).isEmpty());
+        assertEquals(6, damaged.health());
+        assertEquals(0, tracker.projectileCount());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void arrowProjectilesDespawnOnBlockHit() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        ProjectileState arrow = tracker.spawnArrowProjectile(null, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
+
+        List<ProjectileHit> hits = tracker.tickProjectiles(0.2, (x, y, z, bounds) -> x >= 2.0, (x, y, z) -> false);
+
+        assertFalse(hits.isEmpty());
+        assertEquals(ProjectileHit.Type.BLOCK, hits.getFirst().type());
+        assertTrue(tracker.snapshot(arrow.projectileId()).isEmpty());
+        assertEquals(0, tracker.projectileCount());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void projectileTickStatsReportHitsAndDuration() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        tracker.spawnArrowProjectile(null, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
+
+        tracker.tickProjectiles(0.2, (x, y, z, bounds) -> x >= 2.0, (x, y, z) -> false);
+
+        ServerEntityTracker.ProjectileTickStats stats = tracker.lastProjectileTickStats();
+        assertEquals(1, stats.projectilesBeforeTick());
+        assertEquals(0, stats.projectilesAfterTick());
+        assertEquals(1, stats.emittedHits());
+        assertEquals(1, stats.blockHits());
+        assertTrue(stats.durationNanos() >= 0L);
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void projectileCrossesChunkBoundaryWithoutGhostHit() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        ProjectileState arrow = tracker.spawnArrowProjectile(null, 15.75, 80.45, 0.0, 1.0, 0.0, 0.0);
+
+        List<ProjectileHit> hits = tracker.tickProjectiles(0.05, (x, y, z, bounds) -> bounds.intersectsBlock(x, y, z, 18, 80, 0), (x, y, z) -> false);
+
+        assertEquals(ProjectileHit.Type.MISS, hits.getFirst().type());
+        ProjectileState moved = tracker.snapshot(arrow.projectileId())
+                .map(snapshot -> new ProjectileState(snapshot.entityId(), snapshot.ownerPlayerId(), snapshot.typeKey(), snapshot.x(), snapshot.y(), snapshot.z(), snapshot.velocityX(), snapshot.velocityY(), snapshot.velocityZ(), 1))
+                .orElseThrow();
+        assertTrue(moved.x() > 16.0);
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void knockbackBlockedByTerrainValidatorClearsVelocity() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        tracker.registerPlayer(playerId);
+        tracker.updatePlayer(playerId, 0.0, 81.62, 0.0, 0.0f, 0.0f);
+        EntitySnapshot sheep = new EntitySnapshot(900L, "voxel:cozy_sheep", null, 1.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(sheep);
+
+        tracker.damageAmbient(sheep.entityId(), 1, playerId, 0.5);
+        tracker.tickAmbient(1L, (current, candidate) -> candidate.x() <= 1.15);
+
+        EntitySnapshot blocked = tracker.snapshot(sheep.entityId()).orElseThrow();
+        assertEquals(1.0, blocked.x(), 0.001);
+        assertEquals(0.0, blocked.velocityX(), 0.001);
+        assertTrue(tracker.lastAmbientTickStats().blockedAmbientMoves() >= 1);
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void localEntityBlockPreventsOverlapWithoutOscillation() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot mover = new EntitySnapshot(901L, "voxel:cozy_sheep", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10)
+                .withVelocity(0.5, 0.0, 0.0);
+        EntitySnapshot blocker = new EntitySnapshot(902L, "voxel:cozy_sheep", null, 0.65, 80.0, 0.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(mover);
+        tracker.addAmbient(blocker);
+
+        tracker.tickAmbient(1L, (current, candidate) -> true);
+        EntitySnapshot first = tracker.snapshot(mover.entityId()).orElseThrow();
+        tracker.tickAmbient(2L, (current, candidate) -> true);
+        EntitySnapshot second = tracker.snapshot(mover.entityId()).orElseThrow();
+
+        assertEquals(first.x(), second.x(), 0.75);
+        assertTrue(tracker.lastAmbientTickStats().blockedAmbientMoves() >= 1);
     }
 
     private static double distanceSquared(double x, double z, double targetX, double targetZ) {

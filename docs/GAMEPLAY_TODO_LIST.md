@@ -271,12 +271,9 @@ Comfort soll Basebuilding belohnen, aber nicht erzwingen. Adventura bleibt cozy,
 ## Offen
 
 - Iron Tools vollständig einführen.
-- Crystal Tools vollständig einführen.
 - Repair-System einbauen.
-- Bonus Drops pro Tool Type.
-- bessere Mining Speeds.
 - härtere Late-Game Nodes.
-- Tooltips mit Repair Material und Effective Against.
+- Tooltips mit Effective Against.
 
 ## Repair
 
@@ -287,10 +284,7 @@ Comfort soll Basebuilding belohnen, aber nicht erzwingen. Adventura bleibt cozy,
 
 ## Bonus Drops
 
-- Knife: mehr Fiber/Herbs/Resin.
-- Axe: mehr Bark/Resin/Logs.
-- Pickaxe: bessere Ore-Ausbeute.
-- Crystal Knife: seltene Pflanzen/Glow Harvest.
+- seltene Pflanzen/Glow Harvest für Crystal Knife ausbauen.
 
 ## Akzeptanz
 
@@ -354,14 +348,15 @@ Comfort soll Basebuilding belohnen, aber nicht erzwingen. Adventura bleibt cozy,
 
 - Moss Snails können Drops erzeugen.
 - Moss/Slime Drops sind angebunden.
+- Glow Mushrooms spawnen als leuchtende Grove-Ressource.
+- Glow Mushroom Caps führen in Cooking-Pot-Stew.
+- Mushroom Circles spawnen als Grove-Adventure-Hook.
+- Spore Blossoms liefern seltene Grove-Herbs und Spore Tea.
+- Mushroom Circles enthalten Glow-Crystal-Nodes als Crystal-Progression-Fund.
+- Glow/Spore/Grove-Blöcke speisen Ambient-Spore-Partikel.
 
 ### Offen
 
-- Glow Mushroom Blocks.
-- Glow Crystal Nodes.
-- Spore Particles.
-- seltene Kräuter.
-- Mushroom Circle Structures.
 - magische Nachtstimmung.
 
 ### Gameplay-Grund

@@ -8,6 +8,12 @@ tasks.register("buildGame") {
     dependsOn(subprojects.map { "${it.path}:build" })
 }
 
+tasks.register("physicsRegression") {
+    group = "verification"
+    description = "Runs the tagged physics regression tests across all game modules."
+    dependsOn(subprojects.map { "${it.path}:physicsRegression" })
+}
+
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 val localNpmExecutable = if (isWindows) {
     null
@@ -77,6 +83,24 @@ tasks.register<JavaExec>("runSingleplayer") {
     jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
 }
 
+tasks.register<JavaExec>("profileSingleplayerJfr") {
+    group = "profiling"
+    description = "Runs singleplayer with Java Flight Recorder enabled for allocation and frame-time profiling."
+    dependsOn(":client:classes")
+    classpath = project(":client").sourceSets.main.get().runtimeClasspath
+    mainClass.set("dev.voxelgame.client.ClientMain")
+    args("--auto-singleplayer", "--preview-radius", "3", "--render-distance", "8")
+    val recordingFile = layout.buildDirectory.file("reports/jfr/adventura-singleplayer.jfr")
+    doFirst {
+        recordingFile.get().asFile.parentFile.mkdirs()
+    }
+    jvmArgs(
+        "-Dorg.lwjgl.system.allocator=jemalloc",
+        "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
+        "-XX:FlightRecorderOptions=stackdepth=128"
+    )
+}
+
 tasks.register<JavaExec>("runServer") {
     group = "voxel"
     description = "Runs the dedicated server on port 25565."
@@ -126,5 +150,16 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+    }
+
+    tasks.register<Test>("physicsRegression") {
+        group = "verification"
+        description = "Runs deterministic physics regression, fuzz and replay tests."
+        testClassesDirs = project.extensions.getByType<SourceSetContainer>().named("test").get().output.classesDirs
+        classpath = project.extensions.getByType<SourceSetContainer>().named("test").get().runtimeClasspath
+        useJUnitPlatform {
+            includeTags("physicsRegression")
+        }
+        shouldRunAfter(tasks.named("test"))
     }
 }

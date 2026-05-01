@@ -20,5 +20,6 @@ public enum AudioCue {
     NIGHT_AMBIENCE,
     MEADOW_BIRDS,
     CAVE_DRIP,
-    WATER_SPLASH
+    WATER_SPLASH,
+    HARD_LANDING
 }

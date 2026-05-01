@@ -2,6 +2,8 @@ package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.DamageResult;
+import dev.voxelgame.common.entity.DamageSource;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
@@ -40,12 +42,18 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class ServerConnectionHandler extends SimpleChannelInboundHandler<GamePacket> {
     private static final int STREAM_RADIUS_CHUNKS = 4;
@@ -55,7 +63,6 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private static final double MOVE_RATE_WINDOW_SECONDS = 1.0;
     private static final int MAX_MOVES_PER_RATE_WINDOW = 30;
     private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
-    private static final PlayerMovementRules.MovementMode PLAYER_MOVEMENT_MODE = PlayerMovementRules.MovementMode.SURVIVAL;
     private static final ChannelGroup CHANNELS = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
     private static final Set<ServerConnectionHandler> ACTIVE_HANDLERS = ConcurrentHashMap.newKeySet();
     private static final Set<ServerWorld> DIRTY_ENTITY_SNAPSHOT_WORLDS = ConcurrentHashMap.newKeySet();
@@ -65,11 +72,22 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final ServerEntityTracker entityTracker;
     private final int streamRadiusChunks;
     private final Path playerSaveDirectory;
+    private final ServerChunkStreamer chunkStreamer;
     private final Registry<ItemType> items = Items.createDefaultRegistry();
     private final List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
     private final Inventory inventory = new Inventory(36);
     private final ServerPlayerSurvivalState survivalState = new ServerPlayerSurvivalState();
     private final Set<ChunkPos> sentChunks = ConcurrentHashMap.newKeySet();
+    private final AtomicLong sentEntitySnapshotPackets = new AtomicLong();
+    private final AtomicLong sentEntitySnapshots = new AtomicLong();
+    private final AtomicLong sentChunkPackets = new AtomicLong();
+    private final AtomicLong sentBlockUpdates = new AtomicLong();
+    private final AtomicLong discardedUpdatesOutsideInterest = new AtomicLong();
+    private final AtomicLong rejectedChunkRequests = new AtomicLong();
+    private final AtomicLong failedChunkRequests = new AtomicLong();
+    private final AtomicLong sentPackets = new AtomicLong();
+    private final AtomicLong estimatedPacketBytes = new AtomicLong();
+    private final long packetMetricsStartedAtNanos = System.nanoTime();
     private volatile ChannelHandlerContext context;
     private PendingCook pendingCook;
     private volatile boolean sleepReady;
@@ -101,6 +119,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private long lastAcceptedMoveSequence;
     private double moveRateWindowStart = Double.NaN;
     private int moveRateWindowCount;
+    private final EnumMap<MovementRejectReason, Integer> movementRejectCounts = new EnumMap<>(MovementRejectReason.class);
+    private int movementRejectStrikes;
+    private MovementRejectReason lastMovementRejectReason = MovementRejectReason.NONE;
+    private AuthoritativeCorrectionClass lastMovementCorrectionClass = AuthoritativeCorrectionClass.SOFT;
     private double fallStartY = Double.NaN;
     private boolean fallTouchedWater;
     private double lastSurvivalUpdateTime = Double.NaN;
@@ -108,16 +130,38 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private int lastSyncedComfort = -1;
     private int lastClientTransactionId;
 
+    public enum MovementRejectReason {
+        NONE,
+        NON_FINITE,
+        RATE,
+        VERTICAL_BOUNDS,
+        COLLISION,
+        GROUND,
+        WATER,
+        INITIAL_SYNC,
+        SEQUENCE,
+        PATH,
+        UPWARD,
+        SPEED,
+        ACCELERATION
+    }
+
+    public enum AuthoritativeCorrectionClass {
+        SOFT,
+        HARD,
+        RESPAWN_TELEPORT
+    }
+
     public ServerConnectionHandler(ServerWorld world, AuthProvider authProvider, ServerEntityTracker entityTracker) {
-        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, null);
+        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, null, ServerChunkStreamer.direct());
     }
 
     public ServerConnectionHandler(ServerWorld world, AuthProvider authProvider, ServerEntityTracker entityTracker, Path playerSaveDirectory) {
-        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, playerSaveDirectory);
+        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, playerSaveDirectory, ServerChunkStreamer.direct());
     }
 
     ServerConnectionHandler(ServerWorld world, AuthProvider authProvider, ServerEntityTracker entityTracker, int streamRadiusChunks) {
-        this(world, authProvider, entityTracker, streamRadiusChunks, null);
+        this(world, authProvider, entityTracker, streamRadiusChunks, null, ServerChunkStreamer.direct());
     }
 
     ServerConnectionHandler(
@@ -127,6 +171,27 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             int streamRadiusChunks,
             Path playerSaveDirectory
     ) {
+        this(world, authProvider, entityTracker, streamRadiusChunks, playerSaveDirectory, ServerChunkStreamer.direct());
+    }
+
+    ServerConnectionHandler(
+            ServerWorld world,
+            AuthProvider authProvider,
+            ServerEntityTracker entityTracker,
+            Path playerSaveDirectory,
+            ServerChunkStreamer chunkStreamer
+    ) {
+        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, playerSaveDirectory, chunkStreamer);
+    }
+
+    private ServerConnectionHandler(
+            ServerWorld world,
+            AuthProvider authProvider,
+            ServerEntityTracker entityTracker,
+            int streamRadiusChunks,
+            Path playerSaveDirectory,
+            ServerChunkStreamer chunkStreamer
+    ) {
         if (streamRadiusChunks < 0) {
             throw new IllegalArgumentException("streamRadiusChunks must be >= 0");
         }
@@ -135,6 +200,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         this.entityTracker = entityTracker;
         this.streamRadiusChunks = streamRadiusChunks;
         this.playerSaveDirectory = playerSaveDirectory;
+        this.chunkStreamer = chunkStreamer;
     }
 
     @Override
@@ -179,7 +245,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 }
             }
             case GamePacket.Chat chat -> {
-                if (loggedIn) {
+                if (loggedIn && !handlePhysicsDebugCommand(ctx, chat.message())) {
                     broadcastToLoggedIn(chat);
                 }
             }
@@ -290,8 +356,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
-        if (InteractionRules.placementIntersectsPlayer(playerX, playerY, playerZ, action.placeX(), action.placeY(), action.placeZ())
-                || placementIntersectsTrackedEntity(action.placeX(), action.placeY(), action.placeZ())) {
+        if (InteractionRules.placementIntersectsPlayer(playerX, playerY, playerZ, action.placeX(), action.placeY(), action.placeZ(), action.blockId())
+                || placementIntersectsTrackedEntity(action.placeX(), action.placeY(), action.placeZ(), action.blockId())) {
             sendInventory(ctx);
             return;
         }
@@ -305,19 +371,24 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private boolean canReach(GamePacket.BlockAction action) {
-        if (!InteractionRules.canReachBlock(playerX, playerY, playerZ, action.targetX(), action.targetY(), action.targetZ())) {
+        if (!canInteractWithBlock(action.targetX(), action.targetY(), action.targetZ())) {
             return false;
         }
         return action.action() == GamePacket.BlockAction.Action.BREAK
                 || InteractionRules.canReachBlock(playerX, playerY, playerZ, action.placeX(), action.placeY(), action.placeZ());
     }
 
-    private boolean placementIntersectsTrackedEntity(int blockX, int blockY, int blockZ) {
+    private boolean canInteractWithBlock(int x, int y, int z) {
+        return InteractionRules.canReachBlock(playerX, playerY, playerZ, x, y, z)
+                && world.hasBlockLineOfSight(playerX, playerY, playerZ, x, y, z);
+    }
+
+    private boolean placementIntersectsTrackedEntity(int blockX, int blockY, int blockZ, short blockId) {
         for (EntitySnapshot snapshot : entityTracker.snapshots()) {
             if (playerId != null && playerId.equals(snapshot.ownerPlayerId())) {
                 continue;
             }
-            if (InteractionRules.placementIntersectsEntity(snapshot, blockX, blockY, blockZ)) {
+            if (InteractionRules.placementIntersectsEntity(snapshot, blockX, blockY, blockZ, blockId)) {
                 return true;
             }
         }
@@ -335,7 +406,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         hotbarSelection = interact.selectedSlot();
         double now = System.nanoTime() / 1_000_000_000.0;
-        if (now < nextBlockActionTime || !InteractionRules.canReachBlock(playerX, playerY, playerZ, interact.targetX(), interact.targetY(), interact.targetZ())) {
+        if (now < nextBlockActionTime || !canInteractWithBlock(interact.targetX(), interact.targetY(), interact.targetZ())) {
             sendInventory(ctx);
             return;
         }
@@ -377,7 +448,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         double now = System.nanoTime() / 1_000_000_000.0;
-        if (now < nextBlockActionTime || !InteractionRules.canReachBlock(playerX, playerY, playerZ, open.x(), open.y(), open.z())) {
+        if (now < nextBlockActionTime || !canInteractWithBlock(open.x(), open.y(), open.z())) {
             sendInventory(ctx);
             return;
         }
@@ -397,7 +468,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         double now = System.nanoTime() / 1_000_000_000.0;
-        if (now < nextBlockActionTime || !InteractionRules.canReachBlock(playerX, playerY, playerZ, sleep.x(), sleep.y(), sleep.z())) {
+        if (now < nextBlockActionTime || !canInteractWithBlock(sleep.x(), sleep.y(), sleep.z())) {
             sendInventory(ctx);
             return;
         }
@@ -475,7 +546,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         double now = System.nanoTime() / 1_000_000_000.0;
         if (pendingCook != null || now < nextBlockActionTime
-                || !InteractionRules.canReachBlock(playerX, playerY, playerZ, cook.stationX(), cook.stationY(), cook.stationZ())) {
+                || !canInteractWithBlock(cook.stationX(), cook.stationY(), cook.stationZ())) {
             sendInventory(ctx);
             return;
         }
@@ -529,7 +600,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
-        if (!InteractionRules.canReachBlock(playerX, playerY, playerZ, transfer.x(), transfer.y(), transfer.z())) {
+        if (!canInteractWithBlock(transfer.x(), transfer.y(), transfer.z())) {
             sendInventory(ctx);
             return;
         }
@@ -619,7 +690,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 }
             }
             case ATTACK -> {
-                if (!tryAttackEntity(ctx, interact, target.get())) {
+                if (!tryAttackEntity(ctx, interact, target.get(), now)) {
                     return;
                 }
             }
@@ -651,17 +722,18 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         return true;
     }
 
-    private boolean tryAttackEntity(ChannelHandlerContext ctx, GamePacket.EntityInteract interact, EntitySnapshot target) {
-        Optional<EntitySnapshot> updated = entityTracker.damageAmbient(
+    private boolean tryAttackEntity(ChannelHandlerContext ctx, GamePacket.EntityInteract interact, EntitySnapshot target, double now) {
+        DamageResult result = entityTracker.damageAmbient(
                 interact.entityId(),
                 entityAttackDamage(inventory.slot(interact.selectedSlot())),
-                playerId
+                DamageSource.playerMelee(playerId),
+                now
         );
-        if (updated.isEmpty()) {
+        if (!result.accepted()) {
             sendInventory(ctx);
             return false;
         }
-        if (updated.get().health() <= 0) {
+        if (result.killed()) {
             spawnEntityDrops(target);
         }
         inventory.damageSlot(interact.selectedSlot(), 1, items);
@@ -720,7 +792,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (recipe.stationType() == CraftingStationType.INVENTORY) {
             return Optional.of(CraftingStationType.INVENTORY);
         }
-        if (!craft.hasStation() || !InteractionRules.canReachBlock(playerX, playerY, playerZ, craft.stationX(), craft.stationY(), craft.stationZ())) {
+        if (!craft.hasStation() || !canInteractWithBlock(craft.stationX(), craft.stationY(), craft.stationZ())) {
             return Optional.empty();
         }
         if (recipe.stationType() == CraftingStationType.CAMPFIRE) {
@@ -750,8 +822,127 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             if (ctx == null || !handler.loggedIn || handler.world != world) {
                 continue;
             }
-            ctx.writeAndFlush(new GamePacket.EntitySnapshots(handler.visibleEntitySnapshots(entityTracker)));
+            handler.sendEntitySnapshots(ctx);
         }
+    }
+
+    public static List<InterestStats> interestStats(ServerWorld world) {
+        return ACTIVE_HANDLERS.stream()
+                .filter(handler -> handler.world == world && handler.loggedIn)
+                .map(ServerConnectionHandler::interestStats)
+                .toList();
+    }
+
+    public static void broadcastServerStats(ServerWorld world) {
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            ChannelHandlerContext ctx = handler.context;
+            if (ctx == null || !handler.loggedIn || handler.world != world) {
+                continue;
+            }
+            handler.sendServerStats(ctx);
+        }
+    }
+
+    public static MovementRejectStats movementRejectStats(ServerWorld world) {
+        int totalRejects = 0;
+        int strikes = 0;
+        int rateRejects = 0;
+        int verticalBoundsRejects = 0;
+        int collisionRejects = 0;
+        int groundRejects = 0;
+        int waterRejects = 0;
+        int initialSyncRejects = 0;
+        int sequenceRejects = 0;
+        int pathRejects = 0;
+        int upwardRejects = 0;
+        int speedRejects = 0;
+        int accelerationRejects = 0;
+        int nonFiniteRejects = 0;
+        MovementRejectReason lastReason = MovementRejectReason.NONE;
+        AuthoritativeCorrectionClass lastCorrectionClass = AuthoritativeCorrectionClass.SOFT;
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            if (handler.world != world || !handler.loggedIn) {
+                continue;
+            }
+            MovementRejectStats stats = handler.movementRejectStats();
+            totalRejects += stats.totalRejects();
+            strikes += stats.strikes();
+            rateRejects += stats.rateRejects();
+            verticalBoundsRejects += stats.verticalBoundsRejects();
+            collisionRejects += stats.collisionRejects();
+            groundRejects += stats.groundRejects();
+            waterRejects += stats.waterRejects();
+            initialSyncRejects += stats.initialSyncRejects();
+            sequenceRejects += stats.sequenceRejects();
+            pathRejects += stats.pathRejects();
+            upwardRejects += stats.upwardRejects();
+            speedRejects += stats.speedRejects();
+            accelerationRejects += stats.accelerationRejects();
+            nonFiniteRejects += stats.nonFiniteRejects();
+            if (stats.lastReason() != MovementRejectReason.NONE) {
+                lastReason = stats.lastReason();
+                lastCorrectionClass = stats.lastCorrectionClass();
+            }
+        }
+        return new MovementRejectStats(
+                totalRejects,
+                strikes,
+                lastReason,
+                lastCorrectionClass,
+                rateRejects,
+                verticalBoundsRejects,
+                collisionRejects,
+                groundRejects,
+                waterRejects,
+                initialSyncRejects,
+                sequenceRejects,
+                pathRejects,
+                upwardRejects,
+                speedRejects,
+                accelerationRejects,
+                nonFiniteRejects
+        );
+    }
+
+    public InterestStats interestStats() {
+        long packetCount = sentPackets.get();
+        long byteCount = estimatedPacketBytes.get();
+        long elapsedNanos = Math.max(1L, System.nanoTime() - packetMetricsStartedAtNanos);
+        return new InterestStats(
+                sentChunks.size(),
+                sentEntitySnapshotPackets.get(),
+                sentEntitySnapshots.get(),
+                sentChunkPackets.get(),
+                sentBlockUpdates.get(),
+                discardedUpdatesOutsideInterest.get(),
+                rejectedChunkRequests.get(),
+                failedChunkRequests.get(),
+                packetCount,
+                byteCount,
+                packetCount == 0L ? 0L : byteCount / packetCount,
+                packetCount * 1_000_000_000.0 / elapsedNanos
+        );
+    }
+
+    public MovementRejectStats movementRejectStats() {
+        return new MovementRejectStats(
+                movementRejectCounts.values().stream().mapToInt(Integer::intValue).sum(),
+                movementRejectStrikes,
+                lastMovementRejectReason,
+                lastMovementCorrectionClass,
+                movementRejectCount(MovementRejectReason.RATE),
+                movementRejectCount(MovementRejectReason.VERTICAL_BOUNDS),
+                movementRejectCount(MovementRejectReason.COLLISION),
+                movementRejectCount(MovementRejectReason.GROUND),
+                movementRejectCount(MovementRejectReason.WATER),
+                movementRejectCount(MovementRejectReason.INITIAL_SYNC),
+                movementRejectCount(MovementRejectReason.SEQUENCE),
+                movementRejectCount(MovementRejectReason.PATH),
+                movementRejectCount(MovementRejectReason.UPWARD),
+                movementRejectCount(MovementRejectReason.SPEED),
+                movementRejectCount(MovementRejectReason.ACCELERATION),
+                movementRejectCount(MovementRejectReason.NON_FINITE)
+        );
     }
 
     public static boolean consumeEntitySnapshotDirty(ServerWorld world) {
@@ -806,6 +997,58 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendCampfireStatus(context, stationX, stationY, stationZ, nowSeconds);
         }
         sendInventory(context);
+    }
+
+    private boolean handlePhysicsDebugCommand(ChannelHandlerContext ctx, String message) {
+        String trimmed = message == null ? "" : message.trim();
+        if (!trimmed.startsWith("!phys") && !trimmed.startsWith("/phys")) {
+            return false;
+        }
+        String[] parts = trimmed.split("\\s+");
+        String action = parts.length < 2 ? "help" : parts[1].toLowerCase(Locale.ROOT);
+        switch (action) {
+            case "projectile" -> {
+                double[] direction = lookDirection(playerYaw, playerPitch);
+                entityTracker.spawnArrowProjectile(playerId, playerX, playerY - 0.18, playerZ, direction[0], direction[1], direction[2]);
+                markEntitySnapshotsDirty(world);
+                sendEntitySnapshots(ctx);
+                ctx.writeAndFlush(new GamePacket.Chat("[server] physics projectile spawned"));
+            }
+            case "entity" -> {
+                String typeKey = parts.length >= 3 ? parts[2] : "voxel:cozy_sheep";
+                double[] direction = lookDirection(playerYaw, 0.0f);
+                EntitySnapshot snapshot = entityTracker.spawnDebugAmbient(typeKey, playerX + direction[0] * 2.0, playerY - PLAYER_PHYSICS.bounds().eyeHeight(), playerZ + direction[2] * 2.0);
+                markEntitySnapshotsDirty(world);
+                sendEntitySnapshots(ctx);
+                ctx.writeAndFlush(new GamePacket.Chat("[server] physics entity " + snapshot.entityId() + " spawned"));
+            }
+            case "water" -> {
+                int x = (int) Math.floor(playerX);
+                int y = (int) Math.floor(PLAYER_PHYSICS.bounds().minY(playerY) + 0.05);
+                int z = (int) Math.floor(playerZ);
+                world.setBlock(x, y, z, Blocks.WATER);
+                broadcastToLoggedInWorld(new GamePacket.BlockUpdate(x, y, z, Blocks.WATER));
+                ctx.writeAndFlush(new GamePacket.Chat("[server] physics water forced at " + x + " " + y + " " + z));
+            }
+            case "unloaded" -> {
+                sentChunks.clear();
+                streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(playerX), (int) Math.floor(playerZ)));
+                ctx.writeAndFlush(new GamePacket.Chat("[server] physics chunk stream reset"));
+            }
+            case "stats" -> {
+                MovementRejectStats movement = movementRejectStats();
+                ServerEntityTracker.AmbientTickStats ambient = entityTracker.lastAmbientTickStats();
+                ServerEntityTracker.ProjectileTickStats projectiles = entityTracker.lastProjectileTickStats();
+                ctx.writeAndFlush(new GamePacket.Chat("[server] phys rejects=" + movement.totalRejects()
+                        + " strikes=" + movement.strikes()
+                        + " active=" + ambient.activeAmbient()
+                        + " parked=" + ambient.parkedAmbient()
+                        + " projectiles=" + entityTracker.projectileCount()
+                        + " hits=" + projectiles.emittedHits()));
+            }
+            default -> ctx.writeAndFlush(new GamePacket.Chat("[server] phys: projectile | entity [type] | water | unloaded | stats"));
+        }
+        return true;
     }
 
     private void sendCampfireStatus(ChannelHandlerContext ctx, int x, int y, int z, double nowSeconds) {
@@ -975,15 +1218,19 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void handlePlayerMove(ChannelHandlerContext ctx, GamePacket.PlayerMove move) {
         if (!PlayerMovementRules.isFinite(move.x(), move.y(), move.z(), move.yaw(), move.pitch())) {
+            recordMovementReject(MovementRejectReason.NON_FINITE, move);
             ctx.close();
             return;
         }
         double now = System.nanoTime() / 1_000_000_000.0;
-        if (!acceptPlayerMove(move, now)) {
+        MovementRejectReason rejectReason = validatePlayerMove(move, now);
+        if (rejectReason != MovementRejectReason.NONE) {
+            recordMovementReject(rejectReason, move);
             sendAuthoritativePlayerPosition(ctx, move.sequence());
             sendPlayerStats(ctx, now, false);
             return;
         }
+        movementRejectStrikes = Math.max(0, movementRejectStrikes - 1);
         boolean moving = movedEnough(move.x(), move.y(), move.z());
         if (moving) {
             sleepReady = false;
@@ -993,7 +1240,9 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         double previousY = playerY;
         double previousZ = playerZ;
         double moveDeltaSeconds = hadAcceptedMove ? now - lastAcceptedMoveTime : 0.0;
-        boolean hasGroundSupport = hasGroundSupport(move.x(), move.y(), move.z());
+        PlayerMovementRules.MovementMode movementMode = movementMode();
+        boolean hasGroundSupport = movementMode != PlayerMovementRules.MovementMode.SPECTATOR
+                && hasGroundSupport(move.x(), move.y(), move.z());
         PlayerWaterState waterState = world.playerWaterState(move.x(), move.y(), move.z(), PLAYER_PHYSICS.bounds());
         playerX = move.x();
         playerY = move.y();
@@ -1011,7 +1260,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         lastAcceptedMoveTime = now;
         updateSurvival(now, moving);
-        boolean fallDamaged = updateFallImpact(previousY, move.y(), hasGroundSupport, waterState);
+        boolean fallDamaged = movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                && updateFallImpact(previousY, move.y(), hasGroundSupport, waterState);
         entityTracker.updatePlayer(playerId, move.x(), move.y(), move.z(), move.yaw(), move.pitch());
         if (collectNearbyItemDrops()) {
             sendInventory(ctx);
@@ -1023,28 +1273,33 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         markEntitySnapshotsDirty(world);
     }
 
-    private boolean acceptPlayerMove(GamePacket.PlayerMove move, double now) {
+    private MovementRejectReason validatePlayerMove(GamePacket.PlayerMove move, double now) {
         if (!acceptMovementRate(now)) {
-            return false;
+            return MovementRejectReason.RATE;
         }
+        PlayerMovementRules.MovementMode movementMode = movementMode();
         if (!PlayerMovementRules.withinVerticalBounds(
                 move.y(),
                 PLAYER_PHYSICS,
                 world.dimension().minY(),
                 world.dimension().maxYExclusive()
         )) {
-            return false;
+            return MovementRejectReason.VERTICAL_BOUNDS;
         }
-        if (world.collidesPlayer(move.x(), move.y(), move.z(), PLAYER_PHYSICS.bounds())) {
-            return false;
+        if (movementMode != PlayerMovementRules.MovementMode.SPECTATOR
+                && world.collidesPlayer(move.x(), move.y(), move.z(), PLAYER_PHYSICS.bounds())) {
+            return MovementRejectReason.COLLISION;
         }
-        boolean hasGroundSupport = hasGroundSupport(move.x(), move.y(), move.z());
-        if (!PlayerMovementRules.groundedClaimPlausible(move.onGround(), hasGroundSupport)) {
-            return false;
+        boolean hasGroundSupport = movementMode != PlayerMovementRules.MovementMode.SPECTATOR
+                && hasGroundSupport(move.x(), move.y(), move.z());
+        if (movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                && !PlayerMovementRules.groundedClaimPlausible(move.onGround(), hasGroundSupport)) {
+            return MovementRejectReason.GROUND;
         }
         PlayerWaterState waterState = world.playerWaterState(move.x(), move.y(), move.z(), PLAYER_PHYSICS.bounds());
-        if (!PlayerMovementRules.waterStateClaimPlausible(move.waterState(), waterState)) {
-            return false;
+        if (movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                && !PlayerMovementRules.waterStateClaimPlausible(move.waterState(), waterState)) {
+            return MovementRejectReason.WATER;
         }
         if (!Double.isFinite(lastAcceptedMoveTime)) {
             return PlayerMovementRules.withinInitialSyncDistance(
@@ -1055,12 +1310,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                     move.y(),
                     move.z(),
                     INITIAL_MOVE_SYNC_RADIUS
-            );
+            ) ? MovementRejectReason.NONE : MovementRejectReason.INITIAL_SYNC;
         }
         if (move.sequence() > 0L && move.sequence() <= lastAcceptedMoveSequence) {
-            return false;
+            return MovementRejectReason.SEQUENCE;
         }
-        if (!world.playerPathClear(
+        if (movementMode != PlayerMovementRules.MovementMode.SPECTATOR && !world.playerPathClear(
                 playerX,
                 playerY,
                 playerZ,
@@ -1070,12 +1325,13 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 PLAYER_PHYSICS.bounds(),
                 PLAYER_PHYSICS.maxCollisionStep()
         )) {
-            return false;
+            return MovementRejectReason.PATH;
         }
         boolean movementAssist = playerTouchesWater(playerX, playerY, playerZ)
                 || PlayerMovementRules.waterMovementAssist(waterState);
-        if (!PlayerMovementRules.upwardMovementPlausible(playerY, move.y(), lastAcceptedGrounded, lastAcceptedMoveDeltaY, movementAssist)) {
-            return false;
+        if (movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                && !PlayerMovementRules.upwardMovementPlausible(playerY, move.y(), lastAcceptedGrounded, lastAcceptedMoveDeltaY, movementAssist)) {
+            return MovementRejectReason.UPWARD;
         }
         double deltaSeconds = now - lastAcceptedMoveTime;
         if (!PlayerMovementRules.isPlausibleModeDelta(
@@ -1088,9 +1344,9 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 deltaSeconds,
                 PLAYER_PHYSICS,
                 waterState,
-                PLAYER_MOVEMENT_MODE
+                movementMode
         )) {
-            return false;
+            return MovementRejectReason.SPEED;
         }
         return !hasAcceptedMovementSample || PlayerMovementRules.isPlausibleHorizontalAcceleration(
                 lastAcceptedMoveDeltaX,
@@ -1100,8 +1356,61 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 move.z() - playerZ,
                 deltaSeconds,
                 PLAYER_PHYSICS,
-                PLAYER_MOVEMENT_MODE
-        );
+                movementMode
+        ) ? MovementRejectReason.NONE : MovementRejectReason.ACCELERATION;
+    }
+
+    private void recordMovementReject(MovementRejectReason reason, GamePacket.PlayerMove move) {
+        MovementRejectReason safeReason = reason == null ? MovementRejectReason.NONE : reason;
+        if (safeReason == MovementRejectReason.NONE) {
+            return;
+        }
+        movementRejectCounts.merge(safeReason, 1, Integer::sum);
+        movementRejectStrikes = Math.min(100, movementRejectStrikes + strikeWeight(safeReason));
+        lastMovementRejectReason = safeReason;
+        lastMovementCorrectionClass = correctionClassFor(move);
+    }
+
+    private int movementRejectCount(MovementRejectReason reason) {
+        return movementRejectCounts.getOrDefault(reason, 0);
+    }
+
+    private static int strikeWeight(MovementRejectReason reason) {
+        return switch (reason) {
+            case RATE, SEQUENCE -> 1;
+            case GROUND, WATER, UPWARD -> 2;
+            case COLLISION, PATH, SPEED, ACCELERATION -> 3;
+            case VERTICAL_BOUNDS, INITIAL_SYNC, NON_FINITE -> 4;
+            case NONE -> 0;
+        };
+    }
+
+    private AuthoritativeCorrectionClass correctionClassFor(GamePacket.PlayerMove move) {
+        if (move == null
+                || !Double.isFinite(move.x())
+                || !Double.isFinite(move.y())
+                || !Double.isFinite(move.z())) {
+            return AuthoritativeCorrectionClass.RESPAWN_TELEPORT;
+        }
+        double dx = move.x() - playerX;
+        double dy = move.y() - playerY;
+        double dz = move.z() - playerZ;
+        double distanceSquared = dx * dx + dy * dy + dz * dz;
+        if (distanceSquared > INITIAL_MOVE_SYNC_RADIUS * INITIAL_MOVE_SYNC_RADIUS) {
+            return AuthoritativeCorrectionClass.RESPAWN_TELEPORT;
+        }
+        if (distanceSquared > 16.0 || Math.abs(dy) > 4.0) {
+            return AuthoritativeCorrectionClass.HARD;
+        }
+        return AuthoritativeCorrectionClass.SOFT;
+    }
+
+    private PlayerMovementRules.MovementMode movementMode() {
+        return switch (gameMode.toLowerCase(Locale.ROOT)) {
+            case "creative" -> PlayerMovementRules.MovementMode.FLYING;
+            case "spectator" -> PlayerMovementRules.MovementMode.SPECTATOR;
+            default -> PlayerMovementRules.MovementMode.SURVIVAL;
+        };
     }
 
     private boolean acceptMovementRate(double now) {
@@ -1183,17 +1492,33 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private void updateSurvival(double now, boolean moving) {
         long tick = survivalTick++;
         PlayerWaterState waterState = world.playerWaterState(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds());
+        boolean sprinting = sprintingFromAcceptedMove(waterState);
         if (!Double.isFinite(lastSurvivalUpdateTime)) {
             survivalState.updateComfort(world.comfortAt(playerX, playerY, playerZ), tick);
             lastSurvivalUpdateTime = now;
             return;
         }
         if (survivalState.shouldScanComfort(tick)) {
-            survivalState.tick(now - lastSurvivalUpdateTime, world.comfortAt(playerX, playerY, playerZ), tick, moving, waterState.headUnderwater());
+            survivalState.tick(now - lastSurvivalUpdateTime, world.comfortAt(playerX, playerY, playerZ), tick, moving, waterState.headUnderwater(), sprinting);
         } else {
-            survivalState.tick(now - lastSurvivalUpdateTime, moving, waterState.headUnderwater());
+            survivalState.tick(now - lastSurvivalUpdateTime, moving, waterState.headUnderwater(), sprinting);
         }
         lastSurvivalUpdateTime = now;
+    }
+
+    private boolean sprintingFromAcceptedMove(PlayerWaterState waterState) {
+        if (!hasAcceptedMovementSample
+                || PlayerMovementRules.waterMovementAssist(waterState)
+                || lastAcceptedMoveDeltaSeconds <= 0.0) {
+            return false;
+        }
+        double seconds = Math.max(1.0 / 20.0, Math.min(lastAcceptedMoveDeltaSeconds, 0.5));
+        double horizontalDistance = Math.sqrt(
+                lastAcceptedMoveDeltaX * lastAcceptedMoveDeltaX
+                        + lastAcceptedMoveDeltaZ * lastAcceptedMoveDeltaZ
+        );
+        double horizontalSpeed = horizontalDistance / seconds;
+        return horizontalSpeed > PLAYER_PHYSICS.walkSpeed() * 1.08 && survivalState.canSprint();
     }
 
     private boolean collectNearbyItemDrops() {
@@ -1221,7 +1546,31 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void sendEntitySnapshots(ChannelHandlerContext ctx) {
-        ctx.writeAndFlush(new GamePacket.EntitySnapshots(visibleEntitySnapshots(entityTracker)));
+        List<EntitySnapshot> snapshots = visibleEntitySnapshots(entityTracker);
+        ctx.writeAndFlush(new GamePacket.EntitySnapshots(snapshots));
+        sentEntitySnapshotPackets.incrementAndGet();
+        sentEntitySnapshots.addAndGet(snapshots.size());
+        recordSentPacket(32L + snapshots.size() * 96L);
+    }
+
+    private void sendServerStats(ChannelHandlerContext ctx) {
+        InterestStats stats = interestStats();
+        GamePacket.ServerStatsSnapshot packet = new GamePacket.ServerStatsSnapshot(
+                stats.chunkSubscriptions(),
+                stats.sentEntitySnapshotPackets(),
+                stats.sentEntitySnapshots(),
+                stats.sentChunkPackets(),
+                stats.sentBlockUpdates(),
+                stats.discardedUpdatesOutsideInterest(),
+                stats.rejectedChunkRequests(),
+                stats.failedChunkRequests(),
+                stats.sentPackets(),
+                stats.estimatedPacketBytes(),
+                stats.averagePacketBytes(),
+                stats.packetRatePerSecond()
+        );
+        ctx.writeAndFlush(packet);
+        recordSentPacket(96L);
     }
 
     private static void markEntitySnapshotsDirty(ServerWorld world) {
@@ -1249,14 +1598,58 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void streamChunksAround(ChannelHandlerContext ctx, ChunkPos center) {
+        List<ChunkPos> requestedPositions = new ArrayList<>();
         for (int z = center.z() - streamRadiusChunks; z <= center.z() + streamRadiusChunks; z++) {
             for (int x = center.x() - streamRadiusChunks; x <= center.x() + streamRadiusChunks; x++) {
-                ChunkPos pos = new ChunkPos(x, z);
-                if (sentChunks.add(pos)) {
-                    ctx.writeAndFlush(world.packetFor(pos));
-                }
+                requestedPositions.add(new ChunkPos(x, z));
             }
         }
+        requestedPositions.sort(Comparator.comparingInt(pos -> chunkPriority(pos, center)));
+        for (ChunkPos pos : requestedPositions) {
+            if (!sentChunks.add(pos)) {
+                continue;
+            }
+            Optional<CompletableFuture<GamePacket.ChunkData>> request = chunkStreamer.request(world, pos, chunkPriority(pos, center));
+            if (request.isEmpty()) {
+                sentChunks.remove(pos);
+                rejectedChunkRequests.incrementAndGet();
+                continue;
+            }
+            CompletableFuture<GamePacket.ChunkData> chunkFuture = request.get();
+            if (chunkFuture.isDone()) {
+                deliverCompletedChunk(ctx, pos, chunkFuture);
+            } else {
+                chunkFuture.whenComplete((packet, error) -> ctx.executor().execute(() -> deliverChunk(ctx, pos, packet, error)));
+            }
+        }
+    }
+
+    private void deliverCompletedChunk(ChannelHandlerContext ctx, ChunkPos pos, CompletableFuture<GamePacket.ChunkData> chunkFuture) {
+        try {
+            deliverChunk(ctx, pos, chunkFuture.join(), null);
+        } catch (RuntimeException error) {
+            deliverChunk(ctx, pos, null, error);
+        }
+    }
+
+    private void deliverChunk(ChannelHandlerContext ctx, ChunkPos pos, GamePacket.ChunkData packet, Throwable error) {
+        if (error != null) {
+            sentChunks.remove(pos);
+            failedChunkRequests.incrementAndGet();
+            return;
+        }
+        if (context != ctx || !loggedIn || !sentChunks.contains(pos)) {
+            return;
+        }
+        ctx.writeAndFlush(packet);
+        sentChunkPackets.incrementAndGet();
+        recordSentPacket(estimateChunkPacketBytes(packet));
+    }
+
+    private static int chunkPriority(ChunkPos pos, ChunkPos center) {
+        int dx = pos.x() - center.x();
+        int dz = pos.z() - center.z();
+        return dx * dx + dz * dz;
     }
 
     private static void broadcastToLoggedIn(GamePacket packet) {
@@ -1276,9 +1669,14 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 continue;
             }
             if (packet instanceof GamePacket.BlockUpdate update && !handler.hasSeenChunk(update)) {
+                handler.discardedUpdatesOutsideInterest.incrementAndGet();
                 continue;
             }
             ctx.writeAndFlush(packet);
+            if (packet instanceof GamePacket.BlockUpdate) {
+                handler.sentBlockUpdates.incrementAndGet();
+                handler.recordSentPacket(16L);
+            }
         }
     }
 
@@ -1288,6 +1686,62 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void broadcastToLoggedInWorld(GamePacket packet) {
         broadcastToLoggedInWorld(world, packet);
+    }
+
+    private void recordSentPacket(long estimatedBytes) {
+        sentPackets.incrementAndGet();
+        estimatedPacketBytes.addAndGet(Math.max(0L, estimatedBytes));
+    }
+
+    private static long estimateChunkPacketBytes(GamePacket.ChunkData packet) {
+        return 32L + packet.blockIds().length * 2L + packet.skyLight().length + packet.blockLight().length;
+    }
+
+    private static double[] lookDirection(float yawDegrees, float pitchDegrees) {
+        double yaw = Math.toRadians(yawDegrees);
+        double pitch = Math.toRadians(pitchDegrees);
+        double horizontal = Math.cos(pitch);
+        return new double[]{
+                Math.cos(yaw) * horizontal,
+                Math.sin(pitch),
+                Math.sin(yaw) * horizontal
+        };
+    }
+
+    public record InterestStats(
+            int chunkSubscriptions,
+            long sentEntitySnapshotPackets,
+            long sentEntitySnapshots,
+            long sentChunkPackets,
+            long sentBlockUpdates,
+            long discardedUpdatesOutsideInterest,
+            long rejectedChunkRequests,
+            long failedChunkRequests,
+            long sentPackets,
+            long estimatedPacketBytes,
+            long averagePacketBytes,
+            double packetRatePerSecond
+    ) {
+    }
+
+    public record MovementRejectStats(
+            int totalRejects,
+            int strikes,
+            MovementRejectReason lastReason,
+            AuthoritativeCorrectionClass lastCorrectionClass,
+            int rateRejects,
+            int verticalBoundsRejects,
+            int collisionRejects,
+            int groundRejects,
+            int waterRejects,
+            int initialSyncRejects,
+            int sequenceRejects,
+            int pathRejects,
+            int upwardRejects,
+            int speedRejects,
+            int accelerationRejects,
+            int nonFiniteRejects
+    ) {
     }
 
     private record PendingCook(int stationX, int stationY, int stationZ, CraftingRecipe recipe, double completeAtSeconds) {

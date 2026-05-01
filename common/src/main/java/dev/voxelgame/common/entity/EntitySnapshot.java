@@ -23,6 +23,7 @@ public record EntitySnapshot(
     public static final String STATE_FLEE = "FLEE";
     public static final String STATE_FOLLOW = "FOLLOW";
     public static final String STATE_GRAZE = "GRAZE";
+    public static final String STATE_PROJECTILE = "PROJECTILE";
 
     public EntitySnapshot(long entityId, String typeKey, UUID ownerPlayerId, double x, double y, double z, float yaw, float pitch, int health) {
         this(entityId, typeKey, ownerPlayerId, x, y, z, yaw, pitch, health, STATE_IDLE, 0.0, 0.0, 0.0);

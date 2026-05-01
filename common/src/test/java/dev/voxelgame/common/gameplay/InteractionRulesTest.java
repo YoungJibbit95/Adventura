@@ -29,6 +29,32 @@ class InteractionRulesTest {
     }
 
     @Test
+    void blockLineOfSightStopsAtOccludingIntermediateBlock() {
+        assertFalse(InteractionRules.hasBlockLineOfSight(
+                0.5,
+                64.5,
+                0.5,
+                0,
+                64,
+                5,
+                (x, y, z) -> x == 0 && y == 64 && z == 3
+        ));
+    }
+
+    @Test
+    void blockLineOfSightIgnoresTargetCellAsOccluder() {
+        assertTrue(InteractionRules.hasBlockLineOfSight(
+                0.5,
+                64.5,
+                0.5,
+                0,
+                64,
+                5,
+                (x, y, z) -> x == 0 && y == 64 && z == 5
+        ));
+    }
+
+    @Test
     void preferredToolIncreasesBreakSpeed() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         BlockType stone = Blocks.createDefaultRegistry().requireByKey("voxel:stone");
@@ -42,10 +68,13 @@ class InteractionRulesTest {
         Registry<ItemType> items = Items.createDefaultRegistry();
         ItemType stonePickaxe = items.requireByKey("voxel:stone_pickaxe");
         ItemType copperPickaxe = items.requireByKey("voxel:copper_pickaxe");
+        ItemType crystalPickaxe = items.requireByKey("voxel:crystal_pickaxe");
 
         assertEquals(1, InteractionRules.toolLevel(stonePickaxe));
         assertEquals(2, InteractionRules.toolLevel(copperPickaxe));
+        assertEquals(4, InteractionRules.toolLevel(crystalPickaxe));
         assertTrue(copperPickaxe.toolSpeed() > stonePickaxe.toolSpeed());
+        assertTrue(crystalPickaxe.toolSpeed() > copperPickaxe.toolSpeed());
     }
 
     @Test
@@ -66,6 +95,25 @@ class InteractionRulesTest {
         assertTrue(InteractionRules.canHarvest(copperPickaxe, items, ironOre));
         assertFalse(InteractionRules.canHarvest(copperPickaxe, items, crystalNode));
         assertTrue(InteractionRules.canHarvest(ironPickaxe, items, crystalNode));
+    }
+
+    @Test
+    void crystalToolsAddLateGameBonusHarvests() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Registry<BlockType> blocks = Blocks.createDefaultRegistry();
+        BlockType crystalNode = blocks.requireByKey("voxel:glow_crystal_node");
+        BlockType pineLog = blocks.requireByKey("voxel:pine_log");
+        BlockType wildGrass = blocks.requireByKey("voxel:wild_grass");
+
+        float ironPickaxe = InteractionRules.breakMultiplier(new ItemStack(items.requireByKey("voxel:iron_pickaxe").id(), 1), items, crystalNode);
+        float crystalPickaxe = InteractionRules.breakMultiplier(new ItemStack(items.requireByKey("voxel:crystal_pickaxe").id(), 1), items, crystalNode);
+        float crystalAxe = InteractionRules.breakMultiplier(new ItemStack(items.requireByKey("voxel:crystal_axe").id(), 1), items, pineLog);
+        float crystalKnife = InteractionRules.breakMultiplier(new ItemStack(items.requireByKey("voxel:crystal_knife").id(), 1), items, wildGrass);
+
+        assertEquals(1, InteractionRules.dropCount(crystalNode, ironPickaxe));
+        assertEquals(2, InteractionRules.dropCount(crystalNode, crystalPickaxe));
+        assertEquals(2, InteractionRules.dropCount(pineLog, crystalAxe));
+        assertEquals(3, InteractionRules.dropCount(wildGrass, crystalKnife));
     }
 
     @Test
@@ -116,5 +164,26 @@ class InteractionRulesTest {
 
         assertEquals("voxel:bark_strip", interaction.itemKey());
         assertEquals(2, interaction.count());
+    }
+
+    @Test
+    void glowMushroomCanBeGatheredForCookingCaps() {
+        BlockType glowMushroom = Blocks.createDefaultRegistry().requireByKey("voxel:glow_mushroom");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(glowMushroom).orElseThrow();
+
+        assertEquals("voxel:glow_mushroom_cap", interaction.itemKey());
+        assertEquals(1, interaction.count());
+    }
+
+    @Test
+    void sporeBlossomsCanBeGatheredForRareTea() {
+        BlockType sporeBlossom = Blocks.createDefaultRegistry().requireByKey("voxel:spore_blossom");
+
+        InteractionRules.BlockInteraction interaction = InteractionRules.blockInteraction(sporeBlossom).orElseThrow();
+
+        assertEquals("voxel:spore_blossom", interaction.itemKey());
+        assertEquals(1, interaction.count());
+        assertEquals("Picked spore blossom", interaction.message());
     }
 }

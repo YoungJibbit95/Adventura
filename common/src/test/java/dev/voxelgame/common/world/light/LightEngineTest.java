@@ -34,6 +34,8 @@ class LightEngineTest {
         assertEquals(15, blocks.requireById(Blocks.ANCIENT_LANTERN).lightEmission());
         assertEquals(14, blocks.requireById(Blocks.CAMPFIRE_ACTIVE).lightEmission());
         assertEquals(10, blocks.requireById(Blocks.GLOW_CRYSTAL_NODE).lightEmission());
+        assertEquals(8, blocks.requireById(Blocks.GLOW_MUSHROOM).lightEmission());
+        assertEquals(5, blocks.requireById(Blocks.SPORE_BLOSSOM).lightEmission());
         assertEquals(1, blocks.requireById(Blocks.MUSHROOM_CLUSTER).lightEmission());
         assertEquals(0, blocks.requireById(Blocks.CAMPFIRE).lightEmission());
         assertEquals(0, blocks.requireById(Blocks.CAMPFIRE_BURNED_OUT).lightEmission());
@@ -46,6 +48,8 @@ class LightEngineTest {
         assertSourceSeedsBlockLight(Blocks.ANCIENT_LANTERN, 15);
         assertSourceSeedsBlockLight(Blocks.CAMPFIRE_ACTIVE, 14);
         assertSourceSeedsBlockLight(Blocks.GLOW_CRYSTAL_NODE, 10);
+        assertSourceSeedsBlockLight(Blocks.GLOW_MUSHROOM, 8);
+        assertSourceSeedsBlockLight(Blocks.SPORE_BLOSSOM, 5);
         assertSourceSeedsBlockLight(Blocks.MUSHROOM_CLUSTER, 1);
     }
 

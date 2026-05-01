@@ -12,8 +12,11 @@ import dev.voxelgame.common.gameplay.ComfortRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockCollisionShape;
+import dev.voxelgame.common.physics.BlockCollisionShapes;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.PhysicsTickets;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkDataCodec;
@@ -40,6 +43,7 @@ import java.util.UUID;
 public final class ClientWorld {
     private static final PlayerBounds PLAYER_BOUNDS = PlayerBounds.DEFAULT;
     private static final double ENTITY_INTERPOLATION_DELAY_SECONDS = 0.10;
+    private static final double PROJECTILE_SWEEP_PREVIEW_SECONDS = 0.20;
 
     private final InMemoryWorld world;
     private final OverworldGenerator generator;
@@ -54,6 +58,7 @@ public final class ClientWorld {
     private boolean spawnEntitiesSeeded;
     private int lastUnloadedChunks;
     private long totalUnloadedChunks;
+    private boolean lastPhysicsBlockedByLoading;
 
     public ClientWorld(long seed) {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
@@ -161,7 +166,7 @@ public final class ClientWorld {
         List<EntitySnapshot> visible = new ArrayList<>();
         for (EntityTrack track : entities.values()) {
             EntitySnapshot snapshot = track.sample(nowSeconds);
-            if (ownPlayerId != null && ownPlayerId.equals(snapshot.ownerPlayerId())) {
+            if (isOwnPlayerSnapshot(snapshot)) {
                 continue;
             }
             visible.add(snapshot);
@@ -215,14 +220,14 @@ public final class ClientWorld {
         if (!world.dimension().containsY(hit.placeY())) {
             return false;
         }
-        if (InteractionRules.placementIntersectsPlayer(playerEyePosition.x, playerEyePosition.y, playerEyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ())) {
-            return false;
-        }
-        if (placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ())) {
-            return false;
-        }
         Optional<BlockType> placed = world.blocks().findById(blockId);
         if (placed.isEmpty() || blockId == Blocks.AIR || blockId == Blocks.WATER) {
+            return false;
+        }
+        if (InteractionRules.placementIntersectsPlayer(playerEyePosition.x, playerEyePosition.y, playerEyePosition.z, hit.placeX(), hit.placeY(), hit.placeZ(), blockId)) {
+            return false;
+        }
+        if (placementIntersectsVisibleEntity(hit.placeX(), hit.placeY(), hit.placeZ(), blockId)) {
             return false;
         }
         BlockType current = world.blockType(world.blockId(hit.placeX(), hit.placeY(), hit.placeZ()));
@@ -239,12 +244,20 @@ public final class ClientWorld {
     }
 
     public synchronized boolean placementIntersectsVisibleEntity(int blockX, int blockY, int blockZ, double nowSeconds) {
+        return placementIntersectsVisibleEntity(blockX, blockY, blockZ, Blocks.STONE, nowSeconds);
+    }
+
+    public synchronized boolean placementIntersectsVisibleEntity(int blockX, int blockY, int blockZ, short blockId) {
+        return placementIntersectsVisibleEntity(blockX, blockY, blockZ, blockId, monotonicSeconds());
+    }
+
+    public synchronized boolean placementIntersectsVisibleEntity(int blockX, int blockY, int blockZ, short blockId, double nowSeconds) {
         for (EntityTrack track : entities.values()) {
             EntitySnapshot snapshot = track.sample(nowSeconds);
             if (ownPlayerId != null && ownPlayerId.equals(snapshot.ownerPlayerId())) {
                 continue;
             }
-            if (InteractionRules.placementIntersectsEntity(snapshot, blockX, blockY, blockZ)) {
+            if (InteractionRules.placementIntersectsEntity(snapshot, blockX, blockY, blockZ, blockId)) {
                 return true;
             }
         }
@@ -252,6 +265,7 @@ public final class ClientWorld {
     }
 
     public synchronized boolean collidesPlayer(double eyeX, double eyeY, double eyeZ) {
+        lastPhysicsBlockedByLoading = false;
         double minX = PLAYER_BOUNDS.minX(eyeX);
         double maxX = PLAYER_BOUNDS.maxX(eyeX);
         double minY = PLAYER_BOUNDS.minY(eyeY);
@@ -269,15 +283,105 @@ public final class ClientWorld {
                         continue;
                     }
                     if (world.findChunk(ChunkPos.fromBlock(x, z)).isEmpty()) {
+                        lastPhysicsBlockedByLoading = true;
                         return true;
                     }
-                    if (world.blockType(world.blockId(x, y, z)).collidable()) {
+                    short blockId = world.blockId(x, y, z);
+                    if (world.blockType(blockId).collidable()
+                            && BlockCollisionShapes.collisionShape(blockId).intersectsPlayer(PLAYER_BOUNDS, eyeX, eyeY, eyeZ, x, y, z)) {
                         return true;
                     }
                 }
             }
         }
         return false;
+    }
+
+    public synchronized boolean lastPhysicsBlockedByLoading() {
+        return lastPhysicsBlockedByLoading;
+    }
+
+    public synchronized PhysicsLoadingStatus physicsLoadingStatus(Vector3f position) {
+        return physicsLoadingStatus(position, PhysicsTickets.CLIENT_LOADING_BARRIER_RADIUS_CHUNKS);
+    }
+
+    public synchronized PhysicsLoadingStatus physicsLoadingStatus(Vector3f position, int radiusChunks) {
+        ChunkPos center = ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z));
+        int radius = Math.max(0, radiusChunks);
+        int loaded = 0;
+        int required = PhysicsTickets.requiredChunkCount(radius);
+        for (int z = center.z() - radius; z <= center.z() + radius; z++) {
+            for (int x = center.x() - radius; x <= center.x() + radius; x++) {
+                if (world.findChunk(new ChunkPos(x, z)).isPresent()) {
+                    loaded++;
+                }
+            }
+        }
+        return new PhysicsLoadingStatus(center, radius, loaded, required, loaded < required || lastPhysicsBlockedByLoading);
+    }
+
+    public synchronized List<ChunkMesh.Bounds> collisionShapeBoundsAround(Vector3f position, int radiusBlocks) {
+        int centerX = floor(position.x);
+        int centerY = floor(position.y);
+        int centerZ = floor(position.z);
+        int radius = Math.max(0, radiusBlocks);
+        List<ChunkMesh.Bounds> bounds = new ArrayList<>();
+        for (int y = centerY - radius; y <= centerY + radius; y++) {
+            if (!world.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = centerZ - radius; z <= centerZ + radius; z++) {
+                for (int x = centerX - radius; x <= centerX + radius; x++) {
+                    if (world.findChunk(ChunkPos.fromBlock(x, z)).isEmpty()) {
+                        continue;
+                    }
+                    short blockId = world.blockId(x, y, z);
+                    if (!BlockCollisionShapes.hasPartialShape(blockId)) {
+                        continue;
+                    }
+                    for (BlockCollisionShape.Box box : BlockCollisionShapes.collisionShape(blockId).boxes()) {
+                        bounds.add(new ChunkMesh.Bounds(
+                                (float) (x + box.minX()),
+                                (float) (y + box.minY()),
+                                (float) (z + box.minZ()),
+                                (float) (x + box.maxX()),
+                                (float) (y + box.maxY()),
+                                (float) (z + box.maxZ())
+                        ));
+                    }
+                }
+            }
+        }
+        return bounds;
+    }
+
+    public synchronized List<ChunkMesh.Bounds> projectileSweepBoundsAround(Vector3f position, int radiusBlocks, double nowSeconds) {
+        double maxDistanceSquared = Math.max(0, radiusBlocks) * Math.max(0, radiusBlocks);
+        List<ChunkMesh.Bounds> bounds = new ArrayList<>();
+        for (EntitySnapshot snapshot : visibleEntities(nowSeconds)) {
+            if (!EntitySnapshot.STATE_PROJECTILE.equals(snapshot.stateKey())) {
+                continue;
+            }
+            double dx = snapshot.x() - position.x;
+            double dy = snapshot.y() - position.y;
+            double dz = snapshot.z() - position.z;
+            if (dx * dx + dy * dy + dz * dz > maxDistanceSquared) {
+                continue;
+            }
+            double nextX = snapshot.x() + snapshot.velocityX() * PROJECTILE_SWEEP_PREVIEW_SECONDS;
+            double nextY = snapshot.y() + snapshot.velocityY() * PROJECTILE_SWEEP_PREVIEW_SECONDS;
+            double nextZ = snapshot.z() + snapshot.velocityZ() * PROJECTILE_SWEEP_PREVIEW_SECONDS;
+            float radius = 0.11f;
+            bounds.add(new ChunkMesh.Bounds(
+                    (float) Math.min(snapshot.x(), nextX) - radius,
+                    (float) Math.min(snapshot.y(), nextY) - radius,
+                    (float) Math.min(snapshot.z(), nextZ) - radius,
+                    (float) Math.max(snapshot.x(), nextX) + radius,
+                    (float) Math.max(snapshot.y(), nextY) + radius,
+                    (float) Math.max(snapshot.z(), nextZ) + radius
+            ));
+        }
+        return bounds;
     }
 
     public synchronized boolean isUnderwater(Vector3f eyePosition) {
@@ -451,7 +555,11 @@ public final class ClientWorld {
                     short blockId = world.blockId(x, y, z);
                     if (blockId == Blocks.SKYROOT_LEAVES || blockId == Blocks.PINE_LEAVES) {
                         leaves.add(new BlockPosDistance(new BlockPos(x, y, z), distanceSquared(center, x, y, z)));
-                    } else if (blockId == Blocks.MUSHROOM_CLUSTER || blockId == Blocks.GLOW_CRYSTAL_NODE || blockId == Blocks.RED_MUSHROOM) {
+                    } else if (blockId == Blocks.MUSHROOM_CLUSTER
+                            || blockId == Blocks.GLOW_CRYSTAL_NODE
+                            || blockId == Blocks.GLOW_MUSHROOM
+                            || blockId == Blocks.SPORE_BLOSSOM
+                            || blockId == Blocks.RED_MUSHROOM) {
                         spores.add(new BlockPosDistance(new BlockPos(x, y, z), distanceSquared(center, x, y, z)));
                     }
                 }
@@ -687,6 +795,20 @@ public final class ClientWorld {
         return world.findChunk(pos).flatMap(this::verticalBounds);
     }
 
+    public synchronized List<ChunkMesh.Bounds> sectionBoundsAround(Vector3f cameraPosition, int radiusChunks) {
+        int radius = Math.max(0, radiusChunks);
+        ChunkPos center = ChunkPos.fromBlock((int) Math.floor(cameraPosition.x), (int) Math.floor(cameraPosition.z));
+        List<ChunkMesh.Bounds> bounds = new ArrayList<>();
+        for (Chunk chunk : world.loadedChunks()) {
+            ChunkPos pos = chunk.pos();
+            if (Math.abs(pos.x() - center.x()) > radius || Math.abs(pos.z() - center.z()) > radius) {
+                continue;
+            }
+            addSectionBounds(bounds, chunk);
+        }
+        return bounds;
+    }
+
     private void markDirtyWithNeighbors(ChunkPos pos) {
         markDirtyWithNeighbors(pos, false);
     }
@@ -834,12 +956,34 @@ public final class ClientWorld {
         ));
     }
 
+    private void addSectionBounds(List<ChunkMesh.Bounds> target, Chunk chunk) {
+        float minX = chunk.pos().x() * ChunkPos.SIZE;
+        float maxX = minX + ChunkPos.SIZE;
+        float minZ = chunk.pos().z() * ChunkPos.SIZE;
+        float maxZ = minZ + ChunkPos.SIZE;
+        for (int i = 0; i < chunk.sectionCount(); i++) {
+            ChunkSection section = chunk.sectionByIndex(i);
+            if (section.isEmpty()) {
+                continue;
+            }
+            float minY = Math.max(world.dimension().minY(), section.sectionY() * ChunkSection.SIZE);
+            float maxY = Math.min(world.dimension().maxYExclusive(), minY + ChunkSection.SIZE);
+            target.add(new ChunkMesh.Bounds(minX, minY, minZ, maxX, maxY, maxZ));
+        }
+    }
+
     private static int floor(double value) {
         return (int) Math.floor(value);
     }
 
     private static double monotonicSeconds() {
         return System.nanoTime() / 1_000_000_000.0;
+    }
+
+    private boolean isOwnPlayerSnapshot(EntitySnapshot snapshot) {
+        return ownPlayerId != null
+                && ownPlayerId.equals(snapshot.ownerPlayerId())
+                && "voxel:player".equals(snapshot.typeKey());
     }
 
     private static EntitySnapshot interpolate(EntitySnapshot previous, EntitySnapshot current, float t, double spanSeconds) {
@@ -948,6 +1092,20 @@ public final class ClientWorld {
             double cookSecondsRemaining,
             double receivedAtSeconds
     ) {
+    }
+
+    public record PhysicsLoadingStatus(
+            ChunkPos center,
+            int radiusChunks,
+            int loadedChunks,
+            int requiredChunks,
+            boolean blocked
+    ) {
+        public PhysicsLoadingStatus {
+            requiredChunks = Math.max(0, requiredChunks);
+            loadedChunks = Math.max(0, Math.min(loadedChunks, requiredChunks));
+            radiusChunks = Math.max(0, radiusChunks);
+        }
     }
 
     private record EntityTrack(EntitySnapshot previous, EntitySnapshot current, double previousTime, double currentTime) {

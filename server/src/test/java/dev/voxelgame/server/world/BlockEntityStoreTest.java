@@ -3,7 +3,9 @@ package dev.voxelgame.server.world;
 import dev.voxelgame.common.block.Blocks;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,5 +41,16 @@ class BlockEntityStoreTest {
         assertEquals(2, store.unknownCount());
         assertEquals(BlockEntityType.CAMPFIRE, store.typeAt(new BlockEntityStore.Position(1, 80, 2)).orElseThrow());
         assertTrue(store.typeAt(new BlockEntityStore.Position(2, 80, 2)).isEmpty());
+    }
+
+    @Test
+    void blockEntityTypeKeysAreUniqueAndTargetRegisteredBlocks() {
+        var blocks = Blocks.createDefaultRegistry();
+        Set<String> typeKeys = new HashSet<>();
+
+        for (BlockEntityType type : BlockEntityType.values()) {
+            assertTrue(typeKeys.add(type.typeKey()), "Duplicate block entity type key " + type.typeKey());
+            assertTrue(blocks.findByKey(type.typeKey()).isPresent(), type.typeKey());
+        }
     }
 }

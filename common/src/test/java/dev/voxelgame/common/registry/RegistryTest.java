@@ -2,6 +2,8 @@ package dev.voxelgame.common.registry;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -15,7 +17,20 @@ class RegistryTest {
 
         assertEquals("berries", registry.requireByKey("voxel:wild_berries"));
         assertEquals("voxel:berries", registry.canonicalKey("voxel:wild_berries").orElseThrow());
+        assertEquals(Map.of("voxel:wild_berries", "voxel:berries"), registry.aliases());
         assertEquals(1, registry.size());
+    }
+
+    @Test
+    void aliasViewIsReadOnly() {
+        Registry<String> registry = new Registry<>("test");
+        registry.register((short) 1, "voxel:berries", "berries");
+        registry.registerAlias("voxel:wild_berries", "voxel:berries");
+
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> registry.aliases().put("voxel:old", "voxel:new")
+        );
     }
 
     @Test

@@ -6,6 +6,7 @@ import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.ComfortRules;
+import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.item.Inventory;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
@@ -15,8 +16,10 @@ import dev.voxelgame.common.loot.LootTable;
 import dev.voxelgame.common.loot.LootTableRegistry;
 import dev.voxelgame.common.loot.LootTables;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockCollisionShapes;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.ProjectileBounds;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkDataCodec;
@@ -129,7 +132,7 @@ public final class ServerWorld {
         return false;
     }
 
-    public Chunk getOrGenerateChunk(ChunkPos pos) {
+    public synchronized Chunk getOrGenerateChunk(ChunkPos pos) {
         return world.findChunk(pos).orElseGet(() -> {
             Chunk chunk = world.getOrCreateChunk(pos);
             generator.generate(chunk);
@@ -223,8 +226,13 @@ public final class ServerWorld {
                     if (!bounds.intersectsBlock(eyeX, eyeY, eyeZ, x, y, z)) {
                         continue;
                     }
-                    Optional<BlockType> block = blockAt(x, y, z);
-                    if (block.isEmpty() || block.get().collidable()) {
+                    short blockId = blockIdAt(x, y, z);
+                    Optional<BlockType> block = world.dimension().containsY(y)
+                            ? Optional.of(world.blockType(blockId))
+                            : Optional.empty();
+                    if (block.isEmpty()
+                            || (block.get().collidable()
+                            && BlockCollisionShapes.collisionShape(blockId).intersectsPlayer(bounds, eyeX, eyeY, eyeZ, x, y, z))) {
                         return true;
                     }
                 }
@@ -331,6 +339,41 @@ public final class ServerWorld {
                 || support.get().id() == Blocks.GRASS;
     }
 
+    public synchronized boolean collidesProjectile(double x, double y, double z, ProjectileBounds bounds) {
+        if (bounds == null || !Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            return true;
+        }
+        for (int yy = floor(y - bounds.radius()); yy <= floor(y + bounds.radius()); yy++) {
+            if (!world.dimension().containsY(yy)) {
+                return true;
+            }
+            for (int zz = floor(z - bounds.radius()); zz <= floor(z + bounds.radius()); zz++) {
+                for (int xx = floor(x - bounds.radius()); xx <= floor(x + bounds.radius()); xx++) {
+                    if (!bounds.intersectsBlock(x, y, z, xx, yy, zz)) {
+                        continue;
+                    }
+                    short blockId = blockIdAt(xx, yy, zz);
+                    Optional<BlockType> block = world.dimension().containsY(yy)
+                            ? Optional.of(world.blockType(blockId))
+                            : Optional.empty();
+                    if (block.isEmpty()
+                            || (block.get().collidable()
+                            && BlockCollisionShapes.collisionShape(blockId).intersectsProjectile(bounds, x, y, z, xx, yy, zz))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public synchronized boolean projectileInWater(double x, double y, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            return false;
+        }
+        return blockIdAt(floor(x), floor(y), floor(z)) == Blocks.WATER;
+    }
+
     private boolean collidesEntity(EntitySnapshot snapshot) {
         EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
         double baseY = EntityBounds.baseY(snapshot);
@@ -350,8 +393,13 @@ public final class ServerWorld {
                     if (!bounds.intersectsBlock(snapshot.x(), baseY, snapshot.z(), x, y, z)) {
                         continue;
                     }
-                    Optional<BlockType> block = blockAt(x, y, z);
-                    if (block.isEmpty() || block.get().collidable()) {
+                    short blockId = blockIdAt(x, y, z);
+                    Optional<BlockType> block = world.dimension().containsY(y)
+                            ? Optional.of(world.blockType(blockId))
+                            : Optional.empty();
+                    if (block.isEmpty()
+                            || (block.get().collidable()
+                            && BlockCollisionShapes.collisionShape(blockId).intersectsEntity(bounds, snapshot.x(), baseY, snapshot.z(), x, y, z))) {
                         return true;
                     }
                 }
@@ -449,6 +497,18 @@ public final class ServerWorld {
             return Optional.empty();
         }
         return syncBlockEntityForBlock(new BlockPos(x, y, z), block.get().id());
+    }
+
+    public synchronized boolean hasBlockLineOfSight(double eyeX, double eyeY, double eyeZ, int blockX, int blockY, int blockZ) {
+        return InteractionRules.hasBlockLineOfSight(
+                eyeX,
+                eyeY,
+                eyeZ,
+                blockX,
+                blockY,
+                blockZ,
+                this::occludesBlockInteraction
+        );
     }
 
     public boolean hasBlockWithin(double centerX, double centerY, double centerZ, short blockId, int radius) {
@@ -685,6 +745,11 @@ public final class ServerWorld {
                 .isPresent();
     }
 
+    private boolean occludesBlockInteraction(int x, int y, int z) {
+        Optional<BlockType> block = blockAt(x, y, z);
+        return block.isEmpty() || (block.get().solid() && block.get().opaque());
+    }
+
     private boolean isSleepingMat(int x, int y, int z) {
         Optional<BlockType> block = blockAt(x, y, z);
         return block.isPresent() && block.get().id() == Blocks.SLEEPING_MAT;
@@ -782,7 +847,7 @@ public final class ServerWorld {
         return blockEntities.sync(new BlockEntityStore.Position(pos.x(), pos.y(), pos.z()), blockId);
     }
 
-    public GamePacket.ChunkData packetFor(ChunkPos pos) {
+    public synchronized GamePacket.ChunkData packetFor(ChunkPos pos) {
         return ChunkDataCodec.toPacket(getOrGenerateChunk(pos));
     }
 

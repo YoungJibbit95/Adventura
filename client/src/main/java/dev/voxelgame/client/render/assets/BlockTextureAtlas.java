@@ -506,7 +506,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
 
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE, blocks, "stone", 576, 50, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.DIRT, blocks, "dirt", 211, 50, 150, 158);
-        putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 29, 49, 150, 158);
+        putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.GRASS, blocks, "grass_top", 1123, 259, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, sidePathByBlock, Blocks.GRASS, blocks, "grass_side", 29, 49, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, bottomPathByBlock, Blocks.GRASS, blocks, "dirt", 211, 50, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WATER, blocks, "water", 211, 469, 150, 158);
@@ -537,6 +537,8 @@ public final class BlockTextureAtlas implements AutoCloseable {
         putFullFace(duplicateMappings, imagesByPath, bottomPathByBlock, Blocks.PINE_LOG, blocks, "pine_log_top", 394, 259, 150, 158);
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.PINE_LEAVES, blocks, "pine_leaves", 941, 259, 150, 158);
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.RED_MUSHROOM, food, "red_mushroom", 812, 132, 110, 94);
+        putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_MUSHROOM, ores, "glow_mushroom", 961, 519, 132, 116);
+        putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SPORE_BLOSSOM, food, "spore_blossom", 982, 678, 106, 70);
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_CRYSTAL_NODE, ores, "glow_crystal_node", 1028, 147, 133, 130);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, blocks, "skyroot_planks", 576, 469, 150, 158);
     }

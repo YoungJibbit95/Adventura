@@ -24,6 +24,7 @@ public sealed interface GamePacket permits
         GamePacket.EntityInteract,
         GamePacket.InventorySnapshot,
         GamePacket.PlayerStatsSnapshot,
+        GamePacket.ServerStatsSnapshot,
         GamePacket.StorageOpenRequest,
         GamePacket.SleepRequest,
         GamePacket.CookRequest,
@@ -33,7 +34,7 @@ public sealed interface GamePacket permits
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 19;
+    int PROTOCOL_VERSION = 20;
     int MAX_CLIENT_NAME_LENGTH = 64;
     int MAX_USERNAME_LENGTH = 32;
     int MAX_AUTH_TOKEN_LENGTH = 128;
@@ -324,6 +325,44 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.PLAYER_STATS_SNAPSHOT;
+        }
+    }
+
+    record ServerStatsSnapshot(
+            int chunkSubscriptions,
+            long sentEntitySnapshotPackets,
+            long sentEntitySnapshots,
+            long sentChunkPackets,
+            long sentBlockUpdates,
+            long discardedUpdatesOutsideInterest,
+            long rejectedChunkRequests,
+            long failedChunkRequests,
+            long sentPackets,
+            long estimatedPacketBytes,
+            long averagePacketBytes,
+            double packetRatePerSecond
+    ) implements GamePacket {
+        public ServerStatsSnapshot {
+            if (chunkSubscriptions < 0
+                    || sentEntitySnapshotPackets < 0L
+                    || sentEntitySnapshots < 0L
+                    || sentChunkPackets < 0L
+                    || sentBlockUpdates < 0L
+                    || discardedUpdatesOutsideInterest < 0L
+                    || rejectedChunkRequests < 0L
+                    || failedChunkRequests < 0L
+                    || sentPackets < 0L
+                    || estimatedPacketBytes < 0L
+                    || averagePacketBytes < 0L
+                    || !Double.isFinite(packetRatePerSecond)
+                    || packetRatePerSecond < 0.0) {
+                throw new IllegalArgumentException("Server stats cannot contain negative or non-finite values");
+            }
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.SERVER_STATS_SNAPSHOT;
         }
     }
 

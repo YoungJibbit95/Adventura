@@ -6,16 +6,19 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RenderResourceTrackerTest {
     @BeforeEach
     void resetBefore() {
         RenderResourceTracker.resetForTests();
+        ShaderRegistry.resetForTests();
     }
 
     @AfterEach
     void resetAfter() {
         RenderResourceTracker.resetForTests();
+        ShaderRegistry.resetForTests();
     }
 
     @Test
@@ -83,5 +86,27 @@ class RenderResourceTrackerTest {
         assertEquals(0, released.liveFramebuffers());
         assertEquals(1L, released.disposedTextures());
         assertEquals(1L, released.disposedShaderPrograms());
+    }
+
+    @Test
+    void tracksShaderReloadAttempts() {
+        RenderResourceTracker.recordShaderReload(2.5, 0);
+        RenderResourceTracker.recordShaderReload(4.25, 2);
+
+        RenderResourceTracker.Snapshot snapshot = RenderResourceTracker.snapshot();
+        assertEquals(2L, snapshot.shaderReloadCount());
+        assertEquals(2L, snapshot.failedShaderReloadCount());
+        assertEquals(4.25, snapshot.lastShaderReloadMilliseconds(), 0.001);
+    }
+
+    @Test
+    void shaderRegistryReportsEmptyReloadsWithoutGlWork() {
+        ShaderRegistry.ReloadReport report = ShaderRegistry.reloadAll();
+
+        assertEquals(0, report.attemptedPrograms());
+        assertEquals(0, report.reloadedPrograms());
+        assertEquals(0, report.failedPrograms());
+        assertTrue(report.successful());
+        assertEquals(1L, RenderResourceTracker.snapshot().shaderReloadCount());
     }
 }

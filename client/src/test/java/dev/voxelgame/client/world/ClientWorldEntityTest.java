@@ -1,5 +1,6 @@
 package dev.voxelgame.client.world;
 
+import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import org.junit.jupiter.api.Test;
 
@@ -47,6 +48,52 @@ class ClientWorldEntityTest {
         assertEquals(100.0, interpolated.velocityX(), 0.001);
         assertEquals(20.0, interpolated.velocityY(), 0.001);
         assertEquals(-40.0, interpolated.velocityZ(), 0.001);
+    }
+
+    @Test
+    void keepsOwnProjectileVisibleAndInterpolated() {
+        ClientWorld world = new ClientWorld(1L);
+        UUID own = UUID.randomUUID();
+        world.setOwnPlayerId(own);
+
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(1L, "voxel:player", own, 0.0, 80.0, 0.0, 0.0f, 0.0f, 20),
+                new EntitySnapshot(-1L, "voxel:arrow_projectile", own, 0.0, 80.0, 0.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE)
+        ), 0.0);
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(1L, "voxel:player", own, 0.0, 80.0, 0.0, 0.0f, 0.0f, 20),
+                new EntitySnapshot(-1L, "voxel:arrow_projectile", own, 4.0, 80.0, 0.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE)
+        ), 0.10);
+
+        List<EntitySnapshot> visible = world.visibleEntities(0.15);
+        EntitySnapshot projectile = visible.getFirst();
+
+        assertEquals(1, visible.size());
+        assertEquals(-1L, projectile.entityId());
+        assertEquals(2.0, projectile.x(), 0.001);
+        assertEquals(EntitySnapshot.STATE_PROJECTILE, projectile.stateKey());
+    }
+
+    @Test
+    void projectileSweepBoundsAreRadiusLimitedAndIgnoreNonProjectiles() {
+        ClientWorld world = new ClientWorld(1L);
+
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(1L, "voxel:arrow_projectile", null, 8.0, 80.0, 8.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE)
+                        .withVelocity(10.0, 0.0, -5.0),
+                new EntitySnapshot(2L, "voxel:bunny", null, 9.0, 80.0, 8.0, 0.0f, 0.0f, 10, EntitySnapshot.STATE_WANDER),
+                new EntitySnapshot(3L, "voxel:arrow_projectile", null, 80.0, 80.0, 80.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE)
+                        .withVelocity(10.0, 0.0, 0.0)
+        ), 10.0);
+
+        List<ChunkMesh.Bounds> bounds = world.projectileSweepBoundsAround(new org.joml.Vector3f(8.0f, 80.0f, 8.0f), 16, 10.0);
+
+        assertEquals(1, bounds.size());
+        ChunkMesh.Bounds sweep = bounds.getFirst();
+        assertEquals(7.89f, sweep.minX(), 0.001f);
+        assertEquals(10.11f, sweep.maxX(), 0.001f);
+        assertEquals(6.89f, sweep.minZ(), 0.001f);
+        assertEquals(8.11f, sweep.maxZ(), 0.001f);
     }
 
     @Test

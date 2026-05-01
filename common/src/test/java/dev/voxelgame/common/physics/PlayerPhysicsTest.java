@@ -169,6 +169,33 @@ class PlayerPhysicsTest {
     }
 
     @Test
+    void survivalStepAllowsShortCoyoteJumpAfterLeavingGround() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerInput jump = new PlayerInput(0.0f, 0.0f, true, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+        PlayerState justLeftGround = new PlayerState(8.0, 65.0, 8.0, 0.0f, 0.0f, 0.0f, false, false, 0.0f, 0.08f, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepSurvival(justLeftGround, jump, dry, 0.016f, config, (x, y, z) -> false);
+
+        assertTrue(next.velocityY() > 0.0f);
+        assertFalse(next.onGround());
+    }
+
+    @Test
+    void survivalStepBuffersJumpPressedJustBeforeLanding() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerInput jump = new PlayerInput(0.0f, 0.0f, true, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+        PlayerState falling = new PlayerState(8.0, 64.2, 8.0, 0.0f, -5.0f, 0.0f, false, false, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepSurvival(falling, jump, dry, 0.1f, config, (x, y, z) -> y <= 64.0);
+
+        assertTrue(next.velocityY() > 0.0f);
+        assertFalse(next.onGround());
+        assertEquals(0.0f, next.fallImpactSpeed(), 0.001f);
+    }
+
+    @Test
     void survivalStepSlidesAlongBlockedHorizontalAxis() {
         PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
         PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);

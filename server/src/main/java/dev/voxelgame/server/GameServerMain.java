@@ -36,6 +36,7 @@ public final class GameServerMain {
                 server.tickEntities(tick);
             }
             if (tick % TickLoop.TPS == 0) {
+                server.broadcastServerStats();
                 System.out.println("Server tick " + tick);
             }
         });

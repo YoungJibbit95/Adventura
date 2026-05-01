@@ -52,6 +52,8 @@ class BlockRenderPropertiesTest {
 
         assertEquals(0.58f, water.alpha(), 0.0001f);
         assertTrue(water.animatedFluid());
+        assertEquals(BlockRenderProperties.BiomeTintMode.WATER, water.biomeTintMode());
+        assertEquals(BlockRenderProperties.FogAffectMode.REDUCED, water.fogAffectMode());
         assertTrue((water.materialFlags() & BlockRenderProperties.FLAG_TRANSLUCENT) != 0);
         assertTrue((water.materialFlags() & BlockRenderProperties.FLAG_ANIMATED_FLUID) != 0);
         assertEquals(1.0f, effects[offset + 1], 0.0001f);
@@ -75,6 +77,8 @@ class BlockRenderPropertiesTest {
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.WILD_GRASS));
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.SUN_BLOOM));
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.REEDS));
+        assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.GLOW_MUSHROOM));
+        assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.SPORE_BLOSSOM));
         assertFalse(BlockRenderProperties.fillsTextureGaps(Blocks.CAMPFIRE_ACTIVE));
         assertEquals(0.0f, effects[Blocks.WILD_GRASS * 4 + 3], 0.0001f);
     }
@@ -83,12 +87,18 @@ class BlockRenderPropertiesTest {
     void emissiveBlocksExposeGlowStrength() {
         BlockRenderProperties lantern = BlockRenderProperties.forBlock(Blocks.LANTERN);
         BlockRenderProperties ancientLantern = BlockRenderProperties.forBlock(Blocks.ANCIENT_LANTERN);
+        BlockRenderProperties glowMushroom = BlockRenderProperties.forBlock(Blocks.GLOW_MUSHROOM);
+        BlockRenderProperties sporeBlossom = BlockRenderProperties.forBlock(Blocks.SPORE_BLOSSOM);
         float[] effects = BlockRenderProperties.effectsTable();
 
         assertTrue((lantern.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
         assertTrue((ancientLantern.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
+        assertTrue((glowMushroom.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
+        assertTrue((sporeBlossom.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
         assertEquals(0.78f, effects[Blocks.LANTERN * 4], 0.0001f);
         assertEquals(0.95f, effects[Blocks.ANCIENT_LANTERN * 4], 0.0001f);
+        assertEquals(0.62f, effects[Blocks.GLOW_MUSHROOM * 4], 0.0001f);
+        assertEquals(0.38f, effects[Blocks.SPORE_BLOSSOM * 4], 0.0001f);
     }
 
     @Test
@@ -107,7 +117,7 @@ class BlockRenderPropertiesTest {
                 true,
                 BlockRenderProperties.DEFAULT_CUTOUT_THRESHOLD,
                 BlockRenderProperties.BiomeTintMode.WATER,
-                BlockRenderProperties.FogAffectMode.NORMAL,
+                BlockRenderProperties.FogAffectMode.REDUCED,
                 true,
                 BlockRenderProperties.DEFAULT_ROUGHNESS,
                 false,
@@ -128,6 +138,7 @@ class BlockRenderPropertiesTest {
         float[] pixels = TerrainMaterialLut.pixels(materials);
         int effects = offset(materials.length, Blocks.WATER, TerrainMaterialLut.ROW_EFFECTS);
         int side = offset(materials.length, Blocks.WATER, TerrainMaterialLut.ROW_SIDE_UV);
+        int style = offset(materials.length, Blocks.WATER, TerrainMaterialLut.ROW_STYLE);
 
         assertEquals(0.0f, pixels[effects], 0.0001f);
         assertEquals(1.0f, pixels[effects + 1], 0.0001f);
@@ -136,6 +147,9 @@ class BlockRenderPropertiesTest {
         assertEquals(BlockRenderProperties.DEFAULT_CUTOUT_THRESHOLD, pixels[effects + 3], 0.0001f);
         assertEquals(0.10f, pixels[side], 0.0001f);
         assertEquals(0.40f, pixels[side + 3], 0.0001f);
+        assertEquals(BlockRenderProperties.BiomeTintMode.WATER.ordinal(), pixels[style], 0.0001f);
+        assertEquals(BlockRenderProperties.FogAffectMode.REDUCED.ordinal(), pixels[style + 1], 0.0001f);
+        assertEquals(BlockRenderLayer.TRANSLUCENT.ordinal(), pixels[style + 2], 0.0001f);
     }
 
     private static int offset(int materialCount, short materialIndex, int row) {

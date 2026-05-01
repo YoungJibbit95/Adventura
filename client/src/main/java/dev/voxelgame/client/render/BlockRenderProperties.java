@@ -200,50 +200,52 @@ public record BlockRenderProperties(
         set(table, Blocks.AIR, 0.0f, 0.0f, 0.0f);
         set(table, Blocks.STONE, 0.48f, 0.48f, 0.47f);
         set(table, Blocks.DIRT, 0.42f, 0.27f, 0.15f);
-        set(table, Blocks.GRASS, 0.33f, 0.62f, 0.24f);
-        set(table, Blocks.WATER, 0.20f, 0.42f, 0.82f, 0.58f, 0.0f, true);
+        set(table, Blocks.GRASS, 0.33f, 0.62f, 0.24f, BiomeTintMode.GRASS);
+        set(table, Blocks.WATER, 0.20f, 0.42f, 0.82f, 0.58f, 0.0f, true, BiomeTintMode.WATER, FogAffectMode.REDUCED);
         set(table, Blocks.SAND, 0.78f, 0.70f, 0.45f);
         set(table, Blocks.SKYROOT_LOG, 0.42f, 0.28f, 0.16f);
-        set(table, Blocks.SKYROOT_LEAVES, 0.20f, 0.48f, 0.24f);
+        set(table, Blocks.SKYROOT_LEAVES, 0.20f, 0.48f, 0.24f, BiomeTintMode.FOLIAGE);
         set(table, Blocks.COAL_ORE, 0.28f, 0.27f, 0.26f);
-        set(table, Blocks.TORCH, 1.00f, 0.72f, 0.30f, 1.0f, 0.85f, false);
-        set(table, Blocks.WILD_GRASS, 0.25f, 0.58f, 0.20f);
-        set(table, Blocks.SUN_BLOOM, 0.95f, 0.75f, 0.20f);
+        set(table, Blocks.TORCH, 1.00f, 0.72f, 0.30f, 1.0f, 0.85f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
+        set(table, Blocks.WILD_GRASS, 0.25f, 0.58f, 0.20f, BiomeTintMode.GRASS);
+        set(table, Blocks.SUN_BLOOM, 0.95f, 0.75f, 0.20f, BiomeTintMode.GRASS);
         set(table, Blocks.IRON_ORE, 0.58f, 0.50f, 0.43f);
         set(table, Blocks.COPPER_ORE, 0.62f, 0.36f, 0.20f);
         set(table, Blocks.CLAY, 0.46f, 0.55f, 0.62f);
-        set(table, Blocks.CACTUS, 0.18f, 0.50f, 0.25f);
+        set(table, Blocks.CACTUS, 0.18f, 0.50f, 0.25f, BiomeTintMode.GRASS);
         set(table, Blocks.MOSSY_STONE, 0.34f, 0.43f, 0.32f);
         set(table, Blocks.GRAVEL, 0.45f, 0.43f, 0.38f);
         set(table, Blocks.SNOW, 0.86f, 0.91f, 0.91f);
-        set(table, Blocks.ICE, 0.50f, 0.74f, 0.88f, 0.70f, 0.0f, false);
+        set(table, Blocks.ICE, 0.50f, 0.74f, 0.88f, 0.70f, 0.0f, false, BiomeTintMode.WATER, FogAffectMode.REDUCED);
         set(table, Blocks.PINE_LOG, 0.38f, 0.23f, 0.13f);
-        set(table, Blocks.PINE_LEAVES, 0.12f, 0.31f, 0.25f);
+        set(table, Blocks.PINE_LEAVES, 0.12f, 0.31f, 0.25f, BiomeTintMode.FOLIAGE);
         set(table, Blocks.RED_MUSHROOM, 0.62f, 0.20f, 0.16f);
         set(table, Blocks.SKYROOT_PLANKS, 0.58f, 0.39f, 0.20f);
         set(table, Blocks.FLOWER_POT, 0.63f, 0.36f, 0.22f);
-        set(table, Blocks.LANTERN, 0.95f, 0.68f, 0.28f, 1.0f, 0.78f, false);
+        set(table, Blocks.LANTERN, 0.95f, 0.68f, 0.28f, 1.0f, 0.78f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.WOVEN_RUG, 0.54f, 0.24f, 0.24f);
         set(table, Blocks.SMALL_TABLE, 0.50f, 0.31f, 0.18f);
         set(table, Blocks.WOODEN_CHAIR, 0.48f, 0.29f, 0.17f);
         set(table, Blocks.STORAGE_CRATE, 0.46f, 0.29f, 0.16f);
-        set(table, Blocks.MOSSY_PATH, 0.30f, 0.44f, 0.28f);
+        set(table, Blocks.MOSSY_PATH, 0.30f, 0.44f, 0.28f, BiomeTintMode.GRASS);
         set(table, Blocks.GARDEN_FENCE, 0.43f, 0.31f, 0.17f);
-        set(table, Blocks.BERRY_BUSH, 0.28f, 0.45f, 0.24f);
-        set(table, Blocks.HERB_PLANTER, 0.36f, 0.52f, 0.30f);
-        set(table, Blocks.CAMPFIRE, 0.95f, 0.45f, 0.20f, 1.0f, 0.55f, false);
+        set(table, Blocks.BERRY_BUSH, 0.28f, 0.45f, 0.24f, BiomeTintMode.FOLIAGE);
+        set(table, Blocks.HERB_PLANTER, 0.36f, 0.52f, 0.30f, BiomeTintMode.GRASS);
+        set(table, Blocks.CAMPFIRE, 0.95f, 0.45f, 0.20f, 1.0f, 0.55f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.SMALL_STONE, 0.42f, 0.42f, 0.40f);
         set(table, Blocks.TREE_STUMP, 0.38f, 0.24f, 0.13f);
         set(table, Blocks.MUSHROOM_CLUSTER, 0.58f, 0.32f, 0.26f);
+        set(table, Blocks.GLOW_MUSHROOM, 0.34f, 0.82f, 0.86f, 1.0f, 0.62f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
+        set(table, Blocks.SPORE_BLOSSOM, 0.62f, 0.80f, 0.52f, 1.0f, 0.38f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.CLAY_DEPOSIT, 0.50f, 0.58f, 0.62f);
-        set(table, Blocks.GLOW_CRYSTAL_NODE, 0.34f, 0.78f, 0.92f, 1.0f, 0.92f, false);
-        set(table, Blocks.CAMPFIRE_ACTIVE, 1.00f, 0.55f, 0.20f, 1.0f, 1.0f, false);
+        set(table, Blocks.GLOW_CRYSTAL_NODE, 0.34f, 0.78f, 0.92f, 1.0f, 0.92f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
+        set(table, Blocks.CAMPFIRE_ACTIVE, 1.00f, 0.55f, 0.20f, 1.0f, 1.0f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.CAMPFIRE_BURNED_OUT, 0.24f, 0.22f, 0.20f);
         set(table, Blocks.SLEEPING_MAT, 0.55f, 0.30f, 0.28f);
         set(table, Blocks.COOKING_POT, 0.58f, 0.36f, 0.25f);
-        set(table, Blocks.REEDS, 0.36f, 0.58f, 0.28f);
+        set(table, Blocks.REEDS, 0.36f, 0.58f, 0.28f, BiomeTintMode.GRASS);
         set(table, Blocks.TWIG_PILE, 0.56f, 0.38f, 0.20f);
-        set(table, Blocks.ANCIENT_LANTERN, 0.36f, 0.86f, 0.92f, 1.0f, 0.95f, false);
+        set(table, Blocks.ANCIENT_LANTERN, 0.36f, 0.86f, 0.92f, 1.0f, 0.95f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.WORKBENCH, 0.48f, 0.30f, 0.18f);
         set(table, Blocks.FORGE, 0.34f, 0.31f, 0.30f);
         return table;
@@ -259,11 +261,48 @@ public record BlockRenderProperties(
             float tintR,
             float tintG,
             float tintB,
+            BiomeTintMode biomeTintMode
+    ) {
+        set(table, blockId, tintR, tintG, tintB, 1.0f, 0.0f, false, biomeTintMode, FogAffectMode.NORMAL);
+    }
+
+    private static void set(
+            BlockRenderProperties[] table,
+            short blockId,
+            float tintR,
+            float tintG,
+            float tintB,
             float alpha,
             float emissive,
             boolean animatedFluid
     ) {
-        table[blockId] = new BlockRenderProperties(tintR, tintG, tintB, alpha, emissive, animatedFluid);
+        set(table, blockId, tintR, tintG, tintB, alpha, emissive, animatedFluid, BiomeTintMode.NONE, FogAffectMode.NORMAL);
+    }
+
+    private static void set(
+            BlockRenderProperties[] table,
+            short blockId,
+            float tintR,
+            float tintG,
+            float tintB,
+            float alpha,
+            float emissive,
+            boolean animatedFluid,
+            BiomeTintMode biomeTintMode,
+            FogAffectMode fogAffectMode
+    ) {
+        table[blockId] = new BlockRenderProperties(
+                tintR,
+                tintG,
+                tintB,
+                alpha,
+                emissive,
+                animatedFluid,
+                DEFAULT_CUTOUT_THRESHOLD,
+                biomeTintMode,
+                fogAffectMode,
+                DEFAULT_ROUGHNESS
+        );
     }
 
     private static boolean unit(float value) {

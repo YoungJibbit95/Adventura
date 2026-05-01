@@ -8,6 +8,7 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -31,6 +32,7 @@ class WorldRendererTest {
         assertTrue(settings.bloomEnabled());
         assertEquals(8, settings.renderDistanceChunks());
         assertTrue(settings.fogEnd() > settings.fogStart());
+        assertEquals(RenderDebugView.NONE, settings.debugView());
     }
 
     @Test
@@ -46,6 +48,24 @@ class WorldRendererTest {
         assertEquals(List.of(
                 new ChunkPos(-3, 0),
                 new ChunkPos(2, 0),
+                new ChunkPos(0, 0)
+        ), ordered);
+    }
+
+    @Test
+    void ordersTransparentBoundsBackToFrontWithStableTieBreaker() {
+        Vector3f camera = new Vector3f(8.0f, 8.0f, 8.0f);
+        Map<ChunkPos, ChunkMesh.Bounds> bounds = Map.of(
+                new ChunkPos(0, 0), new ChunkMesh.Bounds(0.0f, 4.0f, 0.0f, 16.0f, 12.0f, 16.0f),
+                new ChunkPos(1, 0), new ChunkMesh.Bounds(32.0f, 4.0f, 0.0f, 48.0f, 12.0f, 16.0f),
+                new ChunkPos(-1, 0), new ChunkMesh.Bounds(-32.0f, 4.0f, 0.0f, -16.0f, 12.0f, 16.0f)
+        );
+
+        List<ChunkPos> ordered = WorldRenderer.transparentRenderOrderByBounds(bounds, camera);
+
+        assertEquals(List.of(
+                new ChunkPos(-1, 0),
+                new ChunkPos(1, 0),
                 new ChunkPos(0, 0)
         ), ordered);
     }
@@ -94,6 +114,7 @@ class WorldRendererTest {
         assertEquals(2, stats.culledChunkPositions());
         assertEquals(2, stats.culledChunks());
         assertEquals(1, stats.renderedCutoutChunks());
+        assertEquals(0, stats.sortedTransparentMeshes());
         assertEquals(5, stats.loadedGpuMeshes());
         assertEquals(4, stats.loadedChunkPositions());
     }

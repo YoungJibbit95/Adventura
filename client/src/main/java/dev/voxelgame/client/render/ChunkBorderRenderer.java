@@ -4,6 +4,7 @@ import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.DimensionSettings;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.math.Raycast;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -89,6 +90,69 @@ public final class ChunkBorderRenderer implements AutoCloseable {
         }
         renderLines(projection, view, vertices, new Vector3f(0.62f, 0.84f, 1.0f), 0.42f, true);
         return bounds.size();
+    }
+
+    public int renderSectionBounds(Matrix4f projection, Matrix4f view, Collection<ChunkMesh.Bounds> bounds) {
+        if (bounds.isEmpty()) {
+            return 0;
+        }
+        float[] vertices = meshBoundsVertices(bounds);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, new Vector3f(0.88f, 0.68f, 0.34f), 0.36f, true);
+        return bounds.size();
+    }
+
+    public int renderParticleBounds(Matrix4f projection, Matrix4f view, Collection<ChunkMesh.Bounds> bounds) {
+        if (bounds.isEmpty()) {
+            return 0;
+        }
+        float[] vertices = meshBoundsVertices(bounds);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, new Vector3f(0.86f, 0.52f, 0.94f), 0.32f, true);
+        return bounds.size();
+    }
+
+    public int renderCollisionShapeBounds(Matrix4f projection, Matrix4f view, Collection<ChunkMesh.Bounds> bounds) {
+        if (bounds.isEmpty()) {
+            return 0;
+        }
+        float[] vertices = meshBoundsVertices(bounds);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, new Vector3f(1.0f, 0.62f, 0.28f), 0.54f, true);
+        return bounds.size();
+    }
+
+    public int renderProjectileSweepBounds(Matrix4f projection, Matrix4f view, Collection<ChunkMesh.Bounds> bounds) {
+        if (bounds.isEmpty()) {
+            return 0;
+        }
+        float[] vertices = meshBoundsVertices(bounds);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, new Vector3f(1.0f, 0.88f, 0.32f), 0.62f, true);
+        return bounds.size();
+    }
+
+    public int renderBlockOutline(Matrix4f projection, Matrix4f view, int x, int y, int z, Vector3f color, float alpha, boolean depthTest) {
+        float[] vertices = blockBoxVertices(x, y, z, 0.003f);
+        renderLines(projection, view, vertices, color, alpha, depthTest);
+        return 1;
+    }
+
+    public int renderMiningFaceProgress(Matrix4f projection, Matrix4f view, Raycast.Hit hit, float progress, Vector3f color, float alpha) {
+        float[] vertices = faceProgressVertices(hit, progress);
+        if (vertices.length == 0) {
+            return 0;
+        }
+        renderLines(projection, view, vertices, color, alpha, true);
+        return 1;
     }
 
     private void renderLines(Matrix4f projection, Matrix4f view, float[] vertices, Vector3f color, float alpha, boolean depthTest) {
@@ -195,6 +259,55 @@ public final class ChunkBorderRenderer implements AutoCloseable {
         float[] trimmed = new float[offset];
         System.arraycopy(vertices, 0, trimmed, 0, offset);
         return trimmed;
+    }
+
+    static float[] blockBoxVertices(int x, int y, int z, float inflate) {
+        float pad = Math.max(0.0f, inflate);
+        float minX = x - pad;
+        float minY = y - pad;
+        float minZ = z - pad;
+        float maxX = x + 1.0f + pad;
+        float maxY = y + 1.0f + pad;
+        float maxZ = z + 1.0f + pad;
+        float[] vertices = new float[24 * FLOATS_PER_VERTEX];
+        box(vertices, 0, minX, minY, minZ, maxX, maxY, maxZ);
+        return vertices;
+    }
+
+    static float[] faceProgressVertices(Raycast.Hit hit, float progress) {
+        if (hit == null) {
+            return new float[0];
+        }
+        float t = Math.max(0.0f, Math.min(1.0f, progress));
+        float half = 0.12f + 0.14f * t;
+        float cx = hit.x() + 0.5f;
+        float cy = hit.y() + 0.5f;
+        float cz = hit.z() + 0.5f;
+        float epsilon = 0.006f;
+        float[] vertices = new float[8 * FLOATS_PER_VERTEX];
+        int offset = 0;
+        if (hit.faceX() != 0) {
+            float x = hit.x() + (hit.faceX() > 0 ? 1.0f : 0.0f) + epsilon * hit.faceX();
+            offset = line(vertices, offset, x, cy - half, cz - half, x, cy + half, cz - half);
+            offset = line(vertices, offset, x, cy + half, cz - half, x, cy + half, cz + half);
+            offset = line(vertices, offset, x, cy + half, cz + half, x, cy - half, cz + half);
+            line(vertices, offset, x, cy - half, cz + half, x, cy - half, cz - half);
+            return vertices;
+        }
+        if (hit.faceY() != 0) {
+            float y = hit.y() + (hit.faceY() > 0 ? 1.0f : 0.0f) + epsilon * hit.faceY();
+            offset = line(vertices, offset, cx - half, y, cz - half, cx + half, y, cz - half);
+            offset = line(vertices, offset, cx + half, y, cz - half, cx + half, y, cz + half);
+            offset = line(vertices, offset, cx + half, y, cz + half, cx - half, y, cz + half);
+            line(vertices, offset, cx - half, y, cz + half, cx - half, y, cz - half);
+            return vertices;
+        }
+        float z = hit.z() + (hit.faceZ() > 0 ? 1.0f : 0.0f) + epsilon * hit.faceZ();
+        offset = line(vertices, offset, cx - half, cy - half, z, cx + half, cy - half, z);
+        offset = line(vertices, offset, cx + half, cy - half, z, cx + half, cy + half, z);
+        offset = line(vertices, offset, cx + half, cy + half, z, cx - half, cy + half, z);
+        line(vertices, offset, cx - half, cy + half, z, cx - half, cy - half, z);
+        return vertices;
     }
 
     private static int box(float[] vertices, int offset, float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {

@@ -1,6 +1,7 @@
 package dev.voxelgame.client.render.particle;
 
 import dev.voxelgame.client.render.RenderResourceTracker;
+import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.client.render.ShaderProgram;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.entity.EntityBounds;
@@ -8,7 +9,9 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.math.Raycast;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.lwjgl.BufferUtils;
 
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -17,6 +20,7 @@ import java.util.Map;
 import java.util.SplittableRandom;
 
 import static org.lwjgl.opengl.GL11.GL_BLEND;
+import static org.lwjgl.opengl.GL11.GL_DEPTH_TEST;
 import static org.lwjgl.opengl.GL11.GL_FLOAT;
 import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
@@ -30,6 +34,7 @@ import static org.lwjgl.opengl.GL15.GL_ARRAY_BUFFER;
 import static org.lwjgl.opengl.GL15.GL_DYNAMIC_DRAW;
 import static org.lwjgl.opengl.GL15.glBindBuffer;
 import static org.lwjgl.opengl.GL15.glBufferData;
+import static org.lwjgl.opengl.GL15.glBufferSubData;
 import static org.lwjgl.opengl.GL15.glDeleteBuffers;
 import static org.lwjgl.opengl.GL15.glGenBuffers;
 import static org.lwjgl.opengl.GL20.glEnableVertexAttribArray;
@@ -48,6 +53,7 @@ public final class ParticleSystem implements AutoCloseable {
     private final ShaderProgram shader;
     private final int vao;
     private final int vbo;
+    private final FloatBuffer vertexBuffer = BufferUtils.createFloatBuffer(MAX_PARTICLES * VERTICES_PER_PARTICLE * FLOATS_PER_VERTEX);
     private final List<Particle> particles = new ArrayList<>();
     private final Map<Long, Double> nextCampfireSmokeTimes = new HashMap<>();
     private final Map<Long, Double> nextCampfireSparkTimes = new HashMap<>();
@@ -60,6 +66,7 @@ public final class ParticleSystem implements AutoCloseable {
     private double lastStatsTime = Double.NaN;
     private int spawnedSinceLastStats;
     private long evictedSinceLastStats;
+    private double particleQuality = 1.0;
     private boolean closed;
 
     public ParticleSystem() {
@@ -159,6 +166,15 @@ public final class ParticleSystem implements AutoCloseable {
         }
     }
 
+    public void spawnLandingDust(Vector3f position, double impactSpeed, double now) {
+        Vector3f origin = new Vector3f(position.x, (float) Math.floor(position.y - 1.55f) + 1.03f, position.z);
+        Vector3f color = new Vector3f(0.58f, 0.52f, 0.42f);
+        int count = Math.min(18, Math.max(6, (int) Math.round(impactSpeed * 0.65)));
+        for (int i = 0; i < count; i++) {
+            spawn(origin, new Vector3f(randomRange(-0.42f, 0.42f), randomRange(0.05f, 0.22f), randomRange(-0.42f, 0.42f)), color, randomRange(0.055f, 0.085f), 0.42f, now, 0.35f, 0.93f);
+        }
+    }
+
     public void spawnEntityGlow(EntitySnapshot snapshot, double now) {
         String typeKey = snapshot.typeKey();
         if (!"voxel:firefly_swarm".equals(typeKey) && !"voxel:mire_wisp".equals(typeKey)) {
@@ -194,18 +210,24 @@ public final class ParticleSystem implements AutoCloseable {
         if (particles.isEmpty()) {
             return statsSnapshot(now, 0, 0);
         }
-        float[] vertices = buildVertices(view, now);
-        int vertexCount = vertices.length / FLOATS_PER_VERTEX;
+        int vertexCount = buildVertices(view, now);
+        if (vertexCount == 0) {
+            return statsSnapshot(now, 0, 0);
+        }
+        int usedFloats = vertexCount * FLOATS_PER_VERTEX;
+        vertexBuffer.position(0);
+        vertexBuffer.limit(usedFloats);
 
         shader.bind();
         shader.setMatrix4("uProjection", projection);
         shader.setMatrix4("uView", view);
+        glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(false);
         glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertices, GL_DYNAMIC_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0L, vertexBuffer);
         glDrawArrays(GL_TRIANGLES, 0, vertexCount);
         glBindVertexArray(0);
         glDepthMask(true);
@@ -216,6 +238,33 @@ public final class ParticleSystem implements AutoCloseable {
 
     public int liveCount() {
         return particles.size();
+    }
+
+    public void setQuality(double quality) {
+        if (!Double.isFinite(quality)) {
+            return;
+        }
+        particleQuality = Math.max(0.25, Math.min(1.0, quality));
+    }
+
+    public double quality() {
+        return particleQuality;
+    }
+
+    public List<ChunkMesh.Bounds> particleBounds() {
+        List<ChunkMesh.Bounds> bounds = new ArrayList<>(particles.size());
+        for (Particle particle : particles) {
+            float half = Math.max(0.025f, particle.size);
+            bounds.add(new ChunkMesh.Bounds(
+                    particle.position.x - half,
+                    particle.position.y - half,
+                    particle.position.z - half,
+                    particle.position.x + half,
+                    particle.position.y + half,
+                    particle.position.z + half
+            ));
+        }
+        return bounds;
     }
 
     @Override
@@ -231,7 +280,8 @@ public final class ParticleSystem implements AutoCloseable {
     }
 
     private void spawn(Vector3f origin, Vector3f velocity, Vector3f color, float size, float lifetime, double now, float gravity, float damping) {
-        if (particles.size() >= MAX_PARTICLES) {
+        int limit = particleLimit();
+        while (particles.size() >= limit) {
             particles.remove(0);
             evictedSinceLastStats++;
         }
@@ -251,7 +301,7 @@ public final class ParticleSystem implements AutoCloseable {
         return new RenderStats(
                 particles.size(),
                 spawnRate,
-                particles.size() / (double) MAX_PARTICLES,
+                particles.size() / (double) particleLimit(),
                 evictedParticles,
                 drawCalls,
                 triangles
@@ -275,42 +325,70 @@ public final class ParticleSystem implements AutoCloseable {
             particle.position.fma(dt, particle.velocity);
             particle.velocity.mul(particle.damping);
         }
+        int limit = particleLimit();
+        while (particles.size() > limit) {
+            particles.remove(0);
+            evictedSinceLastStats++;
+        }
         pruneSourceTimers(now);
     }
 
-    private float[] buildVertices(Matrix4f view, double now) {
-        Vector3f right = new Vector3f(view.m00(), view.m10(), view.m20()).normalize();
-        Vector3f up = new Vector3f(view.m01(), view.m11(), view.m21()).normalize();
-        float[] vertices = new float[particles.size() * VERTICES_PER_PARTICLE * FLOATS_PER_VERTEX];
+    private int particleLimit() {
+        return Math.max(96, (int) Math.round(MAX_PARTICLES * particleQuality));
+    }
+
+    private int buildVertices(Matrix4f view, double now) {
+        vertexBuffer.clear();
+        float rightX = view.m00();
+        float rightY = view.m10();
+        float rightZ = view.m20();
+        float rightLength = (float) Math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
+        if (rightLength > 0.000001f) {
+            rightX /= rightLength;
+            rightY /= rightLength;
+            rightZ /= rightLength;
+        }
+        float upX = view.m01();
+        float upY = view.m11();
+        float upZ = view.m21();
+        float upLength = (float) Math.sqrt(upX * upX + upY * upY + upZ * upZ);
+        if (upLength > 0.000001f) {
+            upX /= upLength;
+            upY /= upLength;
+            upZ /= upLength;
+        }
         int offset = 0;
         for (Particle particle : particles) {
             float ageRatio = (float) ((now - particle.startTime) / (particle.endTime - particle.startTime));
             float alpha = Math.max(0.0f, 1.0f - ageRatio);
             float size = particle.size * (0.55f + ageRatio * 0.75f);
-            Vector3f r = new Vector3f(right).mul(size);
-            Vector3f u = new Vector3f(up).mul(size);
-            Vector3f a = new Vector3f(particle.position).sub(r).sub(u);
-            Vector3f b = new Vector3f(particle.position).add(r).sub(u);
-            Vector3f c = new Vector3f(particle.position).add(r).add(u);
-            Vector3f d = new Vector3f(particle.position).sub(r).add(u);
-            offset = writeVertex(vertices, offset, a, particle.color, alpha);
-            offset = writeVertex(vertices, offset, b, particle.color, alpha);
-            offset = writeVertex(vertices, offset, c, particle.color, alpha);
-            offset = writeVertex(vertices, offset, a, particle.color, alpha);
-            offset = writeVertex(vertices, offset, c, particle.color, alpha);
-            offset = writeVertex(vertices, offset, d, particle.color, alpha);
+            float rx = rightX * size;
+            float ry = rightY * size;
+            float rz = rightZ * size;
+            float ux = upX * size;
+            float uy = upY * size;
+            float uz = upZ * size;
+            float px = particle.position.x;
+            float py = particle.position.y;
+            float pz = particle.position.z;
+            offset = writeVertex(vertexBuffer, offset, px - rx - ux, py - ry - uy, pz - rz - uz, particle.color, alpha);
+            offset = writeVertex(vertexBuffer, offset, px + rx - ux, py + ry - uy, pz + rz - uz, particle.color, alpha);
+            offset = writeVertex(vertexBuffer, offset, px + rx + ux, py + ry + uy, pz + rz + uz, particle.color, alpha);
+            offset = writeVertex(vertexBuffer, offset, px - rx - ux, py - ry - uy, pz - rz - uz, particle.color, alpha);
+            offset = writeVertex(vertexBuffer, offset, px + rx + ux, py + ry + uy, pz + rz + uz, particle.color, alpha);
+            offset = writeVertex(vertexBuffer, offset, px - rx + ux, py - ry + uy, pz - rz + uz, particle.color, alpha);
         }
-        return vertices;
+        return offset / FLOATS_PER_VERTEX;
     }
 
-    private static int writeVertex(float[] vertices, int offset, Vector3f position, Vector3f color, float alpha) {
-        vertices[offset++] = position.x;
-        vertices[offset++] = position.y;
-        vertices[offset++] = position.z;
-        vertices[offset++] = color.x;
-        vertices[offset++] = color.y;
-        vertices[offset++] = color.z;
-        vertices[offset++] = alpha;
+    private static int writeVertex(FloatBuffer vertices, int offset, float x, float y, float z, Vector3f color, float alpha) {
+        vertices.put(offset++, x);
+        vertices.put(offset++, y);
+        vertices.put(offset++, z);
+        vertices.put(offset++, color.x);
+        vertices.put(offset++, color.y);
+        vertices.put(offset++, color.z);
+        vertices.put(offset++, alpha);
         return offset;
     }
 

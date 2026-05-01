@@ -59,6 +59,10 @@ public final class Registry<T> {
         return Optional.ofNullable(aliases.get(key));
     }
 
+    public Map<String, String> aliases() {
+        return Collections.unmodifiableMap(aliases);
+    }
+
     public Optional<T> findById(short id) {
         return Optional.ofNullable(byId.get(id));
     }

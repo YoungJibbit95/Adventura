@@ -722,6 +722,18 @@ public final class Hotbar {
         if ("voxel:water_container".equals(item.key())) {
             return "Cooking supply for soups, tea, and stew";
         }
+        if ("voxel:glow_mushroom_cap".equals(item.key())) {
+            return "Glowing mushroom grove ingredient";
+        }
+        if ("voxel:glow_mushroom_stew".equals(item.key())) {
+            return "Rich glow food from mushroom groves";
+        }
+        if ("voxel:spore_blossom".equals(item.key())) {
+            return "Rare herb from mushroom circles";
+        }
+        if ("voxel:spore_tea".equals(item.key())) {
+            return "Restorative tea from grove spores";
+        }
         if ("voxel:iron_ingot".equals(item.key())) {
             return "Forge metal for iron tools and ruin keys";
         }
@@ -739,6 +751,15 @@ public final class Hotbar {
         }
         if ("voxel:lost_charm".equals(item.key())) {
             return "Rare collectible from old ruins";
+        }
+        if ("voxel:crystal_axe".equals(item.key())) {
+            return "Fast late-game axe with bonus wood harvests";
+        }
+        if ("voxel:crystal_pickaxe".equals(item.key())) {
+            return "Fast late-game pickaxe with bonus ore harvests";
+        }
+        if ("voxel:crystal_knife".equals(item.key())) {
+            return "Sharp glow tool for richer plant harvests";
         }
         if (item.isFood()) {
             return "Restores hunger" + (item.healValue() > 0 ? " and health" : "");

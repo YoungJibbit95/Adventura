@@ -17,10 +17,12 @@ public final class ClientNetworkStats {
     private final AtomicLong inventoryPackets = new AtomicLong();
     private final AtomicLong storageOpenPackets = new AtomicLong();
     private final AtomicLong chatPackets = new AtomicLong();
+    private final AtomicLong serverStatsPackets = new AtomicLong();
     private final AtomicLong sentPayloadBytes = new AtomicLong();
     private final AtomicLong receivedPayloadBytes = new AtomicLong();
     private final AtomicLong invalidPacketsDropped = new AtomicLong();
     private final AtomicLong chunkStreamQueueLength = new AtomicLong();
+    private volatile GamePacket.ServerStatsSnapshot serverStats = emptyServerStats();
 
     public ClientNetworkStats() {
         this(System::nanoTime);
@@ -50,6 +52,10 @@ public final class ClientNetworkStats {
             case GamePacket.InventorySnapshot ignored -> inventoryPackets.incrementAndGet();
             case GamePacket.StorageOpen ignored -> storageOpenPackets.incrementAndGet();
             case GamePacket.Chat ignored -> chatPackets.incrementAndGet();
+            case GamePacket.ServerStatsSnapshot snapshot -> {
+                serverStatsPackets.incrementAndGet();
+                serverStats = snapshot;
+            }
             default -> {
             }
         }
@@ -88,8 +94,14 @@ public final class ClientNetworkStats {
                 entitySnapshotPackets.get(),
                 inventoryPackets.get(),
                 storageOpenPackets.get(),
-                chatPackets.get()
+                chatPackets.get(),
+                serverStatsPackets.get(),
+                serverStats
         );
+    }
+
+    private static GamePacket.ServerStatsSnapshot emptyServerStats() {
+        return new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0);
     }
 
     public record Snapshot(
@@ -105,10 +117,16 @@ public final class ClientNetworkStats {
             long entitySnapshotPackets,
             long inventoryPackets,
             long storageOpenPackets,
-            long chatPackets
+            long chatPackets,
+            long serverStatsPackets,
+            GamePacket.ServerStatsSnapshot serverStats
     ) {
+        public Snapshot {
+            serverStats = serverStats == null ? emptyServerStats() : serverStats;
+        }
+
         public static Snapshot offline() {
-            return new Snapshot(0, 0, 0.0, 0.0, 0.0, 0L, 0, 0, 0, 0, 0, 0, 0);
+            return new Snapshot(0, 0, 0.0, 0.0, 0.0, 0L, 0, 0, 0, 0, 0, 0, 0, 0, emptyServerStats());
         }
     }
 }

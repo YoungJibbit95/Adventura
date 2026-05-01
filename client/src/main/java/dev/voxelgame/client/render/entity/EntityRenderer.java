@@ -1,7 +1,9 @@
 package dev.voxelgame.client.render.entity;
 
 import dev.voxelgame.client.render.RenderResourceTracker;
+import dev.voxelgame.client.render.RenderSettings;
 import dev.voxelgame.client.render.ShaderProgram;
+import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import org.joml.FrustumIntersection;
@@ -110,12 +112,33 @@ public final class EntityRenderer implements AutoCloseable {
     }
 
     public RenderStats renderDetailed(Matrix4f projection, Matrix4f view, Collection<EntitySnapshot> snapshots, double timeSeconds) {
+        return renderDetailed(projection, view, snapshots, timeSeconds, null, null, new Vector3f());
+    }
+
+    public RenderStats renderDetailed(
+            Matrix4f projection,
+            Matrix4f view,
+            Collection<EntitySnapshot> snapshots,
+            double timeSeconds,
+            RenderSettings settings,
+            ClientWorld world,
+            Vector3f cameraPosition
+    ) {
+        RenderSettings safeSettings = settings == null ? RenderSettings.defaults(8) : settings;
         Matrix4f projectionView = new Matrix4f(projection).mul(view);
         FrustumIntersection frustum = new FrustumIntersection(projectionView);
         shader.bind();
         shader.setMatrix4("uProjection", projection);
         shader.setMatrix4("uView", view);
         shader.setVector3("uLightDirection", new Vector3f(-0.35f, 0.82f, -0.45f).normalize());
+        shader.setVector3("uCameraPosition", cameraPosition == null ? new Vector3f() : cameraPosition);
+        shader.setInt("uFogEnabled", safeSettings.fogEnabled() ? 1 : 0);
+        shader.setInt("uUnderwater", safeSettings.underwater() ? 1 : 0);
+        shader.setFloat("uFogStart", safeSettings.fogStart());
+        shader.setFloat("uFogEnd", safeSettings.fogEnd());
+        shader.setVector3("uFogColor", new Vector3f(safeSettings.fogR(), safeSettings.fogG(), safeSettings.fogB()));
+        float skyLuma = safeSettings.skyR() * 0.2126f + safeSettings.skyG() * 0.7152f + safeSettings.skyB() * 0.0722f;
+        shader.setFloat("uGlobalBrightness", Math.max(0.38f, Math.min(1.0f, 0.34f + skyLuma * 0.86f)));
         glBindVertexArray(vao);
         int rendered = 0;
         int culled = 0;
@@ -131,6 +154,7 @@ public final class EntityRenderer implements AutoCloseable {
             Matrix4f base = new Matrix4f()
                     .translate((float) snapshot.x(), EntityBounds.baseY(snapshot) + pose.rootYOffset(), (float) snapshot.z())
                     .rotateY((float) Math.toRadians(-snapshot.yaw()));
+            shader.setFloat("uEntityLight", entityLight(snapshot, world));
             for (EntityModelPart part : model.parts()) {
                 drawPart(base, snapshot.typeKey(), part, pose.part(part.name()));
                 drawCalls++;
@@ -165,6 +189,19 @@ public final class EntityRenderer implements AutoCloseable {
         shader.setVector3("uBaseColor", EntityModelRegistry.colorFor(typeKey, part.colorRole()));
         shader.setFloat("uEmissive", part.emissive() ? 1.0f : 0.0f);
         glDrawElements(GL_TRIANGLES, BOX_INDICES.length, GL_UNSIGNED_INT, 0L);
+    }
+
+    private static float entityLight(EntitySnapshot snapshot, ClientWorld world) {
+        if (world == null) {
+            return 1.0f;
+        }
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        int x = (int) Math.floor(snapshot.x());
+        int y = (int) Math.floor(EntityBounds.baseY(snapshot) + bounds.height() * 0.55f);
+        int z = (int) Math.floor(snapshot.z());
+        float sky = world.skyLightAt(x, y, z) / 15.0f;
+        float block = world.blockLightAt(x, y, z) / 15.0f;
+        return Math.max(0.28f, Math.min(1.15f, sky * 0.68f + block * 0.78f + 0.20f));
     }
 
     static boolean insideFrustum(FrustumIntersection frustum, EntitySnapshot snapshot) {

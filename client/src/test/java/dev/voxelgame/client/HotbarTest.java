@@ -210,11 +210,13 @@ class HotbarTest {
         slots.set(0, new ItemStack(itemId("voxel:stone_pickaxe"), 1, 20));
         slots.set(1, new ItemStack(itemId("voxel:copper_pickaxe"), 1, 12));
         slots.set(2, new ItemStack(itemId("voxel:iron_pickaxe"), 1, 18));
+        slots.set(3, new ItemStack(itemId("voxel:crystal_pickaxe"), 1, 24));
         hotbar.applySnapshot(slots);
 
         Hotbar.SlotView stone = hotbar.slotView(0);
         Hotbar.SlotView copper = hotbar.slotView(1);
         Hotbar.SlotView iron = hotbar.slotView(2);
+        Hotbar.SlotView crystal = hotbar.slotView(3);
 
         assertEquals("Pickaxe", stone.toolTypeLabel());
         assertEquals(1, stone.toolLevel());
@@ -231,6 +233,10 @@ class HotbarTest {
         assertEquals(3, iron.toolLevel());
         assertTrue(iron.toolSpeed() > copper.toolSpeed());
         assertEquals("iron ingot", iron.repairMaterialLabel());
+
+        assertEquals(4, crystal.toolLevel());
+        assertTrue(crystal.toolSpeed() > iron.toolSpeed());
+        assertEquals("glow crystal", crystal.repairMaterialLabel());
     }
 
     @Test
@@ -293,6 +299,57 @@ class HotbarTest {
     }
 
     @Test
+    void crystalToolRecipesNameLateGameIngredients() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe crystalPickaxe = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:crystal_pickaxe"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(crystalPickaxe);
+
+        assertTrue(summary.contains("Forge"));
+        assertTrue(summary.contains("Iron pickaxe x1"));
+        assertTrue(summary.contains("Glow crystal x3"));
+        assertTrue(summary.contains("Ruin seal x1"));
+        assertTrue(summary.contains("Leather strip x1"));
+    }
+
+    @Test
+    void glowMushroomStewRecipeNamesMushroomGroveIngredients() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe glowStew = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:glow_mushroom_stew"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(glowStew);
+
+        assertTrue(summary.contains("Cooking Pot"));
+        assertTrue(summary.contains("Glow mushroom cap x2"));
+        assertTrue(summary.contains("Mushroom x1"));
+        assertTrue(summary.contains("Water container x1"));
+        assertTrue(summary.contains("Clay bowl x1"));
+    }
+
+    @Test
+    void sporeTeaRecipeNamesMushroomCircleIngredients() {
+        Hotbar hotbar = new Hotbar();
+        CraftingRecipe sporeTea = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:spore_tea"))
+                .findFirst()
+                .orElseThrow();
+
+        String summary = hotbar.recipeSummary(sporeTea);
+
+        assertTrue(summary.contains("Cooking Pot"));
+        assertTrue(summary.contains("Spore blossom x1"));
+        assertTrue(summary.contains("Glow mushroom cap x1"));
+        assertTrue(summary.contains("Water container x1"));
+        assertTrue(summary.contains("Clay bowl x1"));
+    }
+
+    @Test
     void slotTooltipsExplainReedsAndUseActualComfortValues() {
         Hotbar hotbar = new Hotbar();
         List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
@@ -304,6 +361,7 @@ class HotbarTest {
         slots.set(5, new ItemStack(itemId("voxel:storage_crate"), 1));
         slots.set(6, new ItemStack(itemId("voxel:berry_bush"), 1));
         slots.set(7, new ItemStack(itemId("voxel:ancient_lantern"), 1));
+        slots.set(8, new ItemStack(itemId("voxel:crystal_knife"), 1));
         hotbar.applySnapshot(slots);
 
         assertEquals("Seals water containers and burns briefly", hotbar.slotView(0).description());
@@ -318,6 +376,28 @@ class HotbarTest {
         assertEquals(0, hotbar.slotView(6).comfortValue());
         assertEquals("Restored ruin light for cozy bases", hotbar.slotView(7).description());
         assertEquals(4, hotbar.slotView(7).comfortValue());
+        assertEquals("Sharp glow tool for richer plant harvests", hotbar.slotView(8).description());
+        assertEquals("glow crystal", hotbar.slotView(8).repairMaterialLabel());
+    }
+
+    @Test
+    void glowMushroomFoodTooltipsExplainBiomeUse() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(itemId("voxel:glow_mushroom_cap"), 2));
+        slots.set(1, new ItemStack(itemId("voxel:glow_mushroom_stew"), 1));
+        slots.set(2, new ItemStack(itemId("voxel:spore_blossom"), 1));
+        slots.set(3, new ItemStack(itemId("voxel:spore_tea"), 1));
+        hotbar.applySnapshot(slots);
+
+        assertEquals("Glowing mushroom grove ingredient", hotbar.slotView(0).description());
+        assertEquals("Rich glow food from mushroom groves", hotbar.slotView(1).description());
+        assertEquals(9, hotbar.slotView(1).foodValue());
+        assertEquals(4, hotbar.slotView(1).healValue());
+        assertEquals("Rare herb from mushroom circles", hotbar.slotView(2).description());
+        assertEquals("Restorative tea from grove spores", hotbar.slotView(3).description());
+        assertEquals(5, hotbar.slotView(3).foodValue());
+        assertEquals(6, hotbar.slotView(3).healValue());
     }
 
     private static short itemId(String key) {

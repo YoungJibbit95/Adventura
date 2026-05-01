@@ -1,10 +1,18 @@
 package dev.voxelgame.server.entity;
 
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
+import dev.voxelgame.common.entity.DamageResult;
+import dev.voxelgame.common.entity.DamageSource;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.physics.ProjectileHit;
+import dev.voxelgame.common.physics.ProjectilePhysics;
+import dev.voxelgame.common.physics.ProjectilePhysicsConfig;
+import dev.voxelgame.common.physics.ProjectileState;
+import dev.voxelgame.common.physics.PhysicsTickets;
+import dev.voxelgame.common.world.ChunkPos;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,15 +26,21 @@ import java.util.function.Predicate;
 
 public final class ServerEntityTracker {
     public static final double SLEEP_DANGER_RADIUS = 8.0;
-    private static final double ACTIVE_AMBIENT_RADIUS = 128.0;
     private static final double LOCAL_AVOIDANCE_PADDING = 0.08;
+    private static final double AMBIENT_DAMAGE_INVULNERABILITY_SECONDS = 0.28;
 
     private final Map<UUID, EntitySnapshot> players = new ConcurrentHashMap<>();
     private final Map<Long, EntitySnapshot> ambientEntities = new ConcurrentHashMap<>();
     private final Map<Long, EntitySnapshot> ambientAnchors = new ConcurrentHashMap<>();
     private final Map<Long, FollowTarget> followTargets = new ConcurrentHashMap<>();
     private final Map<Long, DroppedItemEntity> itemDrops = new ConcurrentHashMap<>();
+    private final Map<Long, ProjectileState> projectiles = new ConcurrentHashMap<>();
+    private final Map<Long, Double> nextAmbientDamageAllowedAt = new ConcurrentHashMap<>();
+    private volatile AmbientTickStats lastAmbientTickStats = AmbientTickStats.EMPTY;
+    private volatile ProjectileTickStats lastProjectileTickStats = ProjectileTickStats.EMPTY;
     private long nextItemDropEntityId = -1L;
+    private long nextProjectileEntityId = -1_000_000L;
+    private long nextDebugEntityId = -2_000_000L;
 
     public ServerEntityTracker() {
     }
@@ -85,6 +99,9 @@ public final class ServerEntityTracker {
         itemDrops.values().stream()
                 .map(DroppedItemEntity::snapshot)
                 .forEach(snapshots::add);
+        projectiles.values().stream()
+                .map(ProjectileState::snapshot)
+                .forEach(snapshots::add);
         return snapshots;
     }
 
@@ -100,7 +117,11 @@ public final class ServerEntityTracker {
         if (ambient != null) {
             return Optional.of(ambient);
         }
-        return Optional.ofNullable(itemDrops.get(entityId)).map(DroppedItemEntity::snapshot);
+        EntitySnapshot itemDrop = Optional.ofNullable(itemDrops.get(entityId)).map(DroppedItemEntity::snapshot).orElse(null);
+        if (itemDrop != null) {
+            return Optional.of(itemDrop);
+        }
+        return Optional.ofNullable(projectiles.get(entityId)).map(ProjectileState::snapshot);
     }
 
     public DroppedItemEntity spawnItemDrop(String itemKey, ItemStack stack, double x, double y, double z, long tick) {
@@ -139,6 +160,104 @@ public final class ServerEntityTracker {
 
     public int itemDropCount() {
         return itemDrops.size();
+    }
+
+    public ProjectileState spawnArrowProjectile(UUID ownerPlayerId, double x, double y, double z, double directionX, double directionY, double directionZ) {
+        ProjectilePhysicsConfig config = ProjectilePhysicsConfig.arrow();
+        double length = Math.sqrt(directionX * directionX + directionY * directionY + directionZ * directionZ);
+        if (!Double.isFinite(length) || length <= 0.0001) {
+            throw new IllegalArgumentException("Projectile direction must be finite and non-zero");
+        }
+        ProjectileState projectile = new ProjectileState(
+                nextProjectileEntityId--,
+                ownerPlayerId,
+                config.typeKey(),
+                x,
+                y,
+                z,
+                directionX / length * config.initialSpeed(),
+                directionY / length * config.initialSpeed(),
+                directionZ / length * config.initialSpeed(),
+                0
+        );
+        projectiles.put(projectile.projectileId(), projectile);
+        return projectile;
+    }
+
+    public EntitySnapshot spawnDebugAmbient(String typeKey, double x, double y, double z) {
+        if (typeKey == null || typeKey.isBlank() || ItemDropType.isTypeKey(typeKey)) {
+            throw new IllegalArgumentException("Debug ambient type key is required");
+        }
+        EntitySnapshot snapshot = new EntitySnapshot(nextDebugEntityId--, typeKey, null, x, y, z, 0.0f, 0.0f, 10);
+        addAmbient(snapshot);
+        return snapshot;
+    }
+
+    public int projectileCount() {
+        return projectiles.size();
+    }
+
+    public List<ProjectileHit> tickProjectiles(
+            double deltaSeconds,
+            ProjectilePhysics.BlockCollisionQuery blockCollision,
+            ProjectilePhysics.WaterQuery waterQuery
+    ) {
+        return tickProjectiles(deltaSeconds, blockCollision, waterQuery, Double.NaN);
+    }
+
+    public List<ProjectileHit> tickProjectiles(
+            double deltaSeconds,
+            ProjectilePhysics.BlockCollisionQuery blockCollision,
+            ProjectilePhysics.WaterQuery waterQuery,
+            double nowSeconds
+    ) {
+        Objects.requireNonNull(blockCollision, "blockCollision");
+        Objects.requireNonNull(waterQuery, "waterQuery");
+        long startNanos = System.nanoTime();
+        if (projectiles.isEmpty()) {
+            lastProjectileTickStats = new ProjectileTickStats(0, 0, 0, 0, 0, 0, System.nanoTime() - startNanos);
+            return List.of();
+        }
+        List<ProjectileHit> hits = new ArrayList<>(projectiles.size());
+        List<EntitySnapshot> targets = projectileTargets();
+        int blockHits = 0;
+        int entityHits = 0;
+        int expired = 0;
+        for (Map.Entry<Long, ProjectileState> entry : projectiles.entrySet()) {
+            ProjectileState current = entry.getValue();
+            ProjectilePhysicsConfig config = projectileConfig(current.typeKey());
+            ProjectileHit hit = ProjectilePhysics.step(current, deltaSeconds, config, blockCollision, waterQuery, targets);
+            hits.add(hit);
+            if (hit.type() == ProjectileHit.Type.MISS) {
+                projectiles.put(entry.getKey(), hit.state());
+                continue;
+            }
+            projectiles.remove(entry.getKey());
+            if (hit.type() == ProjectileHit.Type.ENTITY) {
+                entityHits++;
+                damageAmbient(
+                        hit.entityId(),
+                        config.damage(),
+                        DamageSource.projectile(current.ownerPlayerId(), current.projectileId(), current.typeKey()),
+                        nowSeconds,
+                        0.12
+                );
+            } else if (hit.type() == ProjectileHit.Type.BLOCK) {
+                blockHits++;
+            } else if (hit.type() == ProjectileHit.Type.EXPIRED) {
+                expired++;
+            }
+        }
+        lastProjectileTickStats = new ProjectileTickStats(
+                hits.size(),
+                projectiles.size(),
+                hits.size(),
+                blockHits,
+                entityHits,
+                expired,
+                System.nanoTime() - startNanos
+        );
+        return hits;
     }
 
     public Optional<EntitySnapshot> feedAmbient(long entityId, int healAmount) {
@@ -183,15 +302,29 @@ public final class ServerEntityTracker {
     }
 
     public Optional<EntitySnapshot> damageAmbient(long entityId, int damageAmount, UUID attackerPlayerId, double knockbackStrength) {
+        return damageAmbient(entityId, damageAmount, DamageSource.playerMelee(attackerPlayerId), Double.NaN, knockbackStrength).snapshot();
+    }
+
+    public DamageResult damageAmbient(long entityId, int damageAmount, DamageSource source, double nowSeconds) {
+        return damageAmbient(entityId, damageAmount, source, nowSeconds, 0.3);
+    }
+
+    public DamageResult damageAmbient(long entityId, int damageAmount, DamageSource source, double nowSeconds, double knockbackStrength) {
+        Objects.requireNonNull(source, "source");
         if (damageAmount <= 0) {
-            return Optional.empty();
+            return DamageResult.rejected(entityId, DamageResult.RejectionReason.INVALID_AMOUNT);
         }
         EntitySnapshot current = ambientEntities.get(entityId);
         if (current == null) {
-            return Optional.empty();
+            return DamageResult.rejected(entityId, DamageResult.RejectionReason.UNKNOWN_TARGET);
+        }
+        boolean enforceCooldown = Double.isFinite(nowSeconds);
+        if (enforceCooldown && nowSeconds < nextAmbientDamageAllowedAt.getOrDefault(entityId, 0.0)) {
+            return DamageResult.rejected(entityId, DamageResult.RejectionReason.INVULNERABLE);
         }
         int newHealth = Math.max(0, current.health() - damageAmount);
-        EntitySnapshot attacker = players.get(attackerPlayerId);
+        int appliedDamage = current.health() - newHealth;
+        EntitySnapshot attacker = source.attackerPlayerId() == null ? null : players.get(source.attackerPlayerId());
 
         double knockbackX = 0.0;
         double knockbackZ = 0.0;
@@ -225,11 +358,15 @@ public final class ServerEntityTracker {
             ambientEntities.remove(entityId);
             ambientAnchors.remove(entityId);
             followTargets.remove(entityId);
+            nextAmbientDamageAllowedAt.remove(entityId);
         } else {
             ambientEntities.put(entityId, updated);
+            if (enforceCooldown) {
+                nextAmbientDamageAllowedAt.put(entityId, nowSeconds + AMBIENT_DAMAGE_INVULNERABILITY_SECONDS);
+            }
         }
 
-        return Optional.of(updated);
+        return DamageResult.accepted(entityId, appliedDamage, newHealth <= 0, updated, knockbackX, 0.1, knockbackZ);
     }
 
     public List<EntitySnapshot> tickAmbient(long tick) {
@@ -238,17 +375,33 @@ public final class ServerEntityTracker {
 
     public List<EntitySnapshot> tickAmbient(long tick, MovementValidator movementValidator) {
         Objects.requireNonNull(movementValidator, "movementValidator");
+        long startNanos = System.nanoTime();
         if (ambientEntities.isEmpty()) {
-            return tickItemDrops(tick);
+            List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick);
+            lastAmbientTickStats = new AmbientTickStats(
+                    0,
+                    0,
+                    0,
+                    0,
+                    itemDropUpdates.size(),
+                    itemDropUpdates.size(),
+                    System.nanoTime() - startNanos
+            );
+            return itemDropUpdates;
         }
         List<EntitySnapshot> updated = new ArrayList<>(ambientEntities.size() + itemDrops.size());
+        int activeAmbient = 0;
+        int parkedAmbient = 0;
+        int blockedMoves = 0;
         for (Map.Entry<Long, EntitySnapshot> entry : ambientEntities.entrySet()) {
             EntitySnapshot current = entry.getValue();
             EntitySnapshot anchor = ambientAnchors.getOrDefault(entry.getKey(), current);
             FollowTarget followTarget = followTargets.get(entry.getKey());
-            if (followTarget == null && parkedOutsideActiveRadius(current)) {
+            if (followTarget == null && parkedOutsideActiveChunks(current)) {
+                parkedAmbient++;
                 continue;
             }
+            activeAmbient++;
             FleeThreat fleeThreat = followTarget == null ? fleeThreatFor(current).orElse(null) : null;
             EntitySnapshot moved = moveAmbient(anchor, current, followTarget, fleeThreat, tick);
 
@@ -273,35 +426,58 @@ public final class ServerEntityTracker {
                 moved = moved.withVelocity(0.0, 0.0, 0.0);
             }
 
-            moved = validateAmbientMove(current, moved, movementValidator);
+            boolean blocked = !movementValidator.canMove(current, moved) || locallyBlocked(current, moved);
+            if (blocked) {
+                blockedMoves++;
+                moved = blockedAmbientMove(current, moved);
+            }
             ambientEntities.put(entry.getKey(), moved);
             updated.add(moved);
         }
-        updated.addAll(tickItemDrops(tick));
+        List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick);
+        updated.addAll(itemDropUpdates);
+        lastAmbientTickStats = new AmbientTickStats(
+                ambientEntities.size(),
+                activeAmbient,
+                parkedAmbient,
+                blockedMoves,
+                itemDropUpdates.size(),
+                updated.size(),
+                System.nanoTime() - startNanos
+        );
         return updated;
     }
 
-    private boolean parkedOutsideActiveRadius(EntitySnapshot current) {
+    private boolean parkedOutsideActiveChunks(EntitySnapshot current) {
         if (players.isEmpty()) {
             return false;
         }
-        double maxDistanceSquared = ACTIVE_AMBIENT_RADIUS * ACTIVE_AMBIENT_RADIUS;
+        ChunkPos entityChunk = chunkFor(current);
         for (EntitySnapshot player : players.values()) {
-            double dx = current.x() - player.x();
-            double dy = current.y() - player.y();
-            double dz = current.z() - player.z();
-            if (dx * dx + dy * dy + dz * dz <= maxDistanceSquared) {
+            ChunkPos playerChunk = chunkFor(player);
+            if (PhysicsTickets.insideTicket(entityChunk, playerChunk, PhysicsTickets.PLAYER_SIMULATION_RADIUS_CHUNKS)) {
                 return false;
             }
         }
         return true;
     }
 
-    private EntitySnapshot validateAmbientMove(EntitySnapshot current, EntitySnapshot candidate, MovementValidator movementValidator) {
-        if (!movementValidator.canMove(current, candidate) || locallyBlocked(current, candidate)) {
-            return blockedAmbientMove(current, candidate);
+    private static ChunkPos chunkFor(EntitySnapshot snapshot) {
+        return ChunkPos.fromBlock((int) Math.floor(snapshot.x()), (int) Math.floor(snapshot.z()));
+    }
+
+    private List<EntitySnapshot> projectileTargets() {
+        List<EntitySnapshot> targets = new ArrayList<>(players.size() + ambientEntities.size());
+        targets.addAll(players.values());
+        targets.addAll(ambientEntities.values());
+        return targets;
+    }
+
+    private static ProjectilePhysicsConfig projectileConfig(String typeKey) {
+        if (ProjectilePhysicsConfig.arrow().typeKey().equals(typeKey)) {
+            return ProjectilePhysicsConfig.arrow();
         }
-        return candidate;
+        return ProjectilePhysicsConfig.arrow();
     }
 
     private boolean locallyBlocked(EntitySnapshot current, EntitySnapshot candidate) {
@@ -351,6 +527,14 @@ public final class ServerEntityTracker {
 
     public int playerCount() {
         return players.size();
+    }
+
+    public AmbientTickStats lastAmbientTickStats() {
+        return lastAmbientTickStats;
+    }
+
+    public ProjectileTickStats lastProjectileTickStats() {
+        return lastProjectileTickStats;
     }
 
     public boolean hasDangerNear(double x, double y, double z, double radius) {
@@ -593,5 +777,49 @@ public final class ServerEntityTracker {
     }
 
     private record FleeThreat(double x, double z, double distanceSquared) {
+    }
+
+    public record AmbientTickStats(
+            int ambientTotal,
+            int activeAmbient,
+            int parkedAmbient,
+            int blockedAmbientMoves,
+            int itemDropUpdates,
+            int emittedSnapshots,
+            long durationNanos
+    ) {
+        public static final AmbientTickStats EMPTY = new AmbientTickStats(0, 0, 0, 0, 0, 0, 0L);
+
+        public AmbientTickStats {
+            ambientTotal = Math.max(0, ambientTotal);
+            activeAmbient = Math.max(0, activeAmbient);
+            parkedAmbient = Math.max(0, parkedAmbient);
+            blockedAmbientMoves = Math.max(0, blockedAmbientMoves);
+            itemDropUpdates = Math.max(0, itemDropUpdates);
+            emittedSnapshots = Math.max(0, emittedSnapshots);
+            durationNanos = Math.max(0L, durationNanos);
+        }
+    }
+
+    public record ProjectileTickStats(
+            int projectilesBeforeTick,
+            int projectilesAfterTick,
+            int emittedHits,
+            int blockHits,
+            int entityHits,
+            int expired,
+            long durationNanos
+    ) {
+        public static final ProjectileTickStats EMPTY = new ProjectileTickStats(0, 0, 0, 0, 0, 0, 0L);
+
+        public ProjectileTickStats {
+            projectilesBeforeTick = Math.max(0, projectilesBeforeTick);
+            projectilesAfterTick = Math.max(0, projectilesAfterTick);
+            emittedHits = Math.max(0, emittedHits);
+            blockHits = Math.max(0, blockHits);
+            entityHits = Math.max(0, entityHits);
+            expired = Math.max(0, expired);
+            durationNanos = Math.max(0L, durationNanos);
+        }
     }
 }

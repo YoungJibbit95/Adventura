@@ -2,10 +2,12 @@ package dev.voxelgame.client;
 
 import dev.voxelgame.client.net.ClientNetworkStats;
 import dev.voxelgame.client.render.RenderResourceTracker;
+import dev.voxelgame.client.render.RenderPassStats;
 import dev.voxelgame.client.render.WorldRenderer;
 import dev.voxelgame.client.render.entity.EntityRenderer;
 import dev.voxelgame.client.render.particle.ParticleSystem;
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.net.GamePacket;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,14 +45,29 @@ class EngineFrameStatsTest {
                 6,
                 3,
                 2,
-                4,
-                1,
+                3,
+                2,
                 1,
                 6,
                 240,
                 8,
                 5,
-                8192L
+                8192L,
+                new RenderPassStats("terrain.opaque", 3, 1, 1, 3, 120, 1, 0),
+                new RenderPassStats("terrain.cutout", 2, 1, 1, 2, 80, 0, 1),
+                new RenderPassStats("terrain.translucent", 1, 1, 1, 1, 40, 1, 0),
+                12,
+                1024L,
+                1,
+                14,
+                32,
+                2,
+                1,
+                1,
+                4096L,
+                64,
+                64,
+                16384L
         );
         EntityRenderer.RenderStats entityStats = new EntityRenderer.RenderStats(3, 2, 12, 12, 4);
         ParticleSystem.RenderStats particleStats = new ParticleSystem.RenderStats(33, 4.5, 0.25, 2L, 1, 18);
@@ -67,7 +84,9 @@ class EngineFrameStatsTest {
                 6,
                 7,
                 8,
-                9
+                9,
+                10,
+                new GamePacket.ServerStatsSnapshot(5, 2L, 11L, 7L, 3L, 1L, 0L, 0L, 20L, 2400L, 120L, 8.0)
         );
         RenderResourceTracker.Snapshot resourceStats = new RenderResourceTracker.Snapshot(
                 8,
@@ -85,6 +104,9 @@ class EngineFrameStatsTest {
                 2,
                 3L,
                 1L,
+                4L,
+                1L,
+                2.5,
                 1,
                 1,
                 4096L,
@@ -112,6 +134,8 @@ class EngineFrameStatsTest {
                 3,
                 4,
                 2,
+                1,
+                6,
                 particleStats,
                 true,
                 networkStats,
@@ -125,23 +149,38 @@ class EngineFrameStatsTest {
         assertEquals(3, stats.chunks().visibleChunks());
         assertEquals(2, stats.chunks().builtChunks());
         assertEquals(6, stats.rendering().drawCalls());
+        assertEquals(3, stats.rendering().solidDrawCalls());
+        assertEquals(2, stats.rendering().cutoutDrawCalls());
+        assertEquals(1, stats.rendering().transparentDrawCalls());
         assertEquals(240, stats.rendering().triangles());
+        assertEquals(1, stats.rendering().sortedTransparentMeshes());
+        assertEquals(4096L, stats.rendering().gpuUploadBytes());
+        assertEquals(64, stats.rendering().atlasWidth());
+        assertEquals(16384L, stats.rendering().atlasBytes());
         assertEquals(4, stats.rendering().debugChunkBorders());
         assertEquals(2, stats.rendering().debugMeshBounds());
+        assertEquals(1, stats.rendering().debugSectionBounds());
         assertEquals(5, stats.entities().entityCount());
         assertEquals(3, stats.entities().visibleEntityCount());
         assertEquals(33, stats.particles().particleCount());
         assertEquals(4.5, stats.particles().spawnRate(), 0.001);
         assertEquals(0.25, stats.particles().budgetUsage(), 0.001);
         assertEquals(2L, stats.particles().evictedParticles());
+        assertEquals(6, stats.particles().debugBounds());
         assertTrue(stats.network().online());
         assertEquals(96.0, stats.network().averagePacketBytes(), 0.001);
         assertEquals(1L, stats.network().invalidPacketsDropped());
         assertEquals(7, stats.network().chunkStreamQueueLength());
         assertEquals(6, stats.network().entitySnapshotPackets());
+        assertEquals(10, stats.network().serverStatsPackets());
+        assertEquals(5, stats.network().serverStats().chunkSubscriptions());
+        assertEquals(11L, stats.network().serverStats().sentEntitySnapshots());
         assertEquals(16, stats.gpuResources().liveChunkBuffers());
         assertEquals(3, stats.gpuResources().liveTextures());
         assertEquals(2, stats.gpuResources().liveShaderPrograms());
+        assertEquals(4L, stats.gpuResources().shaderReloadCount());
+        assertEquals(1L, stats.gpuResources().failedShaderReloadCount());
+        assertEquals(2.5, stats.gpuResources().lastShaderReloadMilliseconds(), 0.001);
         assertEquals(2, stats.gpuResources().liveEntityBuffers());
         assertEquals(1, stats.gpuResources().liveFramebuffers());
     }

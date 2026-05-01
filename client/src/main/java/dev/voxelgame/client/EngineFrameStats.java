@@ -7,6 +7,7 @@ import dev.voxelgame.client.render.entity.EntityRenderer;
 import dev.voxelgame.client.render.particle.ParticleSystem;
 import dev.voxelgame.client.world.ChunkBuildQueue;
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.net.GamePacket;
 
 public record EngineFrameStats(
         Frame frame,
@@ -57,6 +58,8 @@ public record EngineFrameStats(
             int renderedEntityHitboxes,
             int renderedChunkBorderDebugChunks,
             int renderedMeshBoundsDebugBoxes,
+            int renderedSectionBoundsDebugBoxes,
+            int renderedParticleDebugBoxes,
             ParticleSystem.RenderStats particleStats,
             boolean online,
             ClientNetworkStats.Snapshot networkStats,
@@ -127,6 +130,9 @@ public record EngineFrameStats(
                 ),
                 new Rendering(
                         safeRenderStats.drawCalls(),
+                        safeRenderStats.opaqueDrawCalls(),
+                        safeRenderStats.cutoutDrawCalls(),
+                        safeRenderStats.transparentDrawCalls(),
                         safeRenderStats.triangles(),
                         safeRenderStats.renderedLayers(),
                         safeRenderStats.renderedOpaqueChunks(),
@@ -139,16 +145,22 @@ public record EngineFrameStats(
                         safeRenderStats.culledChunkPositions(),
                         safeRenderStats.culledByDistance(),
                         safeRenderStats.culledByBounds(),
+                        safeRenderStats.sortedTransparentMeshes(),
                         safeRenderStats.loadedGpuMeshes(),
                         safeRenderStats.loadedChunkPositions(),
                         safeRenderStats.meshBytes(),
+                        safeRenderStats.gpuUploadBytes(),
                         safeRenderStats.materialCount(),
                         safeRenderStats.materialLutBytes(),
                         safeRenderStats.missingMaterialCount(),
                         safeRenderStats.atlasTextureCount(),
+                        safeRenderStats.atlasWidth(),
+                        safeRenderStats.atlasHeight(),
+                        safeRenderStats.atlasBytes(),
                         safeRenderStats.chunkVertexBytes(),
                         Math.max(0, renderedChunkBorderDebugChunks),
-                        Math.max(0, renderedMeshBoundsDebugBoxes)
+                        Math.max(0, renderedMeshBoundsDebugBoxes),
+                        Math.max(0, renderedSectionBoundsDebugBoxes)
                 ),
                 new Entities(
                         Math.max(0, visibleEntitySnapshots),
@@ -165,7 +177,8 @@ public record EngineFrameStats(
                         safeParticleStats.budgetUsage(),
                         safeParticleStats.evictedParticles(),
                         safeParticleStats.drawCalls(),
-                        safeParticleStats.triangles()
+                        safeParticleStats.triangles(),
+                        Math.max(0, renderedParticleDebugBoxes)
                 ),
                 new Network(
                         online,
@@ -181,7 +194,9 @@ public record EngineFrameStats(
                         safeNetworkStats.entitySnapshotPackets(),
                         safeNetworkStats.inventoryPackets(),
                         safeNetworkStats.storageOpenPackets(),
-                        safeNetworkStats.chatPackets()
+                        safeNetworkStats.chatPackets(),
+                        safeNetworkStats.serverStatsPackets(),
+                        safeNetworkStats.serverStats()
                 ),
                 new GpuResources(
                         safeResourceStats.liveChunkMeshes(),
@@ -199,6 +214,9 @@ public record EngineFrameStats(
                         safeResourceStats.liveShaderPrograms(),
                         safeResourceStats.createdShaderPrograms(),
                         safeResourceStats.disposedShaderPrograms(),
+                        safeResourceStats.shaderReloadCount(),
+                        safeResourceStats.failedShaderReloadCount(),
+                        safeResourceStats.lastShaderReloadMilliseconds(),
                         safeResourceStats.liveParticleVertexArrays(),
                         safeResourceStats.liveParticleBuffers(),
                         safeResourceStats.liveParticleBufferBytes(),
@@ -273,6 +291,9 @@ public record EngineFrameStats(
 
     public record Rendering(
             int drawCalls,
+            int solidDrawCalls,
+            int cutoutDrawCalls,
+            int transparentDrawCalls,
             int triangles,
             int renderedMeshLayers,
             int solidMeshCount,
@@ -285,19 +306,25 @@ public record EngineFrameStats(
             int culledChunks,
             int culledByDistance,
             int culledByBounds,
+            int sortedTransparentMeshes,
             int loadedGpuMeshes,
             int loadedGpuChunkPositions,
             long estimatedVramBytes,
+            long gpuUploadBytes,
             int materialCount,
             long materialLutBytes,
             int missingMaterialCount,
             int atlasTextureCount,
+            int atlasWidth,
+            int atlasHeight,
+            long atlasBytes,
             int chunkVertexBytes,
             int debugChunkBorders,
-            int debugMeshBounds
+            int debugMeshBounds,
+            int debugSectionBounds
     ) {
         static Rendering empty() {
-            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0, 0L, 0, 0, 0, 0, 0);
+            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0L, 0, 0L, 0, 0, 0, 0, 0L, 0, 0, 0, 0);
         }
     }
 
@@ -321,10 +348,11 @@ public record EngineFrameStats(
             double budgetUsage,
             long evictedParticles,
             int drawCalls,
-            int triangles
+            int triangles,
+            int debugBounds
     ) {
         static Particles empty() {
-            return new Particles(0, 0.0, 0.0, 0L, 0, 0);
+            return new Particles(0, 0.0, 0.0, 0L, 0, 0, 0);
         }
     }
 
@@ -342,10 +370,35 @@ public record EngineFrameStats(
             long entitySnapshotPackets,
             long inventoryPackets,
             long storageOpenPackets,
-            long chatPackets
+            long chatPackets,
+            long serverStatsPackets,
+            GamePacket.ServerStatsSnapshot serverStats
     ) {
+        public Network {
+            serverStats = serverStats == null
+                    ? new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0)
+                    : serverStats;
+        }
+
         static Network offline() {
-            return new Network(false, 0L, 0L, 0.0, 0.0, 0.0, 0L, 0, 0L, 0L, 0L, 0L, 0L, 0L);
+            return new Network(
+                    false,
+                    0L,
+                    0L,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0L,
+                    0,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0)
+            );
         }
     }
 
@@ -365,6 +418,9 @@ public record EngineFrameStats(
             int liveShaderPrograms,
             long createdShaderPrograms,
             long disposedShaderPrograms,
+            long shaderReloadCount,
+            long failedShaderReloadCount,
+            double lastShaderReloadMilliseconds,
             int liveParticleVertexArrays,
             int liveParticleBuffers,
             long liveParticleBufferBytes,
@@ -374,7 +430,7 @@ public record EngineFrameStats(
             int liveFramebuffers
     ) {
         static GpuResources empty() {
-            return new GpuResources(0, 0, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0, 0, 0L, 0, 0, 0L, 0);
+            return new GpuResources(0, 0, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0, 0L, 0L, 0L, 0L, 0.0, 0, 0, 0L, 0, 0, 0L, 0);
         }
     }
 }

@@ -2,6 +2,7 @@ package dev.voxelgame.client.render;
 
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.DimensionSettings;
+import dev.voxelgame.common.math.Raycast;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -50,5 +51,34 @@ class ChunkBorderRendererTest {
         assertEquals(5.0f, vertices[3]);
         assertEquals(2.0f, vertices[4]);
         assertEquals(3.0f, vertices[5]);
+    }
+
+    @Test
+    void buildsInflatedBlockOutline() {
+        float[] vertices = ChunkBorderRenderer.blockBoxVertices(2, 4, -3, 0.01f);
+
+        assertEquals(12 * 2 * 3, vertices.length);
+        assertEquals(1.99f, vertices[0], 0.0001f);
+        assertEquals(3.99f, vertices[1], 0.0001f);
+        assertEquals(-3.01f, vertices[2], 0.0001f);
+        assertEquals(3.01f, vertices[3], 0.0001f);
+        assertEquals(3.99f, vertices[4], 0.0001f);
+        assertEquals(-3.01f, vertices[5], 0.0001f);
+    }
+
+    @Test
+    void buildsMiningProgressSquareOnHitFace() {
+        float[] vertices = ChunkBorderRenderer.faceProgressVertices(
+                new Raycast.Hit(2, 4, -3, 0, 1, 0, 3.0),
+                0.5f
+        );
+
+        assertEquals(4 * 2 * 3, vertices.length);
+        assertEquals(2.31f, vertices[0], 0.0001f);
+        assertEquals(5.006f, vertices[1], 0.0001f);
+        assertEquals(-2.69f, vertices[2], 0.0001f);
+        assertEquals(2.69f, vertices[3], 0.0001f);
+        assertEquals(5.006f, vertices[4], 0.0001f);
+        assertEquals(-2.69f, vertices[5], 0.0001f);
     }
 }

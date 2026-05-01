@@ -9,6 +9,7 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.ProjectileBounds;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.gen.OverworldGenerator;
@@ -87,6 +88,24 @@ class ServerWorldTest {
         assertTrue(world.collidesPlayer(4.5, eyeInsideBlock, 4.5, PlayerBounds.DEFAULT));
         assertFalse(world.collidesPlayer(5.5, eyeInsideBlock, 4.5, PlayerBounds.DEFAULT));
         assertFalse(world.collidesPlayer(4.5, eyeAboveBlock, 4.5, PlayerBounds.DEFAULT));
+    }
+
+    @Test
+    void playerCollisionUsesPartialBlockShapes() {
+        ServerWorld world = new ServerWorld(123L);
+        for (int x = 3; x <= 6; x++) {
+            for (int z = 3; z <= 5; z++) {
+                world.setBlock(x, 300, z, Blocks.AIR);
+                world.setBlock(x, 301, z, Blocks.AIR);
+            }
+        }
+        world.setBlock(4, 300, 4, Blocks.MOSSY_PATH);
+        world.setBlock(5, 300, 4, Blocks.GARDEN_FENCE);
+
+        assertTrue(world.collidesPlayer(4.5, 301.68, 4.5, PlayerBounds.DEFAULT));
+        assertFalse(world.collidesPlayer(4.5, 301.82, 4.5, PlayerBounds.DEFAULT));
+        assertTrue(world.collidesPlayer(5.5, 301.62, 4.5, PlayerBounds.DEFAULT));
+        assertFalse(world.collidesPlayer(5.20, 301.62, 3.55, PlayerBounds.DEFAULT));
     }
 
     @Test
@@ -195,6 +214,17 @@ class ServerWorldTest {
         assertTrue(world.entityPlacementClear(grassGraze));
         assertFalse(world.entityPlacementClear(dirtGraze));
         assertTrue(world.entityPlacementClear(dirtWander));
+    }
+
+    @Test
+    void projectileCollisionRejectsSolidBlocksAndIgnoresWater() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(60, 250, 60, Blocks.STONE);
+        world.setBlock(61, 250, 60, Blocks.WATER);
+
+        assertTrue(world.collidesProjectile(60.5, 250.5, 60.5, ProjectileBounds.ARROW));
+        assertFalse(world.collidesProjectile(61.5, 250.5, 60.5, ProjectileBounds.ARROW));
+        assertTrue(world.projectileInWater(61.5, 250.5, 60.5));
     }
 
     @Test

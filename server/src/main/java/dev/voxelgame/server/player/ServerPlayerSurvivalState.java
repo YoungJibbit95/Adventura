@@ -7,7 +7,10 @@ public final class ServerPlayerSurvivalState {
     private static final int MAX_STAT = 20;
     private static final long COMFORT_SCAN_INTERVAL_TICKS = 40L;
     private static final double SAFE_FALL_DISTANCE_BLOCKS = 4.0;
+    private static final double FALL_DAMAGE_SCALE = 0.85;
     private static final double WATER_FALL_DAMAGE_MULTIPLIER = 0.25;
+    private static final float SPRINT_STAMINA_DRAIN_PER_SECOND = 4.5f;
+    private static final float SPRINT_HUNGER_DRAIN_PER_SECOND = 0.70f;
 
     private int health = MAX_STAT;
     private int hunger = MAX_STAT;
@@ -58,19 +61,27 @@ public final class ServerPlayerSurvivalState {
     }
 
     public void tick(double deltaSeconds, int comfort, long tick, boolean moving) {
-        tick(deltaSeconds, comfort, tick, moving, false);
+        tick(deltaSeconds, comfort, tick, moving, false, false);
     }
 
     public void tick(double deltaSeconds, int comfort, long tick, boolean moving, boolean headUnderwater) {
+        tick(deltaSeconds, comfort, tick, moving, headUnderwater, false);
+    }
+
+    public void tick(double deltaSeconds, int comfort, long tick, boolean moving, boolean headUnderwater, boolean sprinting) {
         updateComfort(comfort, tick);
-        tick(deltaSeconds, moving, headUnderwater);
+        tick(deltaSeconds, moving, headUnderwater, sprinting);
     }
 
     public void tick(double deltaSeconds, boolean moving) {
-        tick(deltaSeconds, moving, false);
+        tick(deltaSeconds, moving, false, false);
     }
 
     public void tick(double deltaSeconds, boolean moving, boolean headUnderwater) {
+        tick(deltaSeconds, moving, headUnderwater, false);
+    }
+
+    public void tick(double deltaSeconds, boolean moving, boolean headUnderwater, boolean sprinting) {
         float delta = (float) Math.max(0.0, Math.min(5.0, deltaSeconds));
         if (delta == 0.0f) {
             return;
@@ -81,13 +92,17 @@ public final class ServerPlayerSurvivalState {
         if (moving) {
             hungerDrain += delta * 0.16f * hungerMultiplier;
         }
+        if (sprinting && moving && stamina > 0.0f) {
+            stamina = Math.max(0.0f, stamina - delta * SPRINT_STAMINA_DRAIN_PER_SECOND);
+            hungerDrain += delta * SPRINT_HUNGER_DRAIN_PER_SECOND * hungerMultiplier;
+        } else {
+            float staminaRegen = (hunger > 4 ? 3.0f : 1.25f) * ComfortRules.staminaRegenMultiplier(this.comfort);
+            stamina = Math.min(MAX_STAT, stamina + delta * staminaRegen);
+        }
         while (hungerDrain >= 1.0f) {
             hungerDrain -= 1.0f;
             hunger = Math.max(0, hunger - 1);
         }
-
-        float staminaRegen = (hunger > 4 ? 3.0f : 1.25f) * ComfortRules.staminaRegenMultiplier(this.comfort);
-        stamina = Math.min(MAX_STAT, stamina + delta * staminaRegen);
         if (headUnderwater) {
             breath = Math.max(0.0f, breath - delta * 2.0f);
         } else {
@@ -136,11 +151,15 @@ public final class ServerPlayerSurvivalState {
         if (!Double.isFinite(fallDistanceBlocks) || fallDistanceBlocks <= SAFE_FALL_DISTANCE_BLOCKS) {
             return 0;
         }
-        double damage = fallDistanceBlocks - SAFE_FALL_DISTANCE_BLOCKS;
+        double damage = (fallDistanceBlocks - SAFE_FALL_DISTANCE_BLOCKS) * FALL_DAMAGE_SCALE;
         if (waterCushioned) {
             damage *= WATER_FALL_DAMAGE_MULTIPLIER;
         }
         return Math.max(0, (int) Math.ceil(damage));
+    }
+
+    public boolean canSprint() {
+        return health > 0 && hunger > 0 && stamina > 1.5f;
     }
 
     public GamePacket.PlayerStatsSnapshot snapshot() {

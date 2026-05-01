@@ -14,6 +14,7 @@ public record EntityBounds(float width, float height, float depth) {
             case "voxel:little_boar" -> new EntityBounds(0.82f, 0.72f, 1.08f);
             case "voxel:dune_crawler" -> new EntityBounds(0.88f, 0.48f, 1.08f);
             case "voxel:forest_grazer", "voxel:meadow_grazer" -> new EntityBounds(0.92f, 1.12f, 1.18f);
+            case "voxel:arrow_projectile" -> new EntityBounds(0.18f, 0.18f, 0.18f);
             default -> new EntityBounds(0.70f, 1.10f, 0.70f);
         };
     }
