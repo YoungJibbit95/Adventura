@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.UUID;
 
 public final class PlayerSaveStore {
@@ -25,7 +26,12 @@ public final class PlayerSaveStore {
     }
 
     public static void save(Path directory, PlayerSave save) throws IOException {
-        PlayerSaveCodec.write(pathFor(directory, save.playerId()), save, ITEMS);
+        Path path = pathFor(directory, save.playerId());
+        if (Files.exists(path)) {
+            Properties existing = PlayerSaveCodec.readProperties(path);
+            SaveBackup.createBeforeMigrationIfNeeded(path, existing);
+        }
+        PlayerSaveCodec.write(path, save, ITEMS);
     }
 
     public static Path pathFor(Path directory, UUID playerId) {

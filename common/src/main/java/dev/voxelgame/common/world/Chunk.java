@@ -1,9 +1,13 @@
 package dev.voxelgame.common.world;
 
+import java.util.Objects;
+import java.util.Optional;
+
 public final class Chunk {
     private final ChunkPos pos;
     private final DimensionSettings dimension;
     private final ChunkSection[] sections;
+    private ChunkTerrainCache terrainCache;
 
     public Chunk(ChunkPos pos, DimensionSettings dimension) {
         this.pos = pos;
@@ -24,6 +28,22 @@ public final class Chunk {
 
     public ChunkSection sectionByIndex(int index) {
         return sections[index];
+    }
+
+    public Optional<ChunkTerrainCache> terrainCache() {
+        return Optional.ofNullable(terrainCache);
+    }
+
+    public void setTerrainCache(ChunkTerrainCache terrainCache) {
+        Objects.requireNonNull(terrainCache, "terrainCache");
+        if (!pos.equals(terrainCache.pos())) {
+            throw new IllegalArgumentException("Terrain cache belongs to " + terrainCache.pos() + ", not " + pos);
+        }
+        this.terrainCache = terrainCache;
+    }
+
+    public void invalidateTerrainCache() {
+        terrainCache = null;
     }
 
     public ChunkSection sectionForY(int y) {
@@ -49,6 +69,18 @@ public final class Chunk {
     public void setBlockId(int worldX, int y, int worldZ, short blockId) {
         ChunkSection section = sectionForY(y);
         section.setBlockId(ChunkPos.localCoord(worldX), Math.floorMod(y, ChunkSection.SIZE), ChunkPos.localCoord(worldZ), blockId);
+    }
+
+    public int sectionDirtyFlagsForY(int y) {
+        return sectionForY(y).dirtyFlags();
+    }
+
+    public void markSectionDirtyForY(int y, ChunkSection.DirtyAspect aspect) {
+        sectionForY(y).markDirty(aspect);
+    }
+
+    public void clearSectionDirtyFlagsForY(int y) {
+        sectionForY(y).clearDirtyFlags();
     }
 
     public int skyLight(int worldX, int y, int worldZ) {

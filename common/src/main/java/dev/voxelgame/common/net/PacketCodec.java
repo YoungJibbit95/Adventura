@@ -2,6 +2,7 @@ package dev.voxelgame.common.net;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.world.ChunkPos;
 
 import java.io.ByteArrayInputStream;
@@ -101,6 +102,7 @@ public final class PacketCodec {
                     out.writeBoolean(snapshot.feetInWater());
                     out.writeBoolean(snapshot.bodyInWater());
                     out.writeBoolean(snapshot.headUnderwater());
+                    out.writeUTF(snapshot.correction().name());
                 }
                 case GamePacket.BlockInteract interact -> {
                     out.writeInt(interact.selectedSlot());
@@ -133,6 +135,25 @@ public final class PacketCodec {
                     out.writeLong(interact.entityId());
                     out.writeInt(interact.selectedSlot());
                     out.writeUTF(interact.action().name());
+                }
+                case GamePacket.ProjectileShoot shoot -> {
+                    out.writeInt(shoot.selectedSlot());
+                    out.writeLong(shoot.sequence());
+                }
+                case GamePacket.ProjectileImpact impact -> {
+                    out.writeLong(impact.projectileId());
+                    out.writeUTF(impact.projectileTypeKey());
+                    out.writeUTF(impact.hitType().name());
+                    out.writeDouble(impact.x());
+                    out.writeDouble(impact.y());
+                    out.writeDouble(impact.z());
+                    out.writeInt(impact.blockX());
+                    out.writeInt(impact.blockY());
+                    out.writeInt(impact.blockZ());
+                    out.writeUTF(impact.blockFace().name());
+                    out.writeLong(impact.entityId());
+                    out.writeBoolean(impact.stuck());
+                    out.writeLong(impact.serverTick());
                 }
                 case GamePacket.InventorySnapshot inventory -> writeItemStacks(out, inventory.slots());
                 case GamePacket.PlayerStatsSnapshot stats -> {
@@ -194,6 +215,11 @@ public final class PacketCodec {
                     out.writeInt(storage.y());
                     out.writeInt(storage.z());
                     writeItemStacks(out, storage.slots());
+                }
+                case GamePacket.StorageClose close -> {
+                    out.writeInt(close.x());
+                    out.writeInt(close.y());
+                    out.writeInt(close.z());
                 }
                 case GamePacket.StorageTransfer transfer -> {
                     out.writeInt(transfer.x());
@@ -280,7 +306,8 @@ public final class PacketCodec {
                         in.readBoolean(),
                         in.readBoolean(),
                         in.readBoolean(),
-                        in.readBoolean()
+                        in.readBoolean(),
+                        readMovementCorrection(in)
                 );
                 case BLOCK_INTERACT -> new GamePacket.BlockInteract(in.readInt(), in.readInt(), in.readInt(), in.readInt());
                 case ENTITY_SNAPSHOT -> {
@@ -312,6 +339,22 @@ public final class PacketCodec {
                         in.readLong(),
                         in.readInt(),
                         GamePacket.EntityInteract.Action.valueOf(in.readUTF())
+                );
+                case PROJECTILE_SHOOT -> new GamePacket.ProjectileShoot(in.readInt(), in.readLong());
+                case PROJECTILE_IMPACT -> new GamePacket.ProjectileImpact(
+                        in.readLong(),
+                        in.readUTF(),
+                        ProjectileHit.Type.valueOf(in.readUTF()),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readInt(),
+                        ProjectileHit.BlockFace.valueOf(in.readUTF()),
+                        in.readLong(),
+                        in.readBoolean(),
+                        in.readLong()
                 );
                 case INVENTORY_SNAPSHOT -> new GamePacket.InventorySnapshot(readItemStacks(in));
                 case PLAYER_STATS_SNAPSHOT -> new GamePacket.PlayerStatsSnapshot(
@@ -361,6 +404,7 @@ public final class PacketCodec {
                         in.readDouble()
                 );
                 case STORAGE_OPEN -> new GamePacket.StorageOpen(in.readInt(), in.readInt(), in.readInt(), readItemStacks(in));
+                case STORAGE_CLOSE -> new GamePacket.StorageClose(in.readInt(), in.readInt(), in.readInt());
                 case STORAGE_TRANSFER -> new GamePacket.StorageTransfer(
                         in.readInt(),
                         in.readInt(),
@@ -398,6 +442,10 @@ public final class PacketCodec {
 
     private static UUID readUuid(DataInputStream in) throws IOException {
         return new UUID(in.readLong(), in.readLong());
+    }
+
+    private static GamePacket.MovementCorrection readMovementCorrection(DataInputStream in) throws IOException {
+        return GamePacket.MovementCorrection.valueOf(in.readUTF());
     }
 
     private static void writeShortArray(DataOutputStream out, short[] values) throws IOException {

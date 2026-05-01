@@ -4,15 +4,9 @@ public record PlayerBounds(float halfWidth, float eyeHeight, float headClearance
     public static final PlayerBounds DEFAULT = new PlayerBounds(0.30f, 1.62f, 0.18f);
 
     public PlayerBounds {
-        if (halfWidth <= 0.0f) {
-            throw new IllegalArgumentException("Player half width must be positive");
-        }
-        if (eyeHeight <= 0.0f) {
-            throw new IllegalArgumentException("Player eye height must be positive");
-        }
-        if (headClearance < 0.0f) {
-            throw new IllegalArgumentException("Player head clearance must be >= 0");
-        }
+        halfWidth = PhysicsNumericGuard.requireFinitePositive("Player half width", halfWidth);
+        eyeHeight = PhysicsNumericGuard.requireFinitePositive("Player eye height", eyeHeight);
+        headClearance = PhysicsNumericGuard.requireFiniteNonNegative("Player head clearance", headClearance);
     }
 
     public double minX(double eyeX) {

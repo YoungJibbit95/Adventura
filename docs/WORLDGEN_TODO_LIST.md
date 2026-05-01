@@ -1,6 +1,6 @@
 # Adventura – Worldgen & Streaming TODO List
 
-Stand: 2026-04-30
+Stand: 2026-05-01
 
 ## Ziel
 
@@ -38,17 +38,9 @@ Worldgen soll nicht aus einer großen Methode mit vielen Sonderfällen bestehen.
 9. Ambient Entity Markers
 10. Spawn-Safety Pass
 
-### Offen
+### Status 2026-05-01
 
-- bestehende `OverworldGenerator`-Logik nach Passes dokumentieren.
-- pro Pass reine Datenprodukte definieren.
-- Seiteneffekte minimieren.
-- pro Pass Debug-Metriken erfassen:
-  - biome samples
-  - height samples
-  - feature placements
-  - structure attempts/successes
-  - rejected placements
+`OverworldGenerator.planChunk(...)` liefert die zentralen Pass-Produkte für einen Chunk: Terrain-Cache, geplante Structure, optionalen Spawn-Punkt und `GenerationMetrics`. Die eigentliche Chunk-Mutation nutzt diesen Plan und sammelt angewendete Metriken für Biome-/Height-Samples, Feature-Placements, Structure-Versuche/-Erfolge, Loot-/Entity-Marker, abgelehnte Placements und Spawn-Kandidaten. Terrain Sampling, Structure-Auswahl und Spawn Safety sind damit einzeln testbar.
 
 ### Akzeptanz
 
@@ -64,13 +56,9 @@ Worldgen soll nicht aus einer großen Methode mit vielen Sonderfällen bestehen.
 
 Terrainhöhe und Biome werden oft mehrfach gesampelt: Spawn, Structures, Entities, Decorations und Debug brauchen dieselben Informationen.
 
-### Offen
+### Status 2026-05-01
 
-- pro Chunk Heightmap cachen.
-- pro Chunk Biome map cachen.
-- Cache immutable oder generation-stage-safe halten.
-- Cache für Spawn/Structures/Entities verwenden.
-- Debug Overlay kann aktuelle Height/Biome aus Cache lesen.
+`ChunkTerrainCache` hält pro Chunk immutable Heightmap- und Biome-Spalten. `OverworldGenerator` erzeugt und speichert diesen Cache am Chunk, nutzt ihn für Terrain Fill, Decoration, Structures und Starter-Ressourcen. Ambient-Spawns, Client-Spawnposition, Server-Lootmarker und das Debug-Biome/Height-Overlay lesen dieselben gecachten Spalten, wenn ein geladener Chunk sie bereitstellt.
 
 ### Akzeptanz
 
@@ -97,13 +85,9 @@ Spieler soll zuverlässig sicher starten.
 - nah an Starter-Ressourcen.
 - keine gefährliche Entity direkt am Spawn.
 
-### Offen
+### Status 2026-05-01
 
-- Spawn-Kandidaten scannen.
-- Spawn-Punkt aus Surface + freiem Headroom berechnen.
-- Fallback-Kandidaten nutzen.
-- Starter-Campsite sauber platzieren.
-- Spawn Safety Unit Tests.
+`OverworldGenerator.safeSpawnPoint()` scannt deterministisch Spawn-Kandidaten um den Startbereich, bevorzugt Cozy Meadow, Flower Fields und Lakeside, erzwingt soliden Support, freie Headroom-/Player-Bounds, keinen Wasserstart, keine blockierende Decoration/Structure-Spalte und Nähe zu Starter-Ressourcen. Der Spawn-Punkt wird als Common-Datenprodukt genutzt; `ClientWorld.spawnPosition()` hängt daran. Smoke-Seed-Tests validieren sicheren Spawn, Starter-Ressourcen-Nähe und keine gefährliche Ambient-Entity direkt am Spawn.
 
 ### Akzeptanz
 
@@ -121,86 +105,14 @@ Biome sollen sich nicht nur optisch unterscheiden, sondern klare Gameplay-Gründ
 
 ## P1.1 Biome Resource Profiles
 
-### Offen
+### Status 2026-05-01
 
-Für jedes Biom eigene Profile definieren:
+`BiomeResourceProfile` und `BiomeResourceProfiles` definieren pro Default-Biom Surface-, Vegetation-, Resource-, Ore-, Structure-, Ambient-Entity-, Rare-Feature- und Tint-Profile. Der Generator nutzt diese Profile für Detailressourcen, und `AmbientEntitySpawner` liest die Ambient-Entity-Tabelle daraus. Die priorisierten Alpha-Biome haben damit explizite Gameplay-Gründe: Cozy Meadow für sichere Starterressourcen, Pine Forest für Holz/Mushrooms/Boars, Mushroom Grove für Glow/Mushrooms/Fireflies, Lakeside für Clay/Reeds, Old Ruins für Ruin-/Glow-Hooks, Highlands für Stone/Ore-Progression und Frost Peaks für Snow/Ice/Crystal-Exploration.
 
-- Surface blocks
-- Vegetation table
-- Resource table
-- Ore table
-- Structure table
-- Ambient entity table
-- Fog/color tint optional
-- rare feature table
+### Verifikation 2026-05-01
 
-### Biome-Ziele
-
-#### Cozy Meadow
-
-- sichere Startressourcen
-- twigs, pebbles, fiber, berries, herbs
-- Hasen, Schafe
-- kleine Campsites
-- warmer Look
-
-#### Pine Forest
-
-- resin
-- bark strip
-- mushrooms
-- pine wood
-- abandoned cabins
-- boars
-- dichter, aber lesbar
-
-#### Mushroom Grove
-
-- mushroom clusters
-- glow mushrooms
-- glow crystal chance
-- moss snails
-- fireflies
-- spore particles
-- magischer Look
-
-#### Lakeside
-
-- clay
-- reeds
-- water container resources
-- herbs
-- lakeside shack
-- fireflies
-- cooking/pottery progression
-
-#### Old Ruins
-
-- ruin bricks
-- ancient fragments
-- ancient tiles
-- loot crates
-- lore notes
-- watchtowers/market ruins
-- adventure progression
-
-#### Highlands
-
-- copper/iron
-- stone/gravel
-- old mine entrances
-- watchtowers
-- wind ambience
-- mining progression
-
-#### Frost Peaks
-
-- crystals
-- rare herbs
-- snow/ice
-- frozen shrines
-- late-game exploration
-- cold system optional
+- `BiomeResourceProfilesTest` prüft Profilabdeckung für alle Default-Biome und die priorisierten Alpha-Ressourcen.
+- `OverworldContentTest` prüft deterministische sichtbare Ressourcen in den Kernbiomen und an reproduzierbaren Smoke-Koordinaten.
 
 ### Akzeptanz
 
@@ -212,17 +124,14 @@ Für jedes Biom eigene Profile definieren:
 
 ## P1.2 Biome Transitions glätten
 
-### Problem
+### Status 2026-05-01
 
-Harte Biome-Parameter können harte Kanten im Terrain erzeugen.
+Biome-Sampling glättet Temperature/Moisture über Nachbarsamples, `terrainHeight(...)` blendet die biome-spezifischen Höhenanpassungen über angrenzende Biome, und River/Lake-Nähe bleibt Teil der Biome-Auswahl. `OverworldGenerator.biomeTransitionAt(...)` liefert einen Boundary-/Edge-Faktor für Tests und Debugging; `/debugbiome` zeigt diesen Edge-Wert neben Biom und Terrainhöhe an.
 
-### Offen
+### Verifikation 2026-05-01
 
-- Height-Parameter über Nachbarsamples blenden.
-- Moisture/Temperature weich blenden.
-- Surface-Block-Wechsel optional über Übergangsblöcke.
-- River/Lake-Nähe in Biome-Auswahl berücksichtigen.
-- Debug View für Biome Boundaries.
+- `OverworldGeneratorTest` findet deterministisch eine Biome-Grenze, prüft den Edge-Faktor und begrenzt extreme Ein-Schritt-Höhensprünge an der Boundary.
+- `ReproducibleWorldSeedsTest` hält die Smoke-Biome nach dem geglätteten Sampling stabil.
 
 ### Akzeptanz
 

@@ -9,6 +9,7 @@ import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.gameplay.EntityDrops;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.gameplay.ProjectileItemRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.CraftingStationType;
@@ -16,14 +17,17 @@ import dev.voxelgame.common.item.Inventory;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
+import dev.voxelgame.common.item.RecipeUnlock;
 import dev.voxelgame.common.item.StarterInventory;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.EnvironmentHazardRules;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerMovementRules;
 import dev.voxelgame.common.physics.PlayerPhysicsConfig;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.ChunkStreamingRings;
 import dev.voxelgame.server.auth.AuthProvider;
 import dev.voxelgame.server.auth.AuthResult;
 import dev.voxelgame.server.entity.DroppedItemEntity;
@@ -42,8 +46,8 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,6 +66,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private static final double INITIAL_MOVE_SYNC_RADIUS = 128.0;
     private static final double MOVE_RATE_WINDOW_SECONDS = 1.0;
     private static final int MAX_MOVES_PER_RATE_WINDOW = 30;
+    private static final double INTENT_RATE_WINDOW_SECONDS = 1.0;
+    private static final int INTEREST_DEBUG_LOG_LIMIT = 32;
     private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
     private static final ChannelGroup CHANNELS = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
     private static final Set<ServerConnectionHandler> ACTIVE_HANDLERS = ConcurrentHashMap.newKeySet();
@@ -74,7 +80,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final Path playerSaveDirectory;
     private final ServerChunkStreamer chunkStreamer;
     private final Registry<ItemType> items = Items.createDefaultRegistry();
-    private final List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+    private final List<CraftingRecipe> recipes;
     private final Inventory inventory = new Inventory(36);
     private final ServerPlayerSurvivalState survivalState = new ServerPlayerSurvivalState();
     private final Set<ChunkPos> sentChunks = ConcurrentHashMap.newKeySet();
@@ -87,9 +93,11 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final AtomicLong failedChunkRequests = new AtomicLong();
     private final AtomicLong sentPackets = new AtomicLong();
     private final AtomicLong estimatedPacketBytes = new AtomicLong();
+    private final Deque<String> interestDebugLog = new ArrayDeque<>();
     private final long packetMetricsStartedAtNanos = System.nanoTime();
     private volatile ChannelHandlerContext context;
     private PendingCook pendingCook;
+    private OpenStorage openStorage;
     private volatile boolean sleepReady;
     private volatile boolean loggedIn;
     private UUID playerId;
@@ -108,6 +116,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private String lastWorldKey = "overworld";
     private double nextBlockActionTime;
     private double nextEntityInteractTime;
+    private double nextProjectileShootTime;
+    private double nextEnvironmentDamageTime;
     private double nextStatsSyncTime;
     private double lastAcceptedMoveTime = Double.NaN;
     private boolean lastAcceptedGrounded;
@@ -120,6 +130,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private double moveRateWindowStart = Double.NaN;
     private int moveRateWindowCount;
     private final EnumMap<MovementRejectReason, Integer> movementRejectCounts = new EnumMap<>(MovementRejectReason.class);
+    private final EnumMap<ClientIntent, IntentRateWindow> intentRateWindows = new EnumMap<>(ClientIntent.class);
+    private final EnumMap<ClientIntent, Integer> intentRateRejectCounts = new EnumMap<>(ClientIntent.class);
     private int movementRejectStrikes;
     private MovementRejectReason lastMovementRejectReason = MovementRejectReason.NONE;
     private AuthoritativeCorrectionClass lastMovementCorrectionClass = AuthoritativeCorrectionClass.SOFT;
@@ -150,6 +162,19 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         SOFT,
         HARD,
         RESPAWN_TELEPORT
+    }
+
+    private enum ClientIntent {
+        BLOCK_ACTION,
+        BLOCK_INTERACT,
+        STORAGE_OPEN,
+        STORAGE_TRANSFER,
+        CRAFT,
+        COOK,
+        PROJECTILE_SHOOT,
+        SLEEP,
+        ENTITY_INTERACT,
+        CHAT
     }
 
     public ServerConnectionHandler(ServerWorld world, AuthProvider authProvider, ServerEntityTracker entityTracker) {
@@ -184,13 +209,25 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, playerSaveDirectory, chunkStreamer);
     }
 
-    private ServerConnectionHandler(
+    ServerConnectionHandler(
             ServerWorld world,
             AuthProvider authProvider,
             ServerEntityTracker entityTracker,
             int streamRadiusChunks,
             Path playerSaveDirectory,
             ServerChunkStreamer chunkStreamer
+    ) {
+        this(world, authProvider, entityTracker, streamRadiusChunks, playerSaveDirectory, chunkStreamer, null);
+    }
+
+    ServerConnectionHandler(
+            ServerWorld world,
+            AuthProvider authProvider,
+            ServerEntityTracker entityTracker,
+            int streamRadiusChunks,
+            Path playerSaveDirectory,
+            ServerChunkStreamer chunkStreamer,
+            List<CraftingRecipe> recipes
     ) {
         if (streamRadiusChunks < 0) {
             throw new IllegalArgumentException("streamRadiusChunks must be >= 0");
@@ -201,6 +238,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         this.streamRadiusChunks = streamRadiusChunks;
         this.playerSaveDirectory = playerSaveDirectory;
         this.chunkStreamer = chunkStreamer;
+        this.recipes = recipes == null ? CraftingRecipes.createDefaultRecipes(items) : List.copyOf(recipes);
     }
 
     @Override
@@ -237,6 +275,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             case GamePacket.CookRequest cook -> handleCookRequest(ctx, cook);
             case GamePacket.StorageTransfer transfer -> handleStorageTransfer(ctx, transfer);
             case GamePacket.CraftRequest craft -> handleCraftRequest(ctx, craft);
+            case GamePacket.ProjectileShoot shoot -> handleProjectileShoot(ctx, shoot);
             case GamePacket.PlayerMove move -> {
                 if (!loggedIn) {
                     ctx.close();
@@ -245,13 +284,43 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 }
             }
             case GamePacket.Chat chat -> {
-                if (loggedIn && !handlePhysicsDebugCommand(ctx, chat.message())) {
+                if (loggedIn
+                        && acceptIntentRate(ClientIntent.CHAT, System.nanoTime() / 1_000_000_000.0)
+                        && !handlePhysicsDebugCommand(ctx, chat.message())) {
                     broadcastToLoggedIn(chat);
                 }
             }
             default -> {
             }
         }
+    }
+
+    private void handleProjectileShoot(ChannelHandlerContext ctx, GamePacket.ProjectileShoot shoot) {
+        if (!loggedIn) {
+            ctx.close();
+            return;
+        }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.PROJECTILE_SHOOT, now)) {
+            return;
+        }
+        if (!InteractionRules.isHotbarSlot(shoot.selectedSlot(), inventory.size())) {
+            sendInventory(ctx);
+            return;
+        }
+        hotbarSelection = shoot.selectedSlot();
+        ItemStack selected = inventory.slot(shoot.selectedSlot());
+        if (now < nextProjectileShootTime || !ProjectileItemRules.canLaunch(selected, items)) {
+            sendInventory(ctx);
+            return;
+        }
+        double[] direction = lookDirection(playerYaw, playerPitch);
+        entityTracker.spawnArrowProjectile(playerId, playerX, playerY - 0.18, playerZ, direction[0], direction[1], direction[2]);
+        inventory.damageSlot(shoot.selectedSlot(), ProjectileItemRules.durabilityDamageOnLaunch(selected, items), items);
+        nextProjectileShootTime = now + ProjectileItemRules.cooldownSeconds(selected, items);
+        markEntitySnapshotsDirty(world);
+        sendInventory(ctx);
+        sendEntitySnapshots(ctx);
     }
 
     private void handleHandshake(ChannelHandlerContext ctx, GamePacket.Handshake handshake) {
@@ -283,7 +352,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         sendInventory(ctx);
         updateSurvival(System.nanoTime() / 1_000_000_000.0, false);
         sendPlayerStats(ctx, 0.0, true);
-        sendAuthoritativePlayerPosition(ctx, 0L);
+        sendAuthoritativePlayerPosition(ctx, 0L, AuthoritativeCorrectionClass.RESPAWN_TELEPORT);
         streamChunksAround(ctx, ChunkPos.fromBlock((int) Math.floor(playerX), (int) Math.floor(playerZ)));
         sendEntitySnapshots(ctx);
         markEntitySnapshotsDirty(world);
@@ -294,12 +363,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.BLOCK_ACTION, now)) {
+            return;
+        }
         if (!InteractionRules.isHotbarSlot(action.selectedSlot(), inventory.size())) {
             sendInventory(ctx);
             return;
         }
         hotbarSelection = action.selectedSlot();
-        double now = System.nanoTime() / 1_000_000_000.0;
         if (now < nextBlockActionTime || !canReach(action)) {
             sendInventory(ctx);
             return;
@@ -340,6 +412,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             inventory.damageSlot(action.selectedSlot(), InteractionRules.toolDamage(selected, items, target), items);
             nextBlockActionTime = now + InteractionRules.breakDelaySeconds(target, multiplier);
             broadcastToLoggedInWorld(update);
+            invalidateStorageUiForWorld(world, action.targetX(), action.targetY(), action.targetZ());
             sendInventory(ctx);
         }, () -> sendInventory(ctx));
     }
@@ -400,12 +473,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.BLOCK_INTERACT, now)) {
+            return;
+        }
         if (!InteractionRules.isHotbarSlot(interact.selectedSlot(), inventory.size())) {
             sendInventory(ctx);
             return;
         }
         hotbarSelection = interact.selectedSlot();
-        double now = System.nanoTime() / 1_000_000_000.0;
         if (now < nextBlockActionTime || !canInteractWithBlock(interact.targetX(), interact.targetY(), interact.targetZ())) {
             sendInventory(ctx);
             return;
@@ -443,12 +519,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.STORAGE_OPEN, now)) {
+            return;
+        }
         if (!acceptClientTransaction(open.transactionId())) {
             sendInventory(ctx);
             return;
         }
-        double now = System.nanoTime() / 1_000_000_000.0;
         if (now < nextBlockActionTime || !canInteractWithBlock(open.x(), open.y(), open.z())) {
+            recordInterestDebug("reject storage_open outside_ui_interest " + open.x() + " " + open.y() + " " + open.z());
             sendInventory(ctx);
             return;
         }
@@ -457,9 +537,14 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void openStorage(ChannelHandlerContext ctx, int x, int y, int z, double now) {
         world.openStorageCrate(x, y, z).ifPresentOrElse(slots -> {
+            openStorage = new OpenStorage(x, y, z);
             ctx.writeAndFlush(new GamePacket.StorageOpen(x, y, z, slots));
+            recordSentPacket(24L + slots.size() * 8L);
             nextBlockActionTime = now + 0.12;
-        }, () -> sendInventory(ctx));
+        }, () -> {
+            recordInterestDebug("reject storage_open missing_block_entity " + x + " " + y + " " + z);
+            sendInventory(ctx);
+        });
     }
 
     private void handleSleepRequest(ChannelHandlerContext ctx, GamePacket.SleepRequest sleep) {
@@ -468,6 +553,9 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return;
         }
         double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.SLEEP, now)) {
+            return;
+        }
         if (now < nextBlockActionTime || !canInteractWithBlock(sleep.x(), sleep.y(), sleep.z())) {
             sendInventory(ctx);
             return;
@@ -540,11 +628,14 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.COOK, now)) {
+            return;
+        }
         if (!acceptClientTransaction(cook.transactionId())) {
             sendInventory(ctx);
             return;
         }
-        double now = System.nanoTime() / 1_000_000_000.0;
         if (pendingCook != null || now < nextBlockActionTime
                 || !canInteractWithBlock(cook.stationX(), cook.stationY(), cook.stationZ())) {
             sendInventory(ctx);
@@ -565,6 +656,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             if (recipe.get().stationType() == CraftingStationType.CAMPFIRE) {
                 sendCampfireStatus(ctx, cook.stationX(), cook.stationY(), cook.stationZ(), now);
             }
+            sendInventory(ctx);
+            return;
+        }
+        if (!recipeUnlocked(recipe.get(), Optional.of(recipe.get().stationType()))) {
             sendInventory(ctx);
             return;
         }
@@ -596,11 +691,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.STORAGE_TRANSFER, now)) {
+            return;
+        }
         if (!acceptClientTransaction(transfer.transactionId())) {
             sendInventory(ctx);
             return;
         }
         if (!canInteractWithBlock(transfer.x(), transfer.y(), transfer.z())) {
+            recordInterestDebug("reject storage_transfer outside_ui_interest " + transfer.x() + " " + transfer.y() + " " + transfer.z());
             sendInventory(ctx);
             return;
         }
@@ -615,9 +715,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 transfer.targetSlot(),
                 transfer.count()
         ).ifPresentOrElse(slots -> {
+            openStorage = new OpenStorage(transfer.x(), transfer.y(), transfer.z());
             ctx.writeAndFlush(new GamePacket.StorageOpen(transfer.x(), transfer.y(), transfer.z(), slots));
+            recordSentPacket(24L + slots.size() * 8L);
             sendInventory(ctx);
-        }, () -> sendInventory(ctx));
+        }, () -> {
+            recordInterestDebug("reject storage_transfer missing_block_entity " + transfer.x() + " " + transfer.y() + " " + transfer.z());
+            closeOpenStorage(ctx, transfer.x(), transfer.y(), transfer.z());
+            sendInventory(ctx);
+        });
     }
 
     private boolean acceptClientTransaction(int transactionId) {
@@ -672,12 +778,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.ENTITY_INTERACT, now)) {
+            return;
+        }
         if (!InteractionRules.isHotbarSlot(interact.selectedSlot(), inventory.size())) {
             sendInventory(ctx);
             return;
         }
         hotbarSelection = interact.selectedSlot();
-        double now = System.nanoTime() / 1_000_000_000.0;
         Optional<EntitySnapshot> target = entityTracker.snapshot(interact.entityId());
         if (target.isEmpty() || now < nextEntityInteractTime || !canReachEntity(target.get())) {
             sendInventory(ctx);
@@ -770,6 +879,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ctx.close();
             return;
         }
+        double now = System.nanoTime() / 1_000_000_000.0;
+        if (!acceptIntentRate(ClientIntent.CRAFT, now)) {
+            return;
+        }
         if (!acceptClientTransaction(craft.transactionId())) {
             sendInventory(ctx);
             return;
@@ -783,8 +896,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
-        craftingStationFor(craft, recipe.get())
-                .ifPresent(station -> recipe.get().craft(inventory, items, station, craft.count()));
+        Optional<CraftingStationType> station = craftingStationFor(craft, recipe.get());
+        if (station.isPresent() && recipeUnlocked(recipe.get(), station)) {
+            recipe.get().craft(inventory, items, station.get(), craft.count());
+        }
         sendInventory(ctx);
     }
 
@@ -806,6 +921,29 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return Optional.of(recipe.stationType());
         }
         return Optional.empty();
+    }
+
+    private boolean recipeUnlocked(CraftingRecipe recipe, Optional<CraftingStationType> station) {
+        RecipeUnlock unlock = recipe.unlockCondition();
+        return switch (unlock) {
+            case ALWAYS -> true;
+            case NEAR_STATION -> station.filter(recipe::isAvailableAt).isPresent();
+            case DISCOVERED_ITEM -> discoveredRecipeKey(recipe) || recipeIngredientsPresent(recipe);
+            case FOUND_LORE_NOTE, BIOME_DISCOVERED -> discoveredRecipeKey(recipe);
+        };
+    }
+
+    private boolean discoveredRecipeKey(CraftingRecipe recipe) {
+        return discoveredRecipes.contains(recipe.key());
+    }
+
+    private boolean recipeIngredientsPresent(CraftingRecipe recipe) {
+        for (CraftingRecipe.Ingredient ingredient : recipe.ingredients()) {
+            if (inventory.count(ingredient.itemId()) <= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static void broadcast(GamePacket packet) {
@@ -840,6 +978,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 continue;
             }
             handler.sendServerStats(ctx);
+        }
+    }
+
+    private static void invalidateStorageUiForWorld(ServerWorld world, int x, int y, int z) {
+        for (ServerConnectionHandler handler : ACTIVE_HANDLERS) {
+            ChannelHandlerContext ctx = handler.context;
+            if (ctx == null || !handler.loggedIn || handler.world != world) {
+                continue;
+            }
+            handler.closeOpenStorage(ctx, x, y, z);
         }
     }
 
@@ -924,6 +1072,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         );
     }
 
+    public List<String> interestDebugLog() {
+        synchronized (interestDebugLog) {
+            return List.copyOf(interestDebugLog);
+        }
+    }
+
     public MovementRejectStats movementRejectStats() {
         return new MovementRejectStats(
                 movementRejectCounts.values().stream().mapToInt(Integer::intValue).sum(),
@@ -942,6 +1096,22 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 movementRejectCount(MovementRejectReason.SPEED),
                 movementRejectCount(MovementRejectReason.ACCELERATION),
                 movementRejectCount(MovementRejectReason.NON_FINITE)
+        );
+    }
+
+    public IntentRejectStats intentRejectStats() {
+        return new IntentRejectStats(
+                intentRateRejectCounts.values().stream().mapToInt(Integer::intValue).sum(),
+                intentRateRejectCount(ClientIntent.BLOCK_ACTION),
+                intentRateRejectCount(ClientIntent.BLOCK_INTERACT),
+                intentRateRejectCount(ClientIntent.STORAGE_OPEN),
+                intentRateRejectCount(ClientIntent.STORAGE_TRANSFER),
+                intentRateRejectCount(ClientIntent.CRAFT),
+                intentRateRejectCount(ClientIntent.COOK),
+                intentRateRejectCount(ClientIntent.PROJECTILE_SHOOT),
+                intentRateRejectCount(ClientIntent.SLEEP),
+                intentRateRejectCount(ClientIntent.ENTITY_INTERACT),
+                intentRateRejectCount(ClientIntent.CHAT)
         );
     }
 
@@ -1053,6 +1223,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void sendCampfireStatus(ChannelHandlerContext ctx, int x, int y, int z, double nowSeconds) {
         ctx.writeAndFlush(campfireStatusPacket(x, y, z, nowSeconds));
+        recordSentPacket(48L);
+    }
+
+    private void closeOpenStorage(ChannelHandlerContext ctx, int x, int y, int z) {
+        if (openStorage == null || !openStorage.matches(x, y, z)) {
+            return;
+        }
+        openStorage = null;
+        ctx.writeAndFlush(new GamePacket.StorageClose(x, y, z));
+        recordSentPacket(16L);
     }
 
     private GamePacket.CampfireStatus campfireStatusPacket(int x, int y, int z, double nowSeconds) {
@@ -1134,6 +1314,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void sendInventory(ChannelHandlerContext ctx) {
         ctx.writeAndFlush(new GamePacket.InventorySnapshot(inventory.slots()));
+        recordSentPacket(16L + inventory.size() * 8L);
     }
 
     private boolean loadPlayerSave() {
@@ -1154,14 +1335,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void applyPlayerSave(PlayerSave save) {
         playerName = save.playerName();
-        playerX = save.x();
-        playerY = save.y();
-        playerZ = save.z();
+        gameMode = save.gameMode();
+        LoadedPosition loadedPosition = safeLoadedPosition(save.x(), save.y(), save.z(), gameMode);
+        playerX = loadedPosition.x();
+        playerY = loadedPosition.y();
+        playerZ = loadedPosition.z();
         playerYaw = save.yaw();
         playerPitch = save.pitch();
         hotbarSelection = Math.max(0, Math.min(inventory.size() - 1, save.hotbarSelection()));
         spawnPoint = save.spawnPoint();
-        gameMode = save.gameMode();
         discoveredRecipes = List.copyOf(save.discoveredRecipes());
         discoveredBiomes = List.copyOf(save.discoveredBiomes());
         journalEntries = List.copyOf(save.journalEntries());
@@ -1216,6 +1398,31 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         );
     }
 
+    private LoadedPosition safeLoadedPosition(double x, double y, double z, String modeKey) {
+        if (safePlayerLoadPosition(x, y, z, modeKey)) {
+            return new LoadedPosition(x, y, z);
+        }
+        var spawn = world.spawnPoint();
+        return new LoadedPosition(spawn.eyeX(), spawn.eyeY(), spawn.eyeZ());
+    }
+
+    private boolean safePlayerLoadPosition(double x, double y, double z, String modeKey) {
+        if (!PlayerMovementRules.isFinite(x, y, z, 0.0f, 0.0f)
+                || !PlayerMovementRules.withinVerticalBounds(y, PLAYER_PHYSICS, world.dimension().minY(), world.dimension().maxYExclusive())) {
+            return false;
+        }
+        PlayerMovementRules.MovementMode mode = movementModeFor(modeKey);
+        if (mode != PlayerMovementRules.MovementMode.SPECTATOR
+                && world.collidesPlayer(x, y, z, PLAYER_PHYSICS.bounds())) {
+            return false;
+        }
+        PlayerWaterState waterState = world.playerWaterState(x, y, z, PLAYER_PHYSICS.bounds());
+        if (mode != PlayerMovementRules.MovementMode.SPECTATOR && waterState.movementAffected()) {
+            return false;
+        }
+        return true;
+    }
+
     private void handlePlayerMove(ChannelHandlerContext ctx, GamePacket.PlayerMove move) {
         if (!PlayerMovementRules.isFinite(move.x(), move.y(), move.z(), move.yaw(), move.pitch())) {
             recordMovementReject(MovementRejectReason.NON_FINITE, move);
@@ -1226,7 +1433,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         MovementRejectReason rejectReason = validatePlayerMove(move, now);
         if (rejectReason != MovementRejectReason.NONE) {
             recordMovementReject(rejectReason, move);
-            sendAuthoritativePlayerPosition(ctx, move.sequence());
+            sendAuthoritativePlayerPosition(ctx, move.sequence(), lastMovementCorrectionClass);
             sendPlayerStats(ctx, now, false);
             return;
         }
@@ -1406,7 +1613,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private PlayerMovementRules.MovementMode movementMode() {
-        return switch (gameMode.toLowerCase(Locale.ROOT)) {
+        return movementModeFor(gameMode);
+    }
+
+    private static PlayerMovementRules.MovementMode movementModeFor(String modeKey) {
+        String normalized = modeKey == null ? "" : modeKey.toLowerCase(Locale.ROOT);
+        return switch (normalized) {
             case "creative" -> PlayerMovementRules.MovementMode.FLYING;
             case "spectator" -> PlayerMovementRules.MovementMode.SPECTATOR;
             default -> PlayerMovementRules.MovementMode.SURVIVAL;
@@ -1424,6 +1636,47 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         moveRateWindowCount++;
         return moveRateWindowCount <= MAX_MOVES_PER_RATE_WINDOW;
+    }
+
+    private boolean acceptIntentRate(ClientIntent intent, double now) {
+        if (!Double.isFinite(now)) {
+            recordIntentRateReject(intent);
+            return false;
+        }
+        IntentRateWindow window = intentRateWindows.get(intent);
+        if (window == null || now - window.startedAtSeconds >= INTENT_RATE_WINDOW_SECONDS) {
+            intentRateWindows.put(intent, new IntentRateWindow(now, 1));
+            return true;
+        }
+        if (window.count < Integer.MAX_VALUE) {
+            window.count++;
+        }
+        if (window.count <= maxIntentsPerWindow(intent)) {
+            return true;
+        }
+        recordIntentRateReject(intent);
+        return false;
+    }
+
+    private void recordIntentRateReject(ClientIntent intent) {
+        intentRateRejectCounts.merge(intent, 1, Integer::sum);
+    }
+
+    private int intentRateRejectCount(ClientIntent intent) {
+        return intentRateRejectCounts.getOrDefault(intent, 0);
+    }
+
+    private static int maxIntentsPerWindow(ClientIntent intent) {
+        return switch (intent) {
+            case BLOCK_ACTION -> 20;
+            case BLOCK_INTERACT, ENTITY_INTERACT -> 12;
+            case STORAGE_OPEN, CRAFT -> 8;
+            case STORAGE_TRANSFER -> 20;
+            case COOK -> 6;
+            case PROJECTILE_SHOOT -> 10;
+            case SLEEP -> 4;
+            case CHAT -> 5;
+        };
     }
 
     private boolean playerTouchesWater(double x, double y, double z) {
@@ -1463,10 +1716,28 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void sendAuthoritativePlayerPosition(ChannelHandlerContext ctx, long sequence) {
-        sendAuthoritativePlayerPosition(ctx, sequence, world.playerWaterState(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds()));
+        sendAuthoritativePlayerPosition(ctx, sequence, AuthoritativeCorrectionClass.SOFT);
+    }
+
+    private void sendAuthoritativePlayerPosition(ChannelHandlerContext ctx, long sequence, AuthoritativeCorrectionClass correctionClass) {
+        sendAuthoritativePlayerPosition(
+                ctx,
+                sequence,
+                world.playerWaterState(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds()),
+                correctionClass
+        );
     }
 
     private void sendAuthoritativePlayerPosition(ChannelHandlerContext ctx, long sequence, PlayerWaterState waterState) {
+        sendAuthoritativePlayerPosition(ctx, sequence, waterState, AuthoritativeCorrectionClass.SOFT);
+    }
+
+    private void sendAuthoritativePlayerPosition(
+            ChannelHandlerContext ctx,
+            long sequence,
+            PlayerWaterState waterState,
+            AuthoritativeCorrectionClass correctionClass
+    ) {
         ctx.writeAndFlush(new GamePacket.PlayerPositionSnapshot(
                 sequence,
                 playerX,
@@ -1475,8 +1746,18 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 playerYaw,
                 playerPitch,
                 lastAcceptedGrounded,
-                waterState
+                waterState,
+                movementCorrection(correctionClass)
         ));
+        recordSentPacket(64L);
+    }
+
+    private static GamePacket.MovementCorrection movementCorrection(AuthoritativeCorrectionClass correctionClass) {
+        return switch (correctionClass == null ? AuthoritativeCorrectionClass.SOFT : correctionClass) {
+            case SOFT -> GamePacket.MovementCorrection.SOFT;
+            case HARD -> GamePacket.MovementCorrection.HARD;
+            case RESPAWN_TELEPORT -> GamePacket.MovementCorrection.RESPAWN_TELEPORT;
+        };
     }
 
     private void sendPlayerStats(ChannelHandlerContext ctx, double now, boolean force) {
@@ -1487,6 +1768,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         lastSyncedComfort = comfort;
         nextStatsSyncTime = now + 1.0;
         ctx.writeAndFlush(survivalState.snapshot());
+        recordSentPacket(32L);
     }
 
     private void updateSurvival(double now, boolean moving) {
@@ -1496,6 +1778,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (!Double.isFinite(lastSurvivalUpdateTime)) {
             survivalState.updateComfort(world.comfortAt(playerX, playerY, playerZ), tick);
             lastSurvivalUpdateTime = now;
+            applyEnvironmentHazard(now);
             return;
         }
         if (survivalState.shouldScanComfort(tick)) {
@@ -1504,6 +1787,26 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             survivalState.tick(now - lastSurvivalUpdateTime, moving, waterState.headUnderwater(), sprinting);
         }
         lastSurvivalUpdateTime = now;
+        applyEnvironmentHazard(now);
+    }
+
+    private void applyEnvironmentHazard(double now) {
+        if (!loggedIn || now < nextEnvironmentDamageTime) {
+            return;
+        }
+        EnvironmentHazardRules.Hazard hazard = world.environmentHazardAtPlayer(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds());
+        if (hazard.damagePerPulse() <= 0) {
+            return;
+        }
+        int damage = survivalState.applyEnvironmentalDamage(hazard.damagePerPulse());
+        if (damage <= 0) {
+            return;
+        }
+        nextEnvironmentDamageTime = now + EnvironmentHazardRules.DAMAGE_COOLDOWN_SECONDS;
+        ChannelHandlerContext ctx = context;
+        if (ctx != null) {
+            sendPlayerStats(ctx, now, true);
+        }
     }
 
     private boolean sprintingFromAcceptedMove(PlayerWaterState waterState) {
@@ -1598,13 +1901,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void streamChunksAround(ChannelHandlerContext ctx, ChunkPos center) {
-        List<ChunkPos> requestedPositions = new ArrayList<>();
-        for (int z = center.z() - streamRadiusChunks; z <= center.z() + streamRadiusChunks; z++) {
-            for (int x = center.x() - streamRadiusChunks; x <= center.x() + streamRadiusChunks; x++) {
-                requestedPositions.add(new ChunkPos(x, z));
+        ChunkStreamingRings rings = ChunkStreamingRings.subscription(streamRadiusChunks);
+        List<ChunkPos> requestedPositions = rings.positionsInRing(center, ChunkStreamingRings.Ring.RENDER);
+        Set<ChunkPos> requestedSet = Set.copyOf(requestedPositions);
+        for (ChunkPos sentChunk : List.copyOf(sentChunks)) {
+            if (!requestedSet.contains(sentChunk)) {
+                recordInterestDebug("filter chunk_subscription outside_interest " + sentChunk.x() + " " + sentChunk.z());
             }
         }
-        requestedPositions.sort(Comparator.comparingInt(pos -> chunkPriority(pos, center)));
+        sentChunks.retainAll(requestedSet);
         for (ChunkPos pos : requestedPositions) {
             if (!sentChunks.add(pos)) {
                 continue;
@@ -1613,6 +1918,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             if (request.isEmpty()) {
                 sentChunks.remove(pos);
                 rejectedChunkRequests.incrementAndGet();
+                recordInterestDebug("reject chunk_request backpressure " + pos.x() + " " + pos.z());
                 continue;
             }
             CompletableFuture<GamePacket.ChunkData> chunkFuture = request.get();
@@ -1636,9 +1942,11 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (error != null) {
             sentChunks.remove(pos);
             failedChunkRequests.incrementAndGet();
+            recordInterestDebug("reject chunk_delivery failed " + pos.x() + " " + pos.z());
             return;
         }
         if (context != ctx || !loggedIn || !sentChunks.contains(pos)) {
+            recordInterestDebug("filter chunk_delivery outside_interest " + pos.x() + " " + pos.z());
             return;
         }
         ctx.writeAndFlush(packet);
@@ -1647,9 +1955,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private static int chunkPriority(ChunkPos pos, ChunkPos center) {
-        int dx = pos.x() - center.x();
-        int dz = pos.z() - center.z();
-        return dx * dx + dz * dz;
+        return ChunkStreamingRings.distanceSquared(center, pos);
     }
 
     private static void broadcastToLoggedIn(GamePacket packet) {
@@ -1670,6 +1976,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             }
             if (packet instanceof GamePacket.BlockUpdate update && !handler.hasSeenChunk(update)) {
                 handler.discardedUpdatesOutsideInterest.incrementAndGet();
+                ChunkPos chunk = ChunkPos.fromBlock(update.x(), update.z());
+                handler.recordInterestDebug("filter block_update outside_chunk_interest "
+                        + update.x() + " " + update.y() + " " + update.z()
+                        + " chunk=" + chunk.x() + "," + chunk.z());
                 continue;
             }
             ctx.writeAndFlush(packet);
@@ -1691,6 +2001,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private void recordSentPacket(long estimatedBytes) {
         sentPackets.incrementAndGet();
         estimatedPacketBytes.addAndGet(Math.max(0L, estimatedBytes));
+    }
+
+    private void recordInterestDebug(String message) {
+        synchronized (interestDebugLog) {
+            if (interestDebugLog.size() >= INTEREST_DEBUG_LOG_LIMIT) {
+                interestDebugLog.removeFirst();
+            }
+            interestDebugLog.addLast(message);
+        }
     }
 
     private static long estimateChunkPacketBytes(GamePacket.ChunkData packet) {
@@ -1744,6 +2063,40 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     ) {
     }
 
+    public record IntentRejectStats(
+            int totalRejects,
+            int blockActionRejects,
+            int blockInteractRejects,
+            int storageOpenRejects,
+            int storageTransferRejects,
+            int craftRejects,
+            int cookRejects,
+            int projectileShootRejects,
+            int sleepRejects,
+            int entityInteractRejects,
+            int chatRejects
+    ) {
+    }
+
+    private static final class IntentRateWindow {
+        private final double startedAtSeconds;
+        private int count;
+
+        private IntentRateWindow(double startedAtSeconds, int count) {
+            this.startedAtSeconds = startedAtSeconds;
+            this.count = count;
+        }
+    }
+
     private record PendingCook(int stationX, int stationY, int stationZ, CraftingRecipe recipe, double completeAtSeconds) {
+    }
+
+    private record LoadedPosition(double x, double y, double z) {
+    }
+
+    private record OpenStorage(int x, int y, int z) {
+        boolean matches(int otherX, int otherY, int otherZ) {
+            return x == otherX && y == otherY && z == otherZ;
+        }
     }
 }

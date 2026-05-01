@@ -24,6 +24,30 @@ public final class ProjectilePhysics {
 
     public static ProjectileHit step(
             ProjectileState state,
+            PhysicsStepContext context,
+            ProjectilePhysicsConfig config,
+            BlockCollisionQuery blockCollision,
+            WaterQuery waterQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(context, "context");
+        return step(state, context.deltaSeconds(), config, blockCollision, waterQuery, targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            PhysicsStepContext context,
+            ProjectilePhysicsConfig config,
+            BlockCollisionQuery blockCollision,
+            FluidPhysics.FluidQuery fluidQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(context, "context");
+        return step(state, context.deltaSeconds(), config, blockCollision, fluidQuery, targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
             double deltaSeconds,
             ProjectilePhysicsConfig config,
             BlockCollisionQuery blockCollision,
@@ -34,10 +58,23 @@ public final class ProjectilePhysics {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(blockCollision, "blockCollision");
         Objects.requireNonNull(waterQuery, "waterQuery");
+        return step(state, deltaSeconds, config, blockCollision, waterAsFluid(waterQuery), targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            double deltaSeconds,
+            ProjectilePhysicsConfig config,
+            BlockCollisionQuery blockCollision,
+            FluidPhysics.FluidQuery fluidQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(blockCollision, "blockCollision");
+        Objects.requireNonNull(fluidQuery, "fluidQuery");
         Objects.requireNonNull(targets, "targets");
-        if (!Double.isFinite(deltaSeconds) || deltaSeconds < 0.0) {
-            throw new IllegalArgumentException("Projectile delta must be finite and non-negative");
-        }
+        deltaSeconds = PhysicsNumericGuard.requireFiniteNonNegative("Projectile delta", deltaSeconds);
         if (state.ageTicks() >= config.maxLifetimeTicks()) {
             return ProjectileHit.expired(state);
         }
@@ -55,18 +92,23 @@ public final class ProjectilePhysics {
         int steps = Math.max(1, (int) Math.ceil(maxDelta / config.maxStep()));
         double stepSeconds = deltaSeconds / steps;
         for (int i = 0; i < steps; i++) {
-            if (waterQuery.inWater(x, y, z)) {
-                velocityX *= config.waterDrag();
-                velocityY *= config.waterDrag();
-                velocityZ *= config.waterDrag();
-            }
-            velocityY -= config.gravity() * stepSeconds;
+            FluidPhysics.FluidSample fluid = fluidQuery.sample(x, y, z);
+            FluidPhysics.Velocity velocity = FluidPhysics.applyProjectileForces(
+                    new FluidPhysics.Velocity(velocityX, velocityY, velocityZ),
+                    stepSeconds,
+                    config.gravity(),
+                    fluid.inFluid()
+                            ? FluidPhysics.water(fluid.velocityX(), fluid.velocityY(), fluid.velocityZ(), Math.min(fluid.drag(), config.waterDrag()), fluid.buoyancy())
+                            : fluid
+            );
+            velocityX = velocity.x();
+            velocityY = velocity.y();
+            velocityZ = velocity.z();
             double nextX = x + velocityX * stepSeconds;
             double nextY = y + velocityY * stepSeconds;
             double nextZ = z + velocityZ * stepSeconds;
             Optional<EntitySnapshot> hitEntity = firstEntityHit(
-                    state.projectileId(),
-                    state.ownerPlayerId(),
+                    state,
                     x,
                     y,
                     z,
@@ -127,8 +169,7 @@ public final class ProjectilePhysics {
     }
 
     public static Optional<EntitySnapshot> firstEntityHit(
-            long projectileId,
-            UUID ownerPlayerId,
+            ProjectileState projectile,
             double fromX,
             double fromY,
             double fromZ,
@@ -138,10 +179,11 @@ public final class ProjectilePhysics {
             double radius,
             Collection<EntitySnapshot> targets
     ) {
+        Objects.requireNonNull(projectile, "projectile");
         EntitySnapshot best = null;
         double bestT = Double.POSITIVE_INFINITY;
         for (EntitySnapshot target : targets) {
-            if (target.entityId() == projectileId || isOwnerPlayer(ownerPlayerId, target)) {
+            if (!ProjectileDamageRules.canHit(projectile, target).accepted()) {
                 continue;
             }
             EntityBounds bounds = EntityBounds.forType(target.typeKey());
@@ -168,8 +210,35 @@ public final class ProjectilePhysics {
         return Optional.ofNullable(best);
     }
 
-    private static boolean isOwnerPlayer(UUID ownerPlayerId, EntitySnapshot target) {
-        return ownerPlayerId != null && ownerPlayerId.equals(target.ownerPlayerId());
+    public static Optional<EntitySnapshot> firstEntityHit(
+            long projectileId,
+            UUID ownerPlayerId,
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double radius,
+            Collection<EntitySnapshot> targets
+    ) {
+        ProjectileState synthetic = new ProjectileState(
+                projectileId,
+                ownerPlayerId,
+                ProjectilePhysicsConfig.arrow().typeKey(),
+                fromX,
+                fromY,
+                fromZ,
+                toX - fromX,
+                toY - fromY,
+                toZ - fromZ,
+                0
+        );
+        return firstEntityHit(synthetic, fromX, fromY, fromZ, toX, toY, toZ, radius, targets);
+    }
+
+    private static FluidPhysics.FluidQuery waterAsFluid(WaterQuery waterQuery) {
+        return (x, y, z) -> waterQuery.inWater(x, y, z) ? FluidPhysics.stillWater() : FluidPhysics.air();
     }
 
     private static double segmentAabbIntersection(

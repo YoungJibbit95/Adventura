@@ -218,11 +218,13 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setFloat("uTime", (float) timeSeconds);
         shader.setFloat("uShadowStrength", settings.softShadowsEnabled() ? 0.38f : 0.20f);
         shader.setFloat("uBloomStrength", settings.bloomStrength());
+        shader.setFloat("uBloomThreshold", settings.bloomThreshold());
+        shader.setFloat("uNightLightBoost", settings.nightLightBoost());
+        shader.setFloat("uCaveDarkness", settings.caveDarkness());
+        shader.setFloat("uWeatherFlash", settings.weatherFlash());
         shader.setVector3("uFogColor", new Vector3f(settings.fogR(), settings.fogG(), settings.fogB()));
         shader.setVector3("uBiomeTintColor", new Vector3f(settings.biomeTintR(), settings.biomeTintG(), settings.biomeTintB()));
-        float skyLuma = settings.skyR() * 0.2126f + settings.skyG() * 0.7152f + settings.skyB() * 0.0722f;
-        float globalBrightness = Math.max(0.35f, Math.min(1.0f, 0.30f + skyLuma * 0.90f));
-        shader.setFloat("uGlobalBrightness", globalBrightness);
+        shader.setFloat("uGlobalBrightness", settings.globalBrightness());
         blockTextureAtlas.bindAndApply(shader, 0);
         materialLut.bindAndApply(shader, 1);
         Set<ChunkPos> culledPositions = new HashSet<>();
@@ -348,21 +350,21 @@ public final class WorldRenderer implements AutoCloseable {
     }
 
     private enum TerrainPass implements RenderPass {
-        OPAQUE("terrain.opaque") {
+        OPAQUE(RenderPassPlan.TERRAIN_OPAQUE) {
             @Override
             public void begin(RenderContext context) {
                 glDisable(GL_BLEND);
                 glDepthMask(true);
             }
         },
-        CUTOUT("terrain.cutout") {
+        CUTOUT(RenderPassPlan.TERRAIN_CUTOUT) {
             @Override
             public void begin(RenderContext context) {
                 glDisable(GL_BLEND);
                 glDepthMask(true);
             }
         },
-        TRANSLUCENT("terrain.translucent") {
+        TRANSLUCENT(RenderPassPlan.TERRAIN_TRANSLUCENT) {
             @Override
             public void begin(RenderContext context) {
                 glEnable(GL_BLEND);
@@ -595,9 +597,9 @@ public final class WorldRenderer implements AutoCloseable {
             long atlasBytes
     ) {
         public RenderStats {
-            opaquePass = opaquePass == null ? RenderPassStats.empty("terrain.opaque") : opaquePass;
-            cutoutPass = cutoutPass == null ? RenderPassStats.empty("terrain.cutout") : cutoutPass;
-            transparentPass = transparentPass == null ? RenderPassStats.empty("terrain.translucent") : transparentPass;
+            opaquePass = opaquePass == null ? RenderPassStats.empty(RenderPassPlan.TERRAIN_OPAQUE) : opaquePass;
+            cutoutPass = cutoutPass == null ? RenderPassStats.empty(RenderPassPlan.TERRAIN_CUTOUT) : cutoutPass;
+            transparentPass = transparentPass == null ? RenderPassStats.empty(RenderPassPlan.TERRAIN_TRANSLUCENT) : transparentPass;
             materialCount = Math.max(0, materialCount);
             materialLutBytes = Math.max(0L, materialLutBytes);
             missingMaterialCount = Math.max(0, missingMaterialCount);
@@ -637,9 +639,9 @@ public final class WorldRenderer implements AutoCloseable {
                     loadedGpuMeshes,
                     loadedChunkPositions,
                     meshBytes,
-                    RenderPassStats.empty("terrain.opaque"),
-                    RenderPassStats.empty("terrain.cutout"),
-                    RenderPassStats.empty("terrain.translucent"),
+                    RenderPassStats.empty(RenderPassPlan.TERRAIN_OPAQUE),
+                    RenderPassStats.empty(RenderPassPlan.TERRAIN_CUTOUT),
+                    RenderPassStats.empty(RenderPassPlan.TERRAIN_TRANSLUCENT),
                     0,
                     0L,
                     0,

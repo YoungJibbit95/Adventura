@@ -4,8 +4,10 @@ layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in float aMaterialIndex;
 layout (location = 3) in float aLight;
-layout (location = 4) in float aAo;
-layout (location = 5) in vec2 aFaceUv;
+layout (location = 4) in float aSkyLight;
+layout (location = 5) in float aBlockLight;
+layout (location = 6) in float aAo;
+layout (location = 7) in vec2 aFaceUv;
 
 uniform mat4 uProjection;
 uniform mat4 uView;
@@ -21,6 +23,8 @@ uniform sampler2D uMaterialLut;
 uniform int uMaterialCount;
 
 out float vLight;
+out float vSkyLight;
+out float vBlockLight;
 out float vMaterialIndex;
 out float vShade;
 out float vDistance;
@@ -53,6 +57,8 @@ bool windAnimatedCutout(float materialIndex) {
 
 void main() {
     vLight = clamp(aLight, 0.08, 1.20);
+    vSkyLight = clamp(aSkyLight, 0.0, 1.0);
+    vBlockLight = clamp(aBlockLight, 0.0, 1.0);
     vMaterialIndex = aMaterialIndex;
     float sun = max(dot(normalize(aNormal), normalize(uSunDirection)), 0.0);
     float floorShade = uSoftShadowsEnabled == 1 ? 0.34 : 0.50;

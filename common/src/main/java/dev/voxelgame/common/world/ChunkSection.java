@@ -1,5 +1,7 @@
 package dev.voxelgame.common.world;
 
+import dev.voxelgame.common.block.Blocks;
+
 import java.util.Arrays;
 
 public final class ChunkSection {
@@ -11,6 +13,7 @@ public final class ChunkSection {
     private final byte[] skyLight = new byte[VOLUME];
     private final byte[] blockLight = new byte[VOLUME];
     private int nonAirBlockCount;
+    private int dirtyFlags;
 
     public ChunkSection(int sectionY) {
         this.sectionY = sectionY;
@@ -27,12 +30,20 @@ public final class ChunkSection {
     public void setBlockId(int x, int y, int z, short blockId) {
         int index = index(x, y, z);
         short old = blockIds[index];
+        if (old == blockId) {
+            return;
+        }
         if (old == 0 && blockId != 0) {
             nonAirBlockCount++;
         } else if (old != 0 && blockId == 0) {
             nonAirBlockCount--;
         }
         blockIds[index] = blockId;
+        markDirty(DirtyAspect.GEOMETRY);
+        markDirty(DirtyAspect.LIGHT);
+        if (isFluidBlock(old) || isFluidBlock(blockId)) {
+            markDirty(DirtyAspect.FLUID);
+        }
     }
 
     public boolean isEmpty() {
@@ -48,7 +59,12 @@ public final class ChunkSection {
     }
 
     public void setSkyLight(int x, int y, int z, int light) {
-        skyLight[index(x, y, z)] = checkedLight(light);
+        int index = index(x, y, z);
+        byte checked = checkedLight(light);
+        if (skyLight[index] != checked) {
+            skyLight[index] = checked;
+            markDirty(DirtyAspect.LIGHT);
+        }
     }
 
     public int blockLight(int x, int y, int z) {
@@ -56,11 +72,43 @@ public final class ChunkSection {
     }
 
     public void setBlockLight(int x, int y, int z, int light) {
-        blockLight[index(x, y, z)] = checkedLight(light);
+        int index = index(x, y, z);
+        byte checked = checkedLight(light);
+        if (blockLight[index] != checked) {
+            blockLight[index] = checked;
+            markDirty(DirtyAspect.LIGHT);
+        }
     }
 
     public void clearBlockLight() {
+        if (!allZero(blockLight)) {
+            markDirty(DirtyAspect.LIGHT);
+        }
         Arrays.fill(blockLight, (byte) 0);
+    }
+
+    public int dirtyFlags() {
+        return dirtyFlags;
+    }
+
+    public boolean isDirty(DirtyAspect aspect) {
+        return aspect != null && (dirtyFlags & aspect.bit()) != 0;
+    }
+
+    public void markDirty(DirtyAspect aspect) {
+        if (aspect != null) {
+            dirtyFlags |= aspect.bit();
+        }
+    }
+
+    public void clearDirty(DirtyAspect aspect) {
+        if (aspect != null) {
+            dirtyFlags &= ~aspect.bit();
+        }
+    }
+
+    public void clearDirtyFlags() {
+        dirtyFlags = 0;
     }
 
     public short[] copyBlockIds() {
@@ -87,5 +135,35 @@ public final class ChunkSection {
             throw new IllegalArgumentException("Light must be in 0..15: " + light);
         }
         return (byte) light;
+    }
+
+    private static boolean isFluidBlock(short blockId) {
+        return blockId == Blocks.WATER;
+    }
+
+    private static boolean allZero(byte[] values) {
+        for (byte value : values) {
+            if (value != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public enum DirtyAspect {
+        GEOMETRY(1),
+        LIGHT(1 << 1),
+        FLUID(1 << 2),
+        BLOCK_ENTITY(1 << 3);
+
+        private final int bit;
+
+        DirtyAspect(int bit) {
+            this.bit = bit;
+        }
+
+        public int bit() {
+            return bit;
+        }
     }
 }

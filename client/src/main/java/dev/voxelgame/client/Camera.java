@@ -1,6 +1,7 @@
 package dev.voxelgame.client;
 
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.net.GamePacket;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
@@ -63,6 +64,16 @@ public final class Camera {
     }
 
     public void reconcileAuthoritativePosition(double x, double y, double z, boolean grounded) {
+        reconcileAuthoritativePosition(x, y, z, grounded, GamePacket.MovementCorrection.SOFT);
+    }
+
+    public void reconcileAuthoritativePosition(
+            double x,
+            double y,
+            double z,
+            boolean grounded,
+            GamePacket.MovementCorrection correction
+    ) {
         if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
             return;
         }
@@ -73,7 +84,10 @@ public final class Camera {
         float dy = targetY - position.y;
         float dz = targetZ - position.z;
         float distanceSquared = dx * dx + dy * dy + dz * dz;
-        if (distanceSquared > 9.0f) {
+        GamePacket.MovementCorrection safeCorrection = correction == null ? GamePacket.MovementCorrection.SOFT : correction;
+        if (safeCorrection == GamePacket.MovementCorrection.RESPAWN_TELEPORT
+                || safeCorrection == GamePacket.MovementCorrection.HARD
+                || distanceSquared > 9.0f) {
             setPosition(targetX, targetY, targetZ);
         } else if (distanceSquared > 2.25f) {
             position.lerp(new Vector3f(targetX, targetY, targetZ), 0.5f);

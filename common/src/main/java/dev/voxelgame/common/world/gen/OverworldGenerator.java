@@ -1,18 +1,31 @@
 package dev.voxelgame.common.world.gen;
 
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.BiomeType;
 import dev.voxelgame.common.world.Biomes;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.ChunkTerrainCache;
+import dev.voxelgame.common.world.DimensionSettings;
+import dev.voxelgame.common.world.structure.BlockPlacement;
 import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public final class OverworldGenerator implements WorldGenerator {
     private static final int SEA_LEVEL = 63;
+    private static final int SPAWN_SEARCH_CENTER_X = 8;
+    private static final int SPAWN_SEARCH_CENTER_Z = 8;
+    private static final int SPAWN_SEARCH_RADIUS_BLOCKS = 48;
+    private static final int SPAWN_STARTER_RESOURCE_RADIUS_BLOCKS = 14;
+    private static final int BIOME_BLEND_SAMPLE_DISTANCE = 8;
+    private static final double SPAWN_EYE_HEIGHT = PlayerBounds.DEFAULT.eyeHeight();
     private static final StarterResource[] STARTER_RESOURCES = {
             new StarterResource(4, 6, Blocks.TWIG_PILE),
             new StarterResource(6, 3, Blocks.TWIG_PILE),
@@ -33,6 +46,7 @@ public final class OverworldGenerator implements WorldGenerator {
 
     private final long seed;
     private final Registry<BiomeType> biomes;
+    private volatile GenerationMetrics lastGenerationMetrics = GenerationMetrics.empty();
 
     public OverworldGenerator(long seed) {
         this(seed, Biomes.createDefaultRegistry());
@@ -45,6 +59,10 @@ public final class OverworldGenerator implements WorldGenerator {
 
     @Override
     public void generate(Chunk chunk) {
+        GenerationPlan plan = planChunk(chunk.pos());
+        ChunkTerrainCache terrainCache = plan.terrainCache();
+        GenerationMetricsBuilder metrics = new GenerationMetricsBuilder(plan.metrics());
+        chunk.setTerrainCache(terrainCache);
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
 
@@ -52,19 +70,69 @@ public final class OverworldGenerator implements WorldGenerator {
             for (int localX = 0; localX < ChunkPos.SIZE; localX++) {
                 int x = baseX + localX;
                 int z = baseZ + localZ;
-                BiomeType biome = biomeAt(x, z);
-                int height = terrainHeight(x, z, biome);
-                fillColumn(chunk, x, z, height, biome);
-                decorateColumn(chunk, x, z, height, biome);
+                BiomeType biome = terrainCache.biomeAtLocal(localX, localZ);
+                int height = terrainCache.heightAtLocal(localX, localZ);
+                fillColumn(chunk, x, z, height, biome, terrainCache.surfaceBlockAtLocal(localX, localZ));
+                decorateColumn(chunk, x, z, height, biome, metrics);
             }
         }
-        decorateChunkStructures(chunk);
-        decorateStarterResources(chunk);
+        decorateChunkStructures(chunk, plan.structure());
+        decorateStarterResources(chunk, terrainCache, metrics);
+        lastGenerationMetrics = metrics.build();
+    }
+
+    public GenerationPlan planChunk(ChunkPos pos) {
+        ChunkTerrainCache terrainCache = terrainCacheForChunk(pos);
+        Optional<GeneratedStructure> structure = structureAtChunk(terrainCache);
+        Optional<SpawnPoint> spawnPoint = new ChunkPos(0, 0).equals(pos)
+                ? Optional.of(safeSpawnPoint())
+                : Optional.empty();
+        GenerationMetrics metrics = GenerationMetrics.planned(
+                ChunkTerrainCache.COLUMN_COUNT,
+                ChunkTerrainCache.COLUMN_COUNT,
+                1,
+                structure.isPresent() ? 1 : 0,
+                structure.map(value -> value.template().lootMarkers().size()).orElse(0),
+                structure.map(value -> value.template().markers("entity").size()).orElse(0),
+                spawnPoint.map(SpawnPoint::candidatesScanned).orElse(0),
+                spawnPoint.map(SpawnPoint::candidatesAccepted).orElse(0)
+        );
+        return new GenerationPlan(terrainCache, structure, spawnPoint, metrics);
+    }
+
+    public GenerationMetrics lastGenerationMetrics() {
+        return lastGenerationMetrics;
+    }
+
+    public ChunkTerrainCache terrainCacheForChunk(ChunkPos pos) {
+        int[] heights = new int[ChunkTerrainCache.COLUMN_COUNT];
+        BiomeType[] chunkBiomes = new BiomeType[ChunkTerrainCache.COLUMN_COUNT];
+        short[] surfaceBlocks = new short[ChunkTerrainCache.COLUMN_COUNT];
+        boolean[] fluidColumns = new boolean[ChunkTerrainCache.COLUMN_COUNT];
+        boolean[] caveColumns = new boolean[ChunkTerrainCache.COLUMN_COUNT];
+        int baseX = pos.x() * ChunkPos.SIZE;
+        int baseZ = pos.z() * ChunkPos.SIZE;
+        for (int localZ = 0; localZ < ChunkPos.SIZE; localZ++) {
+            for (int localX = 0; localX < ChunkPos.SIZE; localX++) {
+                int x = baseX + localX;
+                int z = baseZ + localZ;
+                int index = localZ * ChunkPos.SIZE + localX;
+                BiomeType biome = biomeAt(x, z);
+                chunkBiomes[index] = biome;
+                int height = terrainHeight(x, z, biome);
+                heights[index] = height;
+                surfaceBlocks[index] = surfaceBlockFor(x, z, height, biome);
+                fluidColumns[index] = height < SEA_LEVEL;
+                caveColumns[index] = hasCaveColumn(x, z, height);
+            }
+        }
+        return new ChunkTerrainCache(pos, heights, chunkBiomes, surfaceBlocks, fluidColumns, caveColumns);
     }
 
     public BiomeType biomeAt(int x, int z) {
-        double temperature = normalize(ValueNoise.fbm(seed ^ 0xCAFE, x, z, 3, 0.0025, 0.55));
-        double moisture = normalize(ValueNoise.fbm(seed ^ 0xBEEF, x, z, 3, 0.0028, 0.55));
+        ClimateSample climate = climateAt(x, z);
+        double temperature = climate.temperature();
+        double moisture = climate.moisture();
         double ridge = ValueNoise.fbm(seed ^ 0x7711, x, z, 4, 0.004, 0.5);
         double flower = ValueNoise.fbm(seed ^ 0xF10AEL, x, z, 3, 0.006, 0.52);
         double ruin = normalize(ValueNoise.fbm(seed ^ 0x0D12115L, x, z, 2, 0.0018, 0.6));
@@ -101,6 +169,24 @@ public final class OverworldGenerator implements WorldGenerator {
         return biomes.requireByKey("voxel:cozy_meadow");
     }
 
+    public BiomeTransition biomeTransitionAt(int x, int z) {
+        String center = biomeAt(x, z).key();
+        int differing = 0;
+        int samples = 0;
+        for (int dz = -BIOME_BLEND_SAMPLE_DISTANCE; dz <= BIOME_BLEND_SAMPLE_DISTANCE; dz += BIOME_BLEND_SAMPLE_DISTANCE) {
+            for (int dx = -BIOME_BLEND_SAMPLE_DISTANCE; dx <= BIOME_BLEND_SAMPLE_DISTANCE; dx += BIOME_BLEND_SAMPLE_DISTANCE) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                samples++;
+                if (!biomeAt(x + dx, z + dz).key().equals(center)) {
+                    differing++;
+                }
+            }
+        }
+        return new BiomeTransition(center, differing, samples);
+    }
+
     public int terrainHeight(int x, int z, BiomeType biome) {
         double continents = ValueNoise.fbm(seed, x, z, 5, 0.0016, 0.5);
         double erosion = normalize(ValueNoise.fbm(seed ^ 0xE70510L, x, z, 4, 0.0032, 0.5));
@@ -109,28 +195,7 @@ public final class OverworldGenerator implements WorldGenerator {
         double ridge = Math.abs(ValueNoise.fbm(seed ^ 0xA77A11L, x, z, 4, 0.005, 0.5));
         double mountain = Math.pow(1.0 - ridge, 2.4) * 54.0 * (1.0 - erosion * 0.65);
         int base = 70 + (int) Math.round(continents * 36.0 + hills * 14.0 + detail * 3.0 + mountain);
-        if ("voxel:sun_dunes".equals(biome.key())) {
-            double dunes = ValueNoise.fbm(seed ^ 0xD0A35L, x, z, 3, 0.026, 0.48);
-            base -= 9;
-            base += (int) Math.round(dunes * 7.0);
-        } else if ("voxel:highlands".equals(biome.key())) {
-            base += 24;
-        } else if ("voxel:frost_peaks".equals(biome.key())) {
-            base += 42;
-            base += (int) Math.round(mountain * 0.55);
-        } else if ("voxel:mire".equals(biome.key())) {
-            base -= 6;
-            base = (int) Math.round(base * 0.82 + (SEA_LEVEL + 2) * 0.18);
-        } else if ("voxel:lakeside".equals(biome.key())) {
-            base -= 4;
-            base = (int) Math.round(base * 0.70 + (SEA_LEVEL + 3) * 0.30);
-        } else if ("voxel:mushroom_grove".equals(biome.key())) {
-            base -= 2;
-        } else if ("voxel:flower_fields".equals(biome.key())) {
-            base -= 3;
-        } else if ("voxel:old_ruins".equals(biome.key())) {
-            base += 5;
-        }
+        base += (int) Math.round(blendedBiomeHeightAdjustment(x, z, biome, base, mountain));
         double river = riverStrength(x, z);
         if (river > 0.0) {
             int riverBed = SEA_LEVEL - 4 + (int) Math.round(ValueNoise.smooth(seed ^ 0xA11EL, x * 0.04, z * 0.04) * 2.0);
@@ -139,14 +204,14 @@ public final class OverworldGenerator implements WorldGenerator {
         return clamp(base, 28, 235);
     }
 
-    private void fillColumn(Chunk chunk, int x, int z, int height, BiomeType biome) {
+    private void fillColumn(Chunk chunk, int x, int z, int height, BiomeType biome, short surfaceBlock) {
         for (int y = chunk.dimension().minY(); y < chunk.dimension().maxYExclusive(); y++) {
             short block = Blocks.AIR;
             if (y <= height) {
                 if (isCave(x, y, z) && y < height - 4) {
                     block = Blocks.AIR;
                 } else if (y == height) {
-                    block = surfaceBlockFor(x, z, height, biome);
+                    block = surfaceBlock;
                 } else if (y >= height - 4) {
                     block = subsurfaceBlockFor(x, z, height, biome);
                 } else {
@@ -159,20 +224,28 @@ public final class OverworldGenerator implements WorldGenerator {
         }
     }
 
-    private void decorateColumn(Chunk chunk, int x, int z, int height, BiomeType biome) {
+    private void decorateColumn(Chunk chunk, int x, int z, int height, BiomeType biome, GenerationMetricsBuilder metrics) {
         if (height + 7 >= chunk.dimension().maxYExclusive() || height < SEA_LEVEL - 3) {
             return;
         }
 
         double chance = normalize(ValueNoise.hashUnit(seed ^ 0x51A7, x, z));
-        if (("voxel:frost_peaks".equals(biome.key()) || "voxel:pine_forest".equals(biome.key())) && chance < biome.treeChance() && canPlaceTree(chunk, x, height + 1, z)) {
-            placePineTree(chunk, x, height + 1, z);
-            return;
+        if (("voxel:frost_peaks".equals(biome.key()) || "voxel:pine_forest".equals(biome.key())) && chance < biome.treeChance()) {
+            if (canPlaceTree(chunk, x, height + 1, z)) {
+                placePineTree(chunk, x, height + 1, z);
+                metrics.featurePlacement();
+                return;
+            }
+            metrics.rejectedPlacement();
         }
 
-        if (chance < biome.treeChance() && canPlaceTree(chunk, x, height + 1, z)) {
-            placeTree(chunk, x, height + 1, z);
-            return;
+        if (chance < biome.treeChance()) {
+            if (canPlaceTree(chunk, x, height + 1, z)) {
+                placeTree(chunk, x, height + 1, z);
+                metrics.featurePlacement();
+                return;
+            }
+            metrics.rejectedPlacement();
         }
 
         double plantChance = normalize(ValueNoise.hashUnit(seed ^ 0x61B7, x, z));
@@ -188,86 +261,118 @@ public final class OverworldGenerator implements WorldGenerator {
                 plant = Blocks.BERRY_BUSH;
             }
             chunk.setBlockId(x, height + 1, z, plant);
+            metrics.featurePlacement();
         }
 
         double detailChance = normalize(ValueNoise.hashUnit(seed ^ 0xC07ED11L, x, z));
         short detailResource = detailResourceFor(biome.key(), detailChance);
-        if (detailResource != Blocks.AIR && canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
-            chunk.setBlockId(x, height + 1, z, detailResource);
+        if (detailResource != Blocks.AIR) {
+            if (canPlaceArea(chunk, x, height + 1, z, 1, 0)) {
+                chunk.setBlockId(x, height + 1, z, detailResource);
+                metrics.featurePlacement();
+            } else {
+                metrics.rejectedPlacement();
+            }
         }
 
         if ("voxel:sun_dunes".equals(biome.key())) {
             double cactusChance = normalize(ValueNoise.hashUnit(seed ^ 0xCA77L, x, z));
-            if (cactusChance < 0.012 && canPlaceArea(chunk, x, height + 1, z, 4, 0)) {
-                placeCactus(chunk, x, height + 1, z, 2 + (int) Math.floor(cactusChance * 180.0));
+            if (cactusChance < 0.012) {
+                if (canPlaceArea(chunk, x, height + 1, z, 4, 0)) {
+                    placeCactus(chunk, x, height + 1, z, 2 + (int) Math.floor(cactusChance * 180.0));
+                    metrics.featurePlacement();
+                } else {
+                    metrics.rejectedPlacement();
+                }
             }
         } else if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
             double boulderChance = normalize(ValueNoise.hashUnit(seed ^ 0xB011L, x, z));
-            if (boulderChance < 0.008 && canPlaceArea(chunk, x, height + 1, z, 3, 2)) {
-                placeBoulder(chunk, x, height + 1, z);
+            if (boulderChance < 0.008) {
+                if (canPlaceArea(chunk, x, height + 1, z, 3, 2)) {
+                    placeBoulder(chunk, x, height + 1, z);
+                    metrics.featurePlacement();
+                } else {
+                    metrics.rejectedPlacement();
+                }
             }
         } else if ("voxel:mire".equals(biome.key()) || "voxel:mushroom_grove".equals(biome.key())) {
             double stumpChance = normalize(ValueNoise.hashUnit(seed ^ 0x57ADEL, x, z));
-            if (stumpChance < 0.010 && canPlaceArea(chunk, x, height + 1, z, 2, 1)) {
-                chunk.setBlockId(x, height + 1, z, Blocks.TREE_STUMP);
-                chunk.setBlockId(x, height + 2, z, Blocks.RED_MUSHROOM);
+            if (stumpChance < 0.010) {
+                if (canPlaceArea(chunk, x, height + 1, z, 2, 1)) {
+                    chunk.setBlockId(x, height + 1, z, Blocks.TREE_STUMP);
+                    chunk.setBlockId(x, height + 2, z, Blocks.RED_MUSHROOM);
+                    metrics.featurePlacement();
+                } else {
+                    metrics.rejectedPlacement();
+                }
             }
         }
     }
 
-    private void decorateChunkStructures(Chunk chunk) {
-        structureAtChunk(chunk.pos()).ifPresent(structure -> structure.template()
-                .placeIntoChunk(chunk, structure.originX(), structure.originY(), structure.originZ()));
+    private void decorateChunkStructures(Chunk chunk, Optional<GeneratedStructure> structure) {
+        structure.ifPresent(value -> value.template()
+                .placeIntoChunk(chunk, value.originX(), value.originY(), value.originZ()));
     }
 
-    private void decorateStarterResources(Chunk chunk) {
+    private void decorateStarterResources(Chunk chunk, ChunkTerrainCache terrainCache, GenerationMetricsBuilder metrics) {
         if (!new ChunkPos(0, 0).equals(chunk.pos())) {
             return;
         }
         for (StarterResource resource : STARTER_RESOURCES) {
-            placeStarterResource(chunk, resource.x(), resource.z(), resource.blockId());
+            if (placeStarterResource(chunk, terrainCache, resource.x(), resource.z(), resource.blockId())) {
+                metrics.featurePlacement();
+            } else {
+                metrics.rejectedPlacement();
+            }
         }
     }
 
-    private void placeStarterResource(Chunk chunk, int x, int z, short blockId) {
+    private boolean placeStarterResource(Chunk chunk, ChunkTerrainCache terrainCache, int x, int z, short blockId) {
         if (!ChunkPos.fromBlock(x, z).equals(chunk.pos())) {
-            return;
+            return false;
         }
-        int y = terrainHeight(x, z, biomeAt(x, z)) + 1;
+        int y = terrainCache.heightAtWorld(x, z) + 1;
         if (!chunk.dimension().containsY(y) || !chunk.dimension().containsY(y - 1)) {
-            return;
+            return false;
         }
         short support = chunk.blockId(x, y - 1, z);
         if (support == Blocks.AIR || support == Blocks.WATER) {
-            return;
+            return false;
         }
         chunk.setBlockId(x, y, z, blockId);
+        return true;
     }
 
     public Optional<GeneratedStructure> structureAtChunk(ChunkPos pos) {
+        return structureAtChunk(terrainCacheForChunk(pos));
+    }
+
+    public Optional<GeneratedStructure> structureAtChunk(ChunkTerrainCache terrainCache) {
+        Objects.requireNonNull(terrainCache, "terrainCache");
+        ChunkPos pos = terrainCache.pos();
         int centerX = pos.x() * ChunkPos.SIZE + 8;
         int centerZ = pos.z() * ChunkPos.SIZE + 8;
-        BiomeType biome = biomeAt(centerX, centerZ);
+        BiomeType biome = terrainCache.biomeAtWorld(centerX, centerZ);
         if (pos.x() == 0 && pos.z() == 0) {
             int campX = centerX + 4;
             int campZ = centerZ;
-            int groundY = terrainHeight(campX, campZ, biomeAt(campX, campZ)) + 1;
+            int groundY = terrainCache.heightAtWorld(campX, campZ) + 1;
             return Optional.of(new GeneratedStructure(Structures.campsite(), campX, groundY, campZ));
         }
         if (pos.x() == 1 && pos.z() == 1) {
-            int groundY = terrainHeight(centerX, centerZ, biome) + 1;
+            int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
             return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
         }
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, pos.x(), pos.z()));
         double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, pos.x(), pos.z()));
         if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.014) {
-            int groundY = terrainHeight(centerX, centerZ, biome) + 1;
+            int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
             return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
         }
         if (roll > biome.structureChance()) {
             return Optional.empty();
         }
-        int groundY = terrainHeight(centerX, centerZ, biome) + 1;
+        int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
         StructureTemplate template;
         if ("voxel:sun_dunes".equals(biome.key())) {
             template = Structures.desertWell();
@@ -289,19 +394,371 @@ public final class OverworldGenerator implements WorldGenerator {
         return Optional.of(new GeneratedStructure(template, centerX, groundY, centerZ));
     }
 
+    public SpawnPoint safeSpawnPoint() {
+        Map<ChunkPos, ChunkTerrainCache> terrainCaches = new HashMap<>();
+        SpawnCandidate best = null;
+        int scanned = 0;
+        int accepted = 0;
+        for (int z = SPAWN_SEARCH_CENTER_Z - SPAWN_SEARCH_RADIUS_BLOCKS; z <= SPAWN_SEARCH_CENTER_Z + SPAWN_SEARCH_RADIUS_BLOCKS; z++) {
+            for (int x = SPAWN_SEARCH_CENTER_X - SPAWN_SEARCH_RADIUS_BLOCKS; x <= SPAWN_SEARCH_CENTER_X + SPAWN_SEARCH_RADIUS_BLOCKS; x++) {
+                scanned++;
+                Optional<SpawnCandidate> candidate = spawnCandidateAt(terrainCaches, x, z);
+                if (candidate.isEmpty()) {
+                    continue;
+                }
+                accepted++;
+                if (best == null || candidate.get().score() > best.score()) {
+                    best = candidate.get();
+                }
+            }
+        }
+        if (best != null) {
+            return best.toSpawnPoint(scanned, accepted, false);
+        }
+
+        ChunkTerrainCache fallbackCache = terrainCaches.computeIfAbsent(
+                ChunkPos.fromBlock(SPAWN_SEARCH_CENTER_X, SPAWN_SEARCH_CENTER_Z),
+                this::terrainCacheForChunk
+        );
+        BiomeType biome = fallbackCache.biomeAtWorld(SPAWN_SEARCH_CENTER_X, SPAWN_SEARCH_CENTER_Z);
+        int surfaceY = fallbackCache.heightAtWorld(SPAWN_SEARCH_CENTER_X, SPAWN_SEARCH_CENTER_Z);
+        return new SpawnPoint(
+                SPAWN_SEARCH_CENTER_X,
+                SPAWN_SEARCH_CENTER_Z,
+                surfaceY,
+                surfaceY + 1,
+                SPAWN_SEARCH_CENTER_X + 0.5,
+                surfaceY + 1 + SPAWN_EYE_HEIGHT,
+                SPAWN_SEARCH_CENTER_Z + 0.5,
+                biome.key(),
+                true,
+                scanned,
+                accepted
+        );
+    }
+
+    private Optional<SpawnCandidate> spawnCandidateAt(Map<ChunkPos, ChunkTerrainCache> terrainCaches, int x, int z) {
+        if (isStarterResourceColumn(x, z)) {
+            return Optional.empty();
+        }
+        ChunkPos pos = ChunkPos.fromBlock(x, z);
+        ChunkTerrainCache terrainCache = terrainCaches.computeIfAbsent(pos, this::terrainCacheForChunk);
+        BiomeType biome = terrainCache.biomeAtWorld(x, z);
+        int surfaceY = terrainCache.heightAtWorld(x, z);
+        int feetY = surfaceY + 1;
+        if (!DimensionSettings.OVERWORLD.containsY(surfaceY) || !DimensionSettings.OVERWORLD.containsY(feetY + 1)) {
+            return Optional.empty();
+        }
+        if (surfaceY < SEA_LEVEL) {
+            return Optional.empty();
+        }
+        short support = surfaceBlockFor(x, z, surfaceY, biome);
+        if (!isSpawnSupportBlock(support)) {
+            return Optional.empty();
+        }
+        if (riverStrength(x, z) > 0.78) {
+            return Optional.empty();
+        }
+        if (decorationWouldBlockSpawn(pos, x, z, feetY, biome)) {
+            return Optional.empty();
+        }
+        if (structureWouldBlockSpawn(terrainCache, x, z, feetY)) {
+            return Optional.empty();
+        }
+        double score = spawnScore(x, z, surfaceY, biome);
+        return Optional.of(new SpawnCandidate(x, z, surfaceY, feetY, biome.key(), score));
+    }
+
+    private double spawnScore(int x, int z, int surfaceY, BiomeType biome) {
+        double distanceFromStart = square(x - SPAWN_SEARCH_CENTER_X) + square(z - SPAWN_SEARCH_CENTER_Z);
+        double starterDistance = nearestStarterResourceDistance(x, z);
+        double score = 0.0;
+        if (isPreferredSpawnBiome(biome.key())) {
+            score += 10_000.0;
+        }
+        if (starterDistance <= SPAWN_STARTER_RESOURCE_RADIUS_BLOCKS) {
+            score += 2_000.0 - starterDistance * 50.0;
+        } else {
+            score -= starterDistance * 6.0;
+        }
+        score -= distanceFromStart * 2.0;
+        score -= Math.abs(surfaceY - 72) * 3.0;
+        return score;
+    }
+
+    private boolean decorationWouldBlockSpawn(ChunkPos pos, int x, int z, int feetY, BiomeType biome) {
+        double treeChance = normalize(ValueNoise.hashUnit(seed ^ 0x51A7, x, z));
+        if (treeChance < biome.treeChance() && canPlaceTreeAt(pos, x, feetY, z)) {
+            return true;
+        }
+
+        double detailChance = normalize(ValueNoise.hashUnit(seed ^ 0xC07ED11L, x, z));
+        short detailResource = detailResourceFor(biome.key(), detailChance);
+        if (isSpawnBlockingBlock(detailResource) && canPlaceAreaAt(pos, x, feetY, z, 1, 0)) {
+            return true;
+        }
+
+        if ("voxel:sun_dunes".equals(biome.key())) {
+            double cactusChance = normalize(ValueNoise.hashUnit(seed ^ 0xCA77L, x, z));
+            return cactusChance < 0.012 && canPlaceAreaAt(pos, x, feetY, z, 4, 0);
+        }
+        if ("voxel:highlands".equals(biome.key()) || "voxel:old_ruins".equals(biome.key())) {
+            double boulderChance = normalize(ValueNoise.hashUnit(seed ^ 0xB011L, x, z));
+            return boulderChance < 0.008 && canPlaceAreaAt(pos, x, feetY, z, 3, 2);
+        }
+        if ("voxel:mire".equals(biome.key()) || "voxel:mushroom_grove".equals(biome.key())) {
+            double stumpChance = normalize(ValueNoise.hashUnit(seed ^ 0x57ADEL, x, z));
+            return stumpChance < 0.010 && canPlaceAreaAt(pos, x, feetY, z, 2, 1);
+        }
+        return false;
+    }
+
+    private boolean structureWouldBlockSpawn(ChunkTerrainCache terrainCache, int x, int z, int feetY) {
+        Optional<GeneratedStructure> structure = structureAtChunk(terrainCache);
+        if (structure.isEmpty()) {
+            return false;
+        }
+        GeneratedStructure generated = structure.get();
+        for (BlockPlacement block : generated.template().blocks()) {
+            int blockX = generated.originX() + block.x();
+            int blockY = generated.originY() + block.y();
+            int blockZ = generated.originZ() + block.z();
+            if (blockX == x && blockZ == z && blockY >= feetY && blockY <= feetY + 2 && isSpawnBlockingBlock(block.blockId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public record GeneratedStructure(StructureTemplate template, int originX, int originY, int originZ) {
+        public GeneratedStructure {
+            Objects.requireNonNull(template, "template");
+        }
+    }
+
+    public record GenerationPlan(
+            ChunkTerrainCache terrainCache,
+            Optional<GeneratedStructure> structure,
+            Optional<SpawnPoint> spawnPoint,
+            GenerationMetrics metrics
+    ) {
+        public GenerationPlan {
+            Objects.requireNonNull(terrainCache, "terrainCache");
+            structure = structure == null ? Optional.empty() : structure;
+            spawnPoint = spawnPoint == null ? Optional.empty() : spawnPoint;
+            metrics = metrics == null ? GenerationMetrics.empty() : metrics;
+        }
+    }
+
+    public record GenerationMetrics(
+            int biomeSamples,
+            int heightSamples,
+            int featurePlacements,
+            int structureAttempts,
+            int structureSuccesses,
+            int rejectedPlacements,
+            int lootMarkers,
+            int ambientEntityMarkers,
+            int spawnCandidatesScanned,
+            int spawnCandidatesAccepted
+    ) {
+        public GenerationMetrics {
+            if (biomeSamples < 0 || heightSamples < 0 || featurePlacements < 0 || structureAttempts < 0
+                    || structureSuccesses < 0 || rejectedPlacements < 0 || lootMarkers < 0
+                    || ambientEntityMarkers < 0 || spawnCandidatesScanned < 0 || spawnCandidatesAccepted < 0) {
+                throw new IllegalArgumentException("Generation metrics must be non-negative");
+            }
+        }
+
+        static GenerationMetrics empty() {
+            return new GenerationMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        static GenerationMetrics planned(
+                int biomeSamples,
+                int heightSamples,
+                int structureAttempts,
+                int structureSuccesses,
+                int lootMarkers,
+                int ambientEntityMarkers,
+                int spawnCandidatesScanned,
+                int spawnCandidatesAccepted
+        ) {
+            return new GenerationMetrics(
+                    biomeSamples,
+                    heightSamples,
+                    0,
+                    structureAttempts,
+                    structureSuccesses,
+                    0,
+                    lootMarkers,
+                    ambientEntityMarkers,
+                    spawnCandidatesScanned,
+                    spawnCandidatesAccepted
+            );
+        }
+    }
+
+    public record SpawnPoint(
+            int blockX,
+            int blockZ,
+            int surfaceY,
+            int feetY,
+            double eyeX,
+            double eyeY,
+            double eyeZ,
+            String biomeKey,
+            boolean fallback,
+            int candidatesScanned,
+            int candidatesAccepted
+    ) {
+        public SpawnPoint {
+            Objects.requireNonNull(biomeKey, "biomeKey");
+            if (!Double.isFinite(eyeX) || !Double.isFinite(eyeY) || !Double.isFinite(eyeZ)) {
+                throw new IllegalArgumentException("Spawn coordinates must be finite");
+            }
+            if (candidatesScanned < 0 || candidatesAccepted < 0) {
+                throw new IllegalArgumentException("Spawn candidate counts must be non-negative");
+            }
+        }
+    }
+
+    private record SpawnCandidate(int x, int z, int surfaceY, int feetY, String biomeKey, double score) {
+        private SpawnPoint toSpawnPoint(int candidatesScanned, int candidatesAccepted, boolean fallback) {
+            return new SpawnPoint(
+                    x,
+                    z,
+                    surfaceY,
+                    feetY,
+                    x + 0.5,
+                    feetY + SPAWN_EYE_HEIGHT,
+                    z + 0.5,
+                    biomeKey,
+                    fallback,
+                    candidatesScanned,
+                    candidatesAccepted
+            );
+        }
     }
 
     private record StarterResource(int x, int z, short blockId) {
     }
 
+    private static boolean isStarterResourceColumn(int x, int z) {
+        for (StarterResource resource : STARTER_RESOURCES) {
+            if (resource.x() == x && resource.z() == z) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isPreferredSpawnBiome(String biomeKey) {
+        return "voxel:cozy_meadow".equals(biomeKey)
+                || "voxel:flower_fields".equals(biomeKey)
+                || "voxel:lakeside".equals(biomeKey);
+    }
+
+    private static boolean isSpawnSupportBlock(short blockId) {
+        return switch (blockId) {
+            case Blocks.GRASS, Blocks.DIRT, Blocks.STONE, Blocks.SAND, Blocks.CLAY, Blocks.GRAVEL,
+                    Blocks.SNOW, Blocks.MOSSY_STONE, Blocks.MOSSY_PATH -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isSpawnBlockingBlock(short blockId) {
+        return switch (blockId) {
+            case Blocks.AIR, Blocks.WILD_GRASS, Blocks.SUN_BLOOM, Blocks.RED_MUSHROOM,
+                    Blocks.BERRY_BUSH, Blocks.HERB_PLANTER, Blocks.CAMPFIRE, Blocks.SMALL_STONE,
+                    Blocks.MUSHROOM_CLUSTER, Blocks.CLAY_DEPOSIT, Blocks.REEDS, Blocks.TWIG_PILE,
+                    Blocks.LANTERN, Blocks.WOVEN_RUG, Blocks.TORCH, Blocks.COOKING_POT,
+                    Blocks.FLOWER_POT, Blocks.GLOW_MUSHROOM, Blocks.SPORE_BLOSSOM -> false;
+            default -> true;
+        };
+    }
+
+    private static double nearestStarterResourceDistance(int x, int z) {
+        double nearest = Double.POSITIVE_INFINITY;
+        for (StarterResource resource : STARTER_RESOURCES) {
+            nearest = Math.min(nearest, Math.sqrt(square(x - resource.x()) + square(z - resource.z())));
+        }
+        return nearest;
+    }
+
+    private static int square(int value) {
+        return value * value;
+    }
+
+    private static final class GenerationMetricsBuilder {
+        private int biomeSamples;
+        private int heightSamples;
+        private int featurePlacements;
+        private int structureAttempts;
+        private int structureSuccesses;
+        private int rejectedPlacements;
+        private int lootMarkers;
+        private int ambientEntityMarkers;
+        private int spawnCandidatesScanned;
+        private int spawnCandidatesAccepted;
+
+        private GenerationMetricsBuilder(GenerationMetrics initial) {
+            this.biomeSamples = initial.biomeSamples();
+            this.heightSamples = initial.heightSamples();
+            this.featurePlacements = initial.featurePlacements();
+            this.structureAttempts = initial.structureAttempts();
+            this.structureSuccesses = initial.structureSuccesses();
+            this.rejectedPlacements = initial.rejectedPlacements();
+            this.lootMarkers = initial.lootMarkers();
+            this.ambientEntityMarkers = initial.ambientEntityMarkers();
+            this.spawnCandidatesScanned = initial.spawnCandidatesScanned();
+            this.spawnCandidatesAccepted = initial.spawnCandidatesAccepted();
+        }
+
+        private void featurePlacement() {
+            featurePlacements++;
+        }
+
+        private void rejectedPlacement() {
+            rejectedPlacements++;
+        }
+
+        private GenerationMetrics build() {
+            return new GenerationMetrics(
+                    biomeSamples,
+                    heightSamples,
+                    featurePlacements,
+                    structureAttempts,
+                    structureSuccesses,
+                    rejectedPlacements,
+                    lootMarkers,
+                    ambientEntityMarkers,
+                    spawnCandidatesScanned,
+                    spawnCandidatesAccepted
+            );
+        }
+    }
+
     private boolean canPlaceTree(Chunk chunk, int x, int y, int z) {
-        return ChunkPos.fromBlock(x, z).equals(chunk.pos())
-                && x > chunk.pos().x() * ChunkPos.SIZE + 2
-                && z > chunk.pos().z() * ChunkPos.SIZE + 2
-                && x < chunk.pos().x() * ChunkPos.SIZE + 13
-                && z < chunk.pos().z() * ChunkPos.SIZE + 13
-                && y + 7 < chunk.dimension().maxYExclusive();
+        return ChunkPos.fromBlock(x, z).equals(chunk.pos()) && canPlaceTreeAt(chunk.pos(), x, y, z);
+    }
+
+    private boolean canPlaceTreeAt(ChunkPos pos, int x, int y, int z) {
+        return x > pos.x() * ChunkPos.SIZE + 2
+                && z > pos.z() * ChunkPos.SIZE + 2
+                && x < pos.x() * ChunkPos.SIZE + 13
+                && z < pos.z() * ChunkPos.SIZE + 13
+                && y + 7 < DimensionSettings.OVERWORLD.maxYExclusive();
+    }
+
+    private boolean canPlaceAreaAt(ChunkPos pos, int x, int y, int z, int height, int radius) {
+        int minX = pos.x() * ChunkPos.SIZE;
+        int minZ = pos.z() * ChunkPos.SIZE;
+        return x - radius >= minX
+                && x + radius < minX + ChunkPos.SIZE
+                && z - radius >= minZ
+                && z + radius < minZ + ChunkPos.SIZE
+                && y + height < DimensionSettings.OVERWORLD.maxYExclusive();
     }
 
     private void placeTree(Chunk chunk, int x, int y, int z) {
@@ -337,12 +794,7 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     private boolean canPlaceArea(Chunk chunk, int x, int y, int z, int height, int radius) {
-        int minX = chunk.pos().x() * ChunkPos.SIZE;
-        int minZ = chunk.pos().z() * ChunkPos.SIZE;
-        return x - radius >= minX
-                && x + radius < minX + ChunkPos.SIZE
-                && z - radius >= minZ
-                && z + radius < minZ + ChunkPos.SIZE
+        return canPlaceAreaAt(chunk.pos(), x, y, z, height, radius)
                 && y + height < chunk.dimension().maxYExclusive();
     }
 
@@ -366,133 +818,7 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     static short detailResourceFor(String biomeKey, double roll) {
-        return switch (biomeKey) {
-            case "voxel:meadow", "voxel:cozy_meadow" -> {
-                if (roll < 0.008) {
-                    yield Blocks.SMALL_STONE;
-                }
-                if (roll < 0.015) {
-                    yield Blocks.BERRY_BUSH;
-                }
-                if (roll < 0.022) {
-                    yield Blocks.HERB_PLANTER;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:flower_fields" -> {
-                if (roll < 0.018) {
-                    yield Blocks.SUN_BLOOM;
-                }
-                if (roll < 0.030) {
-                    yield Blocks.HERB_PLANTER;
-                }
-                if (roll < 0.035) {
-                    yield Blocks.BERRY_BUSH;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:lakeside" -> {
-                if (roll < 0.014) {
-                    yield Blocks.CLAY_DEPOSIT;
-                }
-                if (roll < 0.028) {
-                    yield Blocks.REEDS;
-                }
-                if (roll < 0.036) {
-                    yield Blocks.BERRY_BUSH;
-                }
-                if (roll < 0.044) {
-                    yield Blocks.SMALL_STONE;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:mire" -> {
-                if (roll < 0.018) {
-                    yield Blocks.CLAY_DEPOSIT;
-                }
-                if (roll < 0.030) {
-                    yield Blocks.RED_MUSHROOM;
-                }
-                if (roll < 0.040) {
-                    yield Blocks.MUSHROOM_CLUSTER;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:mushroom_grove" -> {
-                if (roll < 0.004) {
-                    yield Blocks.SPORE_BLOSSOM;
-                }
-                if (roll < 0.016) {
-                    yield Blocks.GLOW_MUSHROOM;
-                }
-                if (roll < 0.032) {
-                    yield Blocks.MUSHROOM_CLUSTER;
-                }
-                if (roll < 0.044) {
-                    yield Blocks.RED_MUSHROOM;
-                }
-                if (roll < 0.052) {
-                    yield Blocks.CLAY_DEPOSIT;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:skyroot_forest" -> {
-                if (roll < 0.012) {
-                    yield Blocks.TREE_STUMP;
-                }
-                if (roll < 0.022) {
-                    yield Blocks.BERRY_BUSH;
-                }
-                if (roll < 0.032) {
-                    yield Blocks.HERB_PLANTER;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:pine_forest" -> {
-                if (roll < 0.012) {
-                    yield Blocks.TREE_STUMP;
-                }
-                if (roll < 0.022) {
-                    yield Blocks.RED_MUSHROOM;
-                }
-                if (roll < 0.032) {
-                    yield Blocks.SMALL_STONE;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:highlands" -> {
-                if (roll < 0.018) {
-                    yield Blocks.SMALL_STONE;
-                }
-                if (roll < 0.026) {
-                    yield Blocks.GLOW_CRYSTAL_NODE;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:old_ruins" -> {
-                if (roll < 0.014) {
-                    yield Blocks.GLOW_CRYSTAL_NODE;
-                }
-                if (roll < 0.030) {
-                    yield Blocks.SMALL_STONE;
-                }
-                if (roll < 0.038) {
-                    yield Blocks.HERB_PLANTER;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:frost_peaks" -> {
-                if (roll < 0.016) {
-                    yield Blocks.SMALL_STONE;
-                }
-                if (roll < 0.026) {
-                    yield Blocks.GLOW_CRYSTAL_NODE;
-                }
-                yield Blocks.AIR;
-            }
-            case "voxel:sun_dunes" -> roll < 0.016 ? Blocks.SMALL_STONE : Blocks.AIR;
-            default -> Blocks.AIR;
-        };
+        return BiomeResourceProfiles.detailResourceFor(biomeKey, roll);
     }
 
     private short oreOrStone(int x, int y, int z) {
@@ -575,11 +901,103 @@ public final class OverworldGenerator implements WorldGenerator {
         return horizontal + vertical * 0.35 > 0.82;
     }
 
+    private boolean hasCaveColumn(int x, int z, int height) {
+        int maxY = Math.min(height - 5, DimensionSettings.OVERWORLD.maxYExclusive() - 1);
+        for (int y = DimensionSettings.OVERWORLD.minY(); y <= maxY; y++) {
+            if (isCave(x, y, z)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static double normalize(double value) {
         return (value + 1.0) * 0.5;
     }
 
+    private ClimateSample climateAt(int x, int z) {
+        double temperature = rawTemperature(x, z) * 8.0;
+        double moisture = rawMoisture(x, z) * 8.0;
+        double weight = 8.0;
+        int[][] offsets = {
+                {-BIOME_BLEND_SAMPLE_DISTANCE, 0},
+                {BIOME_BLEND_SAMPLE_DISTANCE, 0},
+                {0, -BIOME_BLEND_SAMPLE_DISTANCE},
+                {0, BIOME_BLEND_SAMPLE_DISTANCE}
+        };
+        for (int[] offset : offsets) {
+            temperature += rawTemperature(x + offset[0], z + offset[1]);
+            moisture += rawMoisture(x + offset[0], z + offset[1]);
+            weight += 1.0;
+        }
+        return new ClimateSample(temperature / weight, moisture / weight);
+    }
+
+    private double rawTemperature(int x, int z) {
+        return normalize(ValueNoise.fbm(seed ^ 0xCAFE, x, z, 3, 0.0025, 0.55));
+    }
+
+    private double rawMoisture(int x, int z) {
+        return normalize(ValueNoise.fbm(seed ^ 0xBEEF, x, z, 3, 0.0028, 0.55));
+    }
+
+    private double blendedBiomeHeightAdjustment(int x, int z, BiomeType biome, int base, double mountain) {
+        double currentWeight = 10.0;
+        double adjustment = biomeHeightAdjustment(x, z, biome, base, mountain) * currentWeight;
+        double weight = currentWeight;
+        int[][] offsets = {
+                {-BIOME_BLEND_SAMPLE_DISTANCE, 0},
+                {BIOME_BLEND_SAMPLE_DISTANCE, 0},
+                {0, -BIOME_BLEND_SAMPLE_DISTANCE},
+                {0, BIOME_BLEND_SAMPLE_DISTANCE},
+                {-BIOME_BLEND_SAMPLE_DISTANCE, -BIOME_BLEND_SAMPLE_DISTANCE},
+                {BIOME_BLEND_SAMPLE_DISTANCE, -BIOME_BLEND_SAMPLE_DISTANCE},
+                {-BIOME_BLEND_SAMPLE_DISTANCE, BIOME_BLEND_SAMPLE_DISTANCE},
+                {BIOME_BLEND_SAMPLE_DISTANCE, BIOME_BLEND_SAMPLE_DISTANCE}
+        };
+        for (int[] offset : offsets) {
+            BiomeType neighbor = biomeAt(x + offset[0], z + offset[1]);
+            adjustment += biomeHeightAdjustment(x, z, neighbor, base, mountain);
+            weight += 1.0;
+        }
+        return adjustment / weight;
+    }
+
+    private double biomeHeightAdjustment(int x, int z, BiomeType biome, int base, double mountain) {
+        return switch (biome.key()) {
+            case "voxel:sun_dunes" -> -9.0 + Math.round(ValueNoise.fbm(seed ^ 0xD0A35L, x, z, 3, 0.026, 0.48) * 7.0);
+            case "voxel:highlands" -> 24.0;
+            case "voxel:frost_peaks" -> 42.0 + Math.round(mountain * 0.55);
+            case "voxel:mire" -> Math.round((base - 6) * 0.82 + (SEA_LEVEL + 2) * 0.18) - base;
+            case "voxel:lakeside" -> Math.round((base - 4) * 0.70 + (SEA_LEVEL + 3) * 0.30) - base;
+            case "voxel:mushroom_grove" -> -2.0;
+            case "voxel:flower_fields" -> -3.0;
+            case "voxel:old_ruins" -> 5.0;
+            default -> 0.0;
+        };
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    public record BiomeTransition(String biomeKey, int differingSamples, int totalSamples) {
+        public BiomeTransition {
+            Objects.requireNonNull(biomeKey, "biomeKey");
+            if (differingSamples < 0 || totalSamples <= 0 || differingSamples > totalSamples) {
+                throw new IllegalArgumentException("invalid biome transition sample counts");
+            }
+        }
+
+        public double edgeFactor() {
+            return differingSamples / (double) totalSamples;
+        }
+
+        public boolean boundary() {
+            return differingSamples > 0;
+        }
+    }
+
+    private record ClimateSample(double temperature, double moisture) {
     }
 }

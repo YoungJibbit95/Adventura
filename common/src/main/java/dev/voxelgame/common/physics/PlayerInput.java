@@ -12,7 +12,7 @@ public record PlayerInput(
     }
 
     public PlayerInput {
-        if (!Float.isFinite(moveX) || !Float.isFinite(moveZ)) {
+        if (!PhysicsNumericGuard.allFinite(moveX, moveZ)) {
             throw new IllegalArgumentException("Player input must be finite");
         }
         float lengthSquared = moveX * moveX + moveZ * moveZ;

@@ -1,6 +1,6 @@
 # Adventura – Lighting TODO List
 
-Stand: 2026-04-30
+Stand: 2026-05-01
 
 ## Ziel
 
@@ -37,19 +37,12 @@ Adventura braucht:
 - `/debuglight` zeigt Sky Light, Block Light, Combined Light und Emissive-Wert an.
 - Light-Debug-Formatierung ist testbar.
 
-### Offen
+### Umsetzung
 
-- Light Visualization Mode als Overlay oder blockweise Farbdarstellung.
-- Toggle für Sky Light only.
-- Toggle für Block Light only.
-- Toggle für Emissive only.
-- Debug Anzeige am anvisierten Block:
-  - block key
-  - sky light
-  - block light
-  - combined
-  - light source value
-  - occlusion type
+- `RenderDebugView` bietet jetzt `light`, `sky`, `block` und `emissive` als getrennte Shader-Debug-Modi.
+- `ChunkMesher` schreibt Combined-, Sky- und Block-Light separat in das Chunk-Vertexformat; normales Terrain-Lighting nutzt weiterhin den Combined-Wert.
+- `/debuglight` meldet neben Sky/Block/Combined auch Block-Key, Light-Source-Wert, Emissive-Stärke und Occlusion-Typ.
+- Verifiziert am 2026-05-01 mit fokussierten Client-Tests für `ChunkMesherTest`, `LightDebugInfoTest` und `GameSettingsTest`.
 
 ### Akzeptanz
 
@@ -65,14 +58,10 @@ Adventura braucht:
 - Chunkgrenzen für Block-Light-Propagation sind teilweise getestet.
 - Wasser/opaque Verhalten ist teilweise getestet.
 
-### Offen
+### Umsetzung
 
-- hohe Berge testen.
-- transparente Blöcke testen.
-- unloaded neighbor behavior testen.
-- Light Source direkt an Chunkgrenze testen.
-- Light Remove direkt an Chunkgrenze testen.
-- Full Rebuild Fallback testen.
+- `LightEngineTest` deckt Chunkgrenzen jetzt mit hohen Berg-/Roof-Columns, Water/Ice/Leaves als transparente Blocker, nicht geladene Neighbor-Chunks, Boundary-Emitter auf beiden Seiten, Remove an der Grenze und korrigierende Full-Rebuilds gegen stale Light-Werte ab.
+- Verifiziert am 2026-05-01 mit `:common:test --tests 'dev.voxelgame.common.world.light.LightEngineTest'`.
 
 ### Akzeptanz
 
@@ -85,23 +74,11 @@ Adventura braucht:
 
 ## P1.1 Sky-Light-Regeln definieren
 
-### Offen
+### Umsetzung
 
-- Opaque Blocks blocken Sky Light.
-- Water/Glass/Cutout behandeln:
-  - Water schwächt Sky Light optional.
-  - Cutout blockt nicht vollständig.
-  - Leaves können leicht abdunkeln.
-- Höhlen und Überhänge abdunkeln.
-- Chunkgrenzen konsistent.
-
-### Tests
-
-- offene Fläche hat helles Sky Light.
-- Höhle ist dunkel.
-- Überhang reduziert Licht.
-- Wasser verhält sich erwartbar.
-- Chunkgrenze zeigt keinen Sprung.
+- `LightRules` definiert zentrale Sky-Light-Reduktion und Occlusion-Typen: Opaque blockt vollständig, Water/Ice reduzieren leicht, Cutout bleibt offen, Leaves dämpfen stärker.
+- `LightEngine` nutzt diese Regeln beim Sky-Light-Seeding und bei der Propagation, damit Wasser/Leaves nicht wie reine Luft wirken.
+- `LightEngineTest` deckt offene Spalten, Roofs, Höhlen, Überhänge, Wasser, Cutout, Leaves und Chunkgrenzen ab.
 
 ### Akzeptanz
 
@@ -124,13 +101,11 @@ Tageszeit soll stimmungsvoll sein, ohne Gameplay zu blockieren.
 - Evening: amber/orange.
 - Night: blau/kühl, aber spielbar.
 
-### Offen
+### Umsetzung
 
-- Farbkurven definieren.
-- Sky/Fog/Fog Distance koppeln.
-- global brightness smooth interpolieren.
-- Night minimum brightness definieren.
-- Campfire/Lantern nachts stärker lesbar machen.
+- `CozyColorPipeline` definiert jetzt neben Sky-/Fog-Farben auch `globalBrightnessForMinute`, `fogDistanceScaleForMinute` und `nightLightBoostForMinute`.
+- `RenderSettings` trägt Global-Brightness, Night-Light-Boost und Cave-Darkness explizit in den Renderpfad.
+- `WorldRenderer` und Entity-Rendering nutzen die RenderSettings-Helligkeit statt ad hoc Sky-Luma-Schätzung.
 
 ### Akzeptanz
 
@@ -154,14 +129,11 @@ Tageszeit soll stimmungsvoll sein, ohne Gameplay zu blockieren.
 - ancient lantern
 - firefly swarm optional dynamisch/visuell
 
-### Offen
+### Umsetzung
 
-- Light Value pro Block/Material zentral definieren.
-- Validation: Light Source Blocks existieren.
-- Light Value 0..15 prüfen.
-- Emissive und Light Value getrennt halten:
-  - emissive = sieht selbst leuchtend aus
-  - lightValue = beleuchtet Umgebung
+- `LightSourceRegistry` sammelt Light-Emitter aus der Block-Registry und validiert Light-Werte.
+- `LightEngine` seedet Block-Light über diese Registry statt direkt über verstreute Blockabfragen.
+- Tests halten Registry-Werte und die Trennung von Material-Emissive und World-Light fest.
 
 ### Akzeptanz
 
@@ -176,14 +148,11 @@ Tageszeit soll stimmungsvoll sein, ohne Gameplay zu blockieren.
 
 Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wird.
 
-### Offen
+### Umsetzung
 
-- Update Queue für Light Add.
-- Update Queue für Light Remove.
-- Propagation über Chunkgrenzen.
-- Fallback Full Rebuild.
-- Dirty Meshes nur für betroffene Bereiche.
-- Performance-Messung pro Light Update.
+- `LightEngine.updateBlockLight(...)` führt Add-/Remove-Queues für Block-Light und liefert betroffene Chunks plus Fallback-Signal.
+- `ClientWorld.applyBlock(...)` nutzt Incremental Block-Light, rebuildet Sky-Light nur bei geänderten Sky-Occlusion-Regeln und zeichnet Lighting-Zeit weiter in `ChunkBuildQueue` auf.
+- Betroffene Light-Chunks werden zusätzlich dirty markiert; Geometrieänderungen behalten die bestehenden Neighbor-Invalidierungen.
 
 ### Akzeptanz
 
@@ -207,13 +176,11 @@ Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wir
 - fog color
 - emissive add
 
-### Offen
+### Umsetzung
 
-- Lightwerte sauber normalisieren.
-- Ambient Occlusion mit block light kompatibel machen.
-- emissive nicht vom Fog komplett verschlucken.
-- optional smooth light interpolation.
-- debug mode: show light values.
+- `chunk.frag` nutzt getrennte Sky-/Block-Light-Kanäle, Day/Night-Brightness und Night-Light-Boost.
+- AO wird durch Block-Light und Emissive sichtbar entschärft, Glow wird nach Fog anteilig erneut addiert.
+- Shader-Debug-Modi zeigen Combined, Sky, Block und Emissive getrennt.
 
 ### Akzeptanz
 
@@ -225,12 +192,11 @@ Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wir
 
 ## P3.2 Cutout / Vegetation Lighting
 
-### Offen
+### Umsetzung
 
-- Pflanzen hell genug halten.
-- Leaves/Pine Needles leicht abdunkeln.
-- Glow mushrooms emissive.
-- Wind/Animation darf Light nicht kaputt machen.
+- Cutout-Layer erhält im Terrain-Shader einen kleinen Light-Lift, Foliage wird subtil abgedunkelt.
+- Glow-Mushrooms/Spore-Blossoms bleiben über Material-Emissive sichtbar.
+- Wind verschiebt nur Positionen, die separaten Light-Attribute bleiben stabil.
 
 ### Akzeptanz
 
@@ -241,13 +207,11 @@ Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wir
 
 ## P3.3 Water Lighting
 
-### Offen
+### Umsetzung
 
-- underwater tint.
-- Wasser nachts nicht komplett schwarz.
-- Shallow Water heller als Deep Water optional.
-- Block Light durch/auf Wasser prüfen.
-- Wasseroberfläche leicht glänzend, aber nicht realistisch/teuer.
+- Water nutzt weiter Underwater-Tint und bekommt im Shader eine Mindesthelligkeit plus Block-Light-Anteil.
+- Sky-Light-Regeln lassen Wasser leicht abdunkeln, Block-Light bleibt durch Wasser/Ice/Leaves propagierbar.
+- Die Wasseroberfläche behält die günstige animierte Farb-/Wellenanhebung ohne Reflection/Refraction-Pass.
 
 ### Akzeptanz
 
@@ -262,13 +226,17 @@ Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wir
 
 Höhlen und Ruinen sollen dunkler sein, damit Lanterns/Campfires/Glow Items Bedeutung haben.
 
-### Offen
+### Umsetzung
 
-- Cave Darkness aus Sky Light ableiten.
-- Mindesthelligkeit definieren.
-- Campfire/Lantern/Held-Item-Licht optional.
-- Old Ruins leicht dunkler/foggy machen.
-- Debug-Seeds für Cave Pocket nutzen.
+- Terrain-Cave-Darkness wird im Shader aus niedrigem Sky-Light und `RenderSettings.caveDarkness` abgeleitet.
+- Block-Light und Emissive reduzieren die Abdunklung, damit Lanterns/Campfires in Höhlen wichtig und lesbar bleiben.
+- Ruins-Biome-Fog/Tint läuft über die bestehende `CozyColorPipeline.biomeTint("ruins")`-Kopplung.
+- Cave-Smoke nutzt den vorhandenen Debug-Seed aus `docs/WORLD_SMOKE_TESTS.md`: Seed `1337`, Position `-56 68 -504`.
+
+### Verifikation 2026-05-01
+
+- `:common:test --tests dev.voxelgame.common.world.light.LightEngineTest` ist grün.
+- Fokussierte Client-Tests für `CozyColorPipelineTest`, `WorldRendererTest` und `TerrainLightingShaderContractTest` sind grün.
 
 ### Akzeptanz
 
@@ -290,14 +258,18 @@ Höhlen und Ruinen sollen dunkler sein, damit Lanterns/Campfires/Glow Items Bede
 - fireflies
 - magic particles
 
-## Offen
+## Umsetzung
 
-- Bloom Intensity Setting.
-- Low-End Toggle.
-- emissive threshold definieren.
-- Glow nicht überstrahlen lassen.
-- Fireflies eher soft additive.
-- Glow Mushroom Grove als visueller Showcase.
+- Bloom hat einen Low-End-Schalter über `/bloom` und Render-Presets; das Low-Preset deaktiviert Bloom.
+- `RenderSettings` trägt Bloom-Stärke und Emissive-Bloom-Threshold als clampbare Render-Verträge.
+- `chunk.frag` nutzt den Threshold für Glow-Beiträge und begrenzt die additive Bloom-Komponente, damit Lanterns, Campfires und Glow-Mushrooms nicht überstrahlen.
+- Firefly-/Mire-Wisp-Partikel bleiben über den Particle-Shader weich additiv.
+- Der Mushroom-Grove-Showcase ist als reproduzierbarer Smoke in `docs/WORLD_SMOKE_TESTS.md` verankert.
+
+## Verifikation 2026-05-01
+
+- `TerrainLightingShaderContractTest` prüft Bloom-Threshold, Glow-Limit und weiche Particle-Glow-Regeln.
+- `WorldRendererTest` hält die Default-Bloom-Stärke und den Threshold fest.
 
 ## Akzeptanz
 
@@ -307,17 +279,37 @@ Höhlen und Ruinen sollen dunkler sein, damit Lanterns/Campfires/Glow Items Bede
 
 ---
 
-# P6 – Optional Weather Lightning später
+# P6 – Optional Weather Lightning
 
-Nicht im Core priorisieren.
+## Ziel
 
-Falls später:
+Weather-Lightning bleibt bewusst getrennt vom normalen Lighting-System: keine Block-Light-Updates, keine Gameplay-Pflicht und kein Einfluss auf Light-Seams.
 
-- seltene Gewitter.
-- kurzer Sky Flash.
-- Sound Hook.
-- kein Gameplay-Zwang.
-- getrennt von normalem Lighting-System.
+## Umsetzung
+
+- `WeatherLightningController` steuert seltene, deterministische Gewitter-Blitze abhängig von Seed, Tageszeit und aktuellem Biome.
+- Storm-Eligibility ist aktuell auf Abend/Nacht und feuchte bzw. wetterige Biome begrenzt: Mire, Lakeside, Highlands und sehr feuchte Biomes.
+- `RenderSettings.weatherFlash` trägt den kurzen Flash als eigenen Render-Vertrag.
+- `WorldRenderer`, `EntityRenderer`, `chunk.frag` und `entity.frag` nutzen `uWeatherFlash` getrennt von Sky-Light, Block-Light, Bloom und Entity-Light.
+- Sky-/Fog-Farbe werden kurz in Richtung kühles Blitzlicht gezogen; Unterwasser wird der Flash deutlich gedämpft.
+- `AudioCue.THUNDER` ist als verzögerter Sound-Hook angebunden, ohne echte Sound-Engine-Abhängigkeit.
+- `/lightning` triggert einen manuellen Test-Blitz für Smoke-Tests.
+
+## Verifikation 2026-05-01
+
+- `WeatherLightningControllerTest` prüft kurzen Flash, einmaligen verzögerten Thunder-Cue, Storm-Eligibility und Flash-Farbmischung.
+- `TerrainLightingShaderContractTest` prüft, dass Terrain- und Entity-Shader `uWeatherFlash` separat führen.
+- `WorldRendererTest` hält den Default `weatherFlash = 0.0` fest.
+- `RenderingSmokeCoverageTest` hält `/lightning` und die Weather-Lightning-Smoke-Erwartung in `WORLD_SMOKE_TESTS.md` fest.
+- `RENDERING_SHADER_UNIFORMS.md` dokumentiert `uWeatherFlash` für Terrain- und Entity-Shader.
+
+## Akzeptanz
+
+- Gewitter sind selten und atmosphärisch.
+- kurzer Sky/Fog/Shader-Flash ist sichtbar, aber nicht gameplay-blockierend.
+- Donner ist als Hook vorhanden und zeitlich nach dem Flash gekoppelt.
+- normales Lighting-System bleibt unangetastet.
+- kein roter Kreis offen: Engine und Tooling reichen für diese Stufe aus.
 
 ---
 

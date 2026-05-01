@@ -13,7 +13,7 @@ public final class PhysicsTickets {
     }
 
     public static ChunkPos chunkFor(double x, double z) {
-        if (!Double.isFinite(x) || !Double.isFinite(z)) {
+        if (!PhysicsNumericGuard.allFinite(x, z)) {
             throw new IllegalArgumentException("Physics ticket position must be finite");
         }
         return ChunkPos.fromBlock((int) Math.floor(x), (int) Math.floor(z));

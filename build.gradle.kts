@@ -101,6 +101,42 @@ tasks.register<JavaExec>("profileSingleplayerJfr") {
     )
 }
 
+tasks.register<JavaExec>("profileJoinLocalJfr") {
+    group = "profiling"
+    description = "Runs the client join-local flow with Java Flight Recorder enabled."
+    dependsOn(":client:classes")
+    classpath = project(":client").sourceSets.main.get().runtimeClasspath
+    mainClass.set("dev.voxelgame.client.ClientMain")
+    args("--auto-join", "--connect", "127.0.0.1", "--port", "25565", "--username", "Profiler", "--render-distance", "8")
+    val recordingFile = layout.buildDirectory.file("reports/jfr/adventura-join-local.jfr")
+    doFirst {
+        recordingFile.get().asFile.parentFile.mkdirs()
+    }
+    jvmArgs(
+        "-Dorg.lwjgl.system.allocator=jemalloc",
+        "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
+        "-XX:FlightRecorderOptions=stackdepth=128"
+    )
+}
+
+tasks.register<JavaExec>("profileLongExploreJfr") {
+    group = "profiling"
+    description = "Runs a higher-distance singleplayer profile for long-explore chunk, lighting and upload analysis."
+    dependsOn(":client:classes")
+    classpath = project(":client").sourceSets.main.get().runtimeClasspath
+    mainClass.set("dev.voxelgame.client.ClientMain")
+    args("--auto-singleplayer", "--seed", "424242", "--preview-radius", "5", "--render-distance", "12")
+    val recordingFile = layout.buildDirectory.file("reports/jfr/adventura-long-explore.jfr")
+    doFirst {
+        recordingFile.get().asFile.parentFile.mkdirs()
+    }
+    jvmArgs(
+        "-Dorg.lwjgl.system.allocator=jemalloc",
+        "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
+        "-XX:FlightRecorderOptions=stackdepth=128"
+    )
+}
+
 tasks.register<JavaExec>("runServer") {
     group = "voxel"
     description = "Runs the dedicated server on port 25565."
@@ -150,6 +186,11 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
+        binaryResultsDirectory.set(layout.buildDirectory.dir("test-binary-results/$name"))
+        // Stale Gradle binary test results from interrupted runs can break later gates.
+        if (name == "test") {
+            dependsOn("cleanTest")
+        }
     }
 
     tasks.register<Test>("physicsRegression") {

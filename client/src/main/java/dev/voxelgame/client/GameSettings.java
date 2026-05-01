@@ -3,6 +3,34 @@ package dev.voxelgame.client;
 import dev.voxelgame.client.render.RenderDebugView;
 
 public final class GameSettings {
+    public enum HudMode {
+        NORMAL("Normal"),
+        MINIMAL("Minimal"),
+        HIDDEN("Hidden");
+
+        private final String label;
+
+        HudMode(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        public static HudMode parse(String value) {
+            if (value == null || value.isBlank()) {
+                return NORMAL;
+            }
+            return switch (value.trim().toLowerCase()) {
+                case "normal", "on", "full" -> NORMAL;
+                case "minimal", "min" -> MINIMAL;
+                case "hidden", "hide", "off" -> HIDDEN;
+                default -> throw new IllegalArgumentException("Unknown HUD mode: " + value);
+            };
+        }
+    }
+
     private int renderDistanceChunks;
     private int previewRadiusChunks;
     private int meshBuildBudgetChunks = 2;
@@ -16,7 +44,7 @@ public final class GameSettings {
     private boolean softShadowsEnabled = true;
     private boolean bloomEnabled = true;
     private boolean vsyncEnabled = true;
-    private boolean hudEnabled = true;
+    private HudMode hudMode = HudMode.NORMAL;
     private boolean debugOverlayEnabled = false;
     private boolean debugChunkBordersEnabled = false;
     private boolean debugMeshBoundsEnabled = false;
@@ -61,6 +89,14 @@ public final class GameSettings {
 
     public double gpuUploadBudgetMilliseconds() {
         return gpuUploadBudgetMilliseconds;
+    }
+
+    public int chunkUnloadBudgetChunks() {
+        return Math.max(1, meshBuildBudgetChunks * 2);
+    }
+
+    public int gpuReleaseBudgetChunks() {
+        return Math.max(1, meshBuildBudgetChunks * 2);
     }
 
     public double effectiveMeshBuildBudgetMilliseconds(double previousFrameMilliseconds) {
@@ -108,7 +144,11 @@ public final class GameSettings {
     }
 
     public boolean hudEnabled() {
-        return hudEnabled;
+        return hudMode != HudMode.HIDDEN;
+    }
+
+    public HudMode hudMode() {
+        return hudMode;
     }
 
     public boolean debugOverlayEnabled() {
@@ -274,7 +314,16 @@ public final class GameSettings {
     }
 
     public void toggleHud() {
-        hudEnabled = !hudEnabled;
+        hudMode = hudMode == HudMode.HIDDEN ? HudMode.NORMAL : HudMode.HIDDEN;
+    }
+
+    public void cycleHudMode() {
+        HudMode[] modes = HudMode.values();
+        hudMode = modes[(hudMode.ordinal() + 1) % modes.length];
+    }
+
+    public void setHudMode(HudMode mode) {
+        hudMode = mode == null ? HudMode.NORMAL : mode;
     }
 
     public void toggleDebugOverlay() {

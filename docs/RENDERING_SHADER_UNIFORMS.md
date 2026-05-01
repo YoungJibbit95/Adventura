@@ -20,6 +20,9 @@ Dateien:
 - `uSoftShadowsEnabled`: schaltet weiche Terrain-Schattierung ein/aus.
 - `uShadowStrength`: Staerke der subtilen Shadow-Noise.
 - `uGlobalBrightness`: Tageszeit-Helligkeit nach Sky-Luma.
+- `uNightLightBoost`: zusaetzliche Gewichtung fuer Block-/Emissive-Light bei Nacht.
+- `uCaveDarkness`: Abdunklungsstaerke fuer Bereiche mit niedrigem Sky-Light.
+- `uWeatherFlash`: kurzer Weather-Lightning-Flash; getrennt von Sky-Light, Block-Light und Bloom.
 - `uTime`: Sekundenzeit fuer Wasserwellen und Cutout-Wind.
 
 ### Fog, Wasser, Debug
@@ -31,7 +34,7 @@ Dateien:
 - `uUnderwater`: aktiviert Unterwasser-Tint und kurze Fog-Reichweite.
 - `uSimpleWater`: reduziert Wasserwellen/UV-Animation fuer Low-End.
 - `uWindEnabled`: erlaubt materialgesteuerte Cutout-Bewegung.
-- `uRenderDebugMode`: `0=off`, `1=material`, `2=light`, `3=ao`, `4=biome`, `5=layer`, `6=uv`, `7=transparent`.
+- `uRenderDebugMode`: `0=off`, `1=material`, `2=combined light`, `3=ao`, `4=biome`, `5=layer`, `6=uv`, `7=transparent`, `8=sky light`, `9=block light`, `10=emissive`.
 
 ### Texturen
 
@@ -79,6 +82,7 @@ Uniforms:
 - `uEntityLight`: Sky/Block-Light-Sample an der Entity-Position.
 - `uLightDirection`: diffuse Hauptlichtrichtung.
 - `uGlobalBrightness`: Tageszeit-Helligkeit.
+- `uWeatherFlash`: kurzer Weather-Lightning-Flash; separat vom Entity-Light-Sample.
 - `uFogEnabled`, `uFogStart`, `uFogEnd`, `uFogColor`: Terrain-kompatibler Fog.
 - `uUnderwater`: Unterwasser-Tint.
 

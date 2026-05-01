@@ -1,5 +1,7 @@
 package dev.voxelgame.common.entity;
 
+import dev.voxelgame.common.physics.PhysicsNumericGuard;
+
 import java.util.Objects;
 import java.util.UUID;
 
@@ -46,9 +48,8 @@ public record EntitySnapshot(
         if (health < 0) {
             throw new IllegalArgumentException("health cannot be negative");
         }
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
-                || !Float.isFinite(yaw) || !Float.isFinite(pitch)
-                || !Double.isFinite(velocityX) || !Double.isFinite(velocityY) || !Double.isFinite(velocityZ)) {
+        if (!PhysicsNumericGuard.allFinite(x, y, z, velocityX, velocityY, velocityZ)
+                || !PhysicsNumericGuard.allFinite(yaw, pitch)) {
             throw new IllegalArgumentException("Entity snapshot coordinates must be finite");
         }
     }

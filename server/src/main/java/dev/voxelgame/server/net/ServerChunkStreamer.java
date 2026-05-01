@@ -199,13 +199,14 @@ final class ServerChunkStreamer implements AutoCloseable {
         @Override
         public void run() {
             try {
-                future.complete(supplier.get());
+                GamePacket.ChunkData packet = supplier.get();
+                cleanup.run();
                 completedChunks.incrementAndGet();
+                future.complete(packet);
             } catch (Throwable error) {
+                cleanup.run();
                 failedChunks.incrementAndGet();
                 future.completeExceptionally(error);
-            } finally {
-                cleanup.run();
             }
         }
 

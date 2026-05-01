@@ -137,8 +137,8 @@ public final class EntityRenderer implements AutoCloseable {
         shader.setFloat("uFogStart", safeSettings.fogStart());
         shader.setFloat("uFogEnd", safeSettings.fogEnd());
         shader.setVector3("uFogColor", new Vector3f(safeSettings.fogR(), safeSettings.fogG(), safeSettings.fogB()));
-        float skyLuma = safeSettings.skyR() * 0.2126f + safeSettings.skyG() * 0.7152f + safeSettings.skyB() * 0.0722f;
-        shader.setFloat("uGlobalBrightness", Math.max(0.38f, Math.min(1.0f, 0.34f + skyLuma * 0.86f)));
+        shader.setFloat("uGlobalBrightness", safeSettings.globalBrightness());
+        shader.setFloat("uWeatherFlash", safeSettings.weatherFlash());
         glBindVertexArray(vao);
         int rendered = 0;
         int culled = 0;

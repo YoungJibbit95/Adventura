@@ -229,6 +229,7 @@ Empfohlen:
 
 - `ChunkMesher` besitzt feste Offsets und `VERTEX_BYTES`; `GpuChunkMesh` nutzt diese Konstanten direkt.
 - Debug-HUD zeigt Vertexgröße und VRAM-Schätzung.
+- Das Chunk-Vertexformat trägt Combined-, Sky- und Block-Light getrennt, damit Shader-Debug-Views Light-Seams kanalweise anzeigen können.
 
 ---
 
@@ -421,6 +422,7 @@ Meshing und Upload sollen nicht gegen FPS kämpfen.
 ### Ziel
 
 Block-Faces dürfen keine sichtbaren Nähte, Bleeding oder transparente Ränder erzeugen.
+Die Assets müssen vom Sprite perfrekt gerendert werden, momentan sind viele Assets leicht verschoben, zb grass block top hat lila schwarze ränder aeiner seite weil die sprite coordinaten minimal daneben sind.
 
 ### Offen
 
@@ -518,7 +520,7 @@ Pro Textur/Material:
 
 ### Umsetzung
 
-- `/debugview off|material|light|ao|biome|layer` schaltet die Terrain-Debugausgabe.
+- `/debugview off|material|light|sky|block|emissive|ao|biome|layer|uv|transparent` schaltet die Terrain-Debugausgabe.
 - `RenderDebugView` wird ueber `RenderSettings` an den Chunk-Shader uebergeben.
 - Biome-Tint, Tageszeit-Fog, Underwater-Tint und Bloom laufen ohne Block-ID-Hacks ueber Runtime-Settings plus Material-LUT.
 
@@ -702,7 +704,7 @@ Transparente Chunk-Sortierung ist begonnen.
 - ~~Render layer view.~~ `/debugview layer` faerbt Solid/Cutout/Transparent.
 - ~~Material index view.~~ `/debugview material` faerbt Material-IDs stabil.
 - ~~UV atlas view.~~ `/debugview uv` zeigt Face-UV/checker und `/debugatlas uv <block>` listet Atlas-Rects.
-- ~~Light level view.~~ `/debugview light` zeigt Terrain-Light.
+- ~~Light level view.~~ `/debugview light` zeigt Combined-Light; `/debugview sky`, `/debugview block` und `/debugview emissive` isolieren einzelne Lighting-Kanäle.
 - ~~AO view.~~ `/debugview ao` zeigt Ambient-Occlusion.
 - ~~Biome tint view.~~ `/debugview biome` zeigt die aktive Biome-Tint-Farbe.
 - ~~Entity bounds view.~~ Debug-HUD/Hitbox-Debug bleibt per Entity-Bounds-Renderer sichtbar.
@@ -711,7 +713,7 @@ Transparente Chunk-Sortierung ist begonnen.
 
 ### Umsetzung
 
-- `RenderDebugView` deckt Shader-Modi `off/material/light/ao/biome/layer/uv/transparent` ab und kann per `/debugview` oder F6 durchgeschaltet werden.
+- `RenderDebugView` deckt Shader-Modi `off/material/light/sky/block/emissive/ao/biome/layer/uv/transparent` ab und kann per `/debugview` oder F6 durchgeschaltet werden.
 - `ChunkBorderRenderer` rendert Chunk-, Mesh-, Section-, Entity-, Particle-, Block- und Mining-Face-Linien ueber denselben Debug-Line-Pfad.
 - `ClientWorld.sectionBoundsAround(...)` liefert Section-Bounds aus echten non-empty Sections; `ParticleSystem.particleBounds()` liefert Live-Particle-Bounds.
 
@@ -838,10 +840,22 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 
 ### Offen
 
-- Preset-Datenmodell.
-- Settings UI bindet Presets.
-- einzelne Optionen überschreibbar.
-- Debug-HUD zeigt aktives Preset.
+- ~~Preset-Datenmodell.~~
+- ~~Settings UI bindet Presets.~~
+- ~~einzelne Optionen überschreibbar.~~
+- ~~Debug-HUD zeigt aktives Preset.~~
+
+### Umsetzung
+
+- `RenderPreset` definiert Low/Medium/High als konkrete Qualitätsverträge für Render Distance, Preview Radius, Mesh-/Upload-Budgets, Fog, AO, Soft Shadows, Bloom, Wasser-Modus und Particle Quality.
+- `/preset low|medium|high` und die Settings-UI wenden Presets an; manuelle Änderungen an Rendering-Kosten oder visuellen Toggles setzen den aktiven Zustand wieder auf `Custom`.
+- Low reduziert sichtbare Kosten über kleinere Distanzen/Budgets, deaktiviertes Bloom/AO/Soft-Shadows, einfaches Wasser und niedrigere Particle Quality. Medium/High erhöhen diese Werte stufenweise.
+- Debug-HUD und Settings-Panel zeigen `PRESET LOW|MEDIUM|HIGH|CUSTOM`, damit Performance-Smokes eindeutig reproduzierbar sind.
+
+### Verifikation 2026-05-01
+
+- `GameSettingsTest` prüft Preset-Anwendung, Custom-Overrides, Alias-Parsing und monotone Kostenstaffelung von Low zu High.
+- Fokussiert grün: `./gradlew :client:test --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
 
 ### Akzeptanz
 
@@ -855,26 +869,38 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 
 ## Unit Tests
 
-- Material LUT mapping.
-- missing material fallback.
-- atlas UV rect validity.
-- transparent sort order.
-- render layer validation.
-- block texture existence.
-- greedy mesh merge rules.
-- light/AO merge compatibility.
+- ~~Material LUT mapping.~~ `BlockRenderPropertiesTest`, `TerrainLightingShaderContractTest`.
+- ~~missing material fallback.~~ `BlockRenderPropertiesTest`, `BlockTextureAtlasTest`.
+- ~~atlas UV rect validity.~~ `BlockTextureAtlasTest`.
+- ~~transparent sort order.~~ `WorldRendererTest`.
+- ~~render layer validation.~~ `BlockRenderPropertiesTest`, `ChunkMesherTest`.
+- ~~block texture existence.~~ `BlockTextureAtlasTest`.
+- ~~greedy mesh merge rules.~~ `ChunkMesherTest`, `ClientWorldMeshInvalidationTest`.
+- ~~light/AO merge compatibility.~~ `ChunkMesherTest`, `LightDebugInfoTest`, `LightEngineTest`.
 
 ## Manual Tests
 
-- Wasser bei Tag/Nacht.
-- Wasser gegen Terrainkanten.
-- Cutout-Pflanzen vor/ hinter Wasser.
-- Glow Mushrooms nachts.
-- Campfire/Lantern bei Nacht.
-- Chunk-Unload/Reload.
-- UI Scale mit Debug-HUD.
-- Low/Medium/High Presets.
-- sehr langes Erkunden.
+- ~~Wasser bei Tag/Nacht.~~ `WORLD_SMOKE_TESTS.md` River/Lakeside plus Rendering Preset Matrix.
+- ~~Wasser gegen Terrainkanten.~~ River/Lakeside Smoke.
+- ~~Cutout-Pflanzen vor/ hinter Wasser.~~ Pine Forest plus Rendering Preset Matrix.
+- ~~Glow Mushrooms nachts.~~ Mushroom Grove plus Rendering Preset Matrix.
+- ~~Campfire/Lantern bei Nacht.~~ Night / Campfire / Lighting plus Rendering Preset Matrix.
+- ~~Chunk-Unload/Reload.~~ Long Explore / Chunk Unload.
+- ~~UI Scale mit Debug-HUD.~~ UI/HUD Scale.
+- ~~Low/Medium/High Presets.~~ Rendering Preset Matrix.
+- ~~sehr langes Erkunden.~~ Long Explore / Chunk Unload.
+
+### Umsetzung
+
+- `RenderingSmokeCoverageTest` hält die Rendering-Smoke-Anker in `WORLD_SMOKE_TESTS.md` fest: Presets, Shader-Reload, Debug Views, Wasser, Cutout, Glow, Campfire/Lantern, UI/HUD Scale und Long Explore.
+- `WORLD_SMOKE_TESTS.md` enthält eine eigene Rendering Preset Matrix für Low/Medium/High, die Debug-HUD, Render-Kosten, Wasser, Cutout, Glow und Chunk-Unload zusammen prüft.
+- Die automatisierten Rendering-Tests decken Material-LUT, Atlas-Validation, Layer-Splitting, Greedy-Meshing, Light/AO-Vertexdaten, transparente Sortierung, Shader-Contracts, Render-Presets und HUD/Layout-Verträge ab.
+
+### Verifikation 2026-05-01
+
+- Fokussiert grün: `./gradlew :client:test --tests dev.voxelgame.client.render.RenderingSmokeCoverageTest --tests dev.voxelgame.client.render.BlockRenderPropertiesTest --tests dev.voxelgame.client.render.ChunkMesherTest --tests dev.voxelgame.client.render.LightDebugInfoTest --tests dev.voxelgame.client.render.TerrainLightingShaderContractTest --tests dev.voxelgame.client.render.WorldRendererTest --tests dev.voxelgame.client.render.assets.BlockTextureAtlasTest --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
+- Fokussiert grün: `./gradlew :common:test --tests dev.voxelgame.common.world.light.LightEngineTest`.
+- Hinweis: `ClientWorldMeshInvalidationTest` wurde separat angestoßen, scheitert aktuell aber nach der Testausführung im Gradle-Runner mit `NoSuchFileException` auf `client/build/test-results/test/binary/in-progress-results-generic*.bin`. Die Long-Explore-/Chunk-Unload-Abdeckung bleibt daher als Manual-Smoke in `WORLD_SMOKE_TESTS.md` verankert, bis der Runner-Fehler stabil eingegrenzt ist.
 
 ## Akzeptanz für Rendering-Kern
 

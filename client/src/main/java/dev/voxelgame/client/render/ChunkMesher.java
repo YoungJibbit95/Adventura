@@ -10,15 +10,18 @@ import dev.voxelgame.common.world.WorldView;
 public final class ChunkMesher {
     /**
      * Chunk vertex format, GL location order:
-     * 0 position xyz, 1 normal xyz, 2 material index, 3 light, 4 AO, 5 local/tiled face UV.
+     * 0 position xyz, 1 normal xyz, 2 material index, 3 combined light,
+     * 4 sky light, 5 block light, 6 AO, 7 local/tiled face UV.
      */
-    public static final int FLOATS_PER_VERTEX = 11;
+    public static final int FLOATS_PER_VERTEX = 13;
     public static final int POSITION_OFFSET = 0;
     public static final int NORMAL_OFFSET = 3;
     public static final int MATERIAL_INDEX_OFFSET = 6;
     public static final int LIGHT_OFFSET = 7;
-    public static final int AO_OFFSET = 8;
-    public static final int FACE_UV_OFFSET = 9;
+    public static final int SKY_LIGHT_OFFSET = 8;
+    public static final int BLOCK_LIGHT_OFFSET = 9;
+    public static final int AO_OFFSET = 10;
+    public static final int FACE_UV_OFFSET = 11;
     public static final int VERTEX_BYTES = FLOATS_PER_VERTEX * Float.BYTES;
 
     private static final Face[] FACES = {
@@ -64,15 +67,33 @@ public final class ChunkMesher {
         return buildMesh(world, chunk, true, layer, ambientOcclusion);
     }
 
+    public synchronized ChunkMesh buildSectionLayerMesh(WorldView world, Chunk chunk, int sectionY, BlockRenderLayer layer, boolean ambientOcclusion) {
+        vertices.reset();
+        indices.reset();
+        appendSimpleFaces(vertices, indices, world, chunk, true, layer, ambientOcclusion, false, sectionY, true);
+        float[] vertexArray = vertices.toArray();
+        int[] indexArray = indices.toArray();
+        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray);
+        lastBuildStats = new MeshBuildStats(
+                mesh.vertexCount(),
+                mesh.indexCount(),
+                mesh.estimatedBytes(),
+                vertices.growthBytesSinceReset() + indices.growthBytesSinceReset(),
+                vertices.capacityBytes() + indices.capacityBytes(),
+                false
+        );
+        return mesh;
+    }
+
     private synchronized ChunkMesh buildMesh(WorldView world, Chunk chunk, boolean filterLayer, BlockRenderLayer layer, boolean ambientOcclusion) {
         vertices.reset();
         indices.reset();
         boolean usedGreedyMeshing = layer == BlockRenderLayer.SOLID && greedyMeshingEnabled;
         if (usedGreedyMeshing) {
             appendGreedySolidFaces(vertices, indices, world, chunk, ambientOcclusion);
-            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, ambientOcclusion, true);
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, ambientOcclusion, true, 0, false);
         } else {
-            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, false);
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, false, 0, false);
         }
         float[] vertexArray = vertices.toArray();
         int[] indexArray = indices.toArray();
@@ -96,12 +117,17 @@ public final class ChunkMesher {
             boolean filterLayer,
             BlockRenderLayer layer,
             boolean ambientOcclusion,
-            boolean skipGreedyBlocks
+            boolean skipGreedyBlocks,
+            int onlySectionY,
+            boolean restrictSection
     ) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
         for (int sectionIndex = 0; sectionIndex < chunk.sectionCount(); sectionIndex++) {
             ChunkSection section = chunk.sectionByIndex(sectionIndex);
+            if (restrictSection && section.sectionY() != onlySectionY) {
+                continue;
+            }
             if (section.isEmpty()) {
                 continue;
             }
@@ -294,22 +320,42 @@ public final class ChunkMesher {
         return face.nx != 0 ? baseZ + u : baseZ + v;
     }
 
-    private static float light(WorldView world, int x, int y, int z) {
+    private static LightSample light(WorldView world, int x, int y, int z) {
         if (world instanceof dev.voxelgame.common.world.InMemoryWorld memoryWorld) {
             float sky = memoryWorld.skyLight(x, y, z) / 15.0f;
             float block = memoryWorld.blockLight(x, y, z) / 15.0f;
             float combined = sky * 0.65f + block * 0.85f;
-            return Math.max(0.12f, Math.min(1.0f, combined));
+            return new LightSample(
+                    Math.max(0.12f, Math.min(1.0f, combined)),
+                    Math.max(0.0f, Math.min(1.0f, sky)),
+                    Math.max(0.0f, Math.min(1.0f, block))
+            );
         }
-        return 1.0f;
+        return new LightSample(1.0f, 1.0f, 0.0f);
     }
 
-    private static int lightCode(float light) {
-        return Math.max(0, Math.min(255, Math.round(light * 255.0f)));
+    private static LightCode lightCode(LightSample light) {
+        return new LightCode(
+                lightCode(light.combined()),
+                lightCode(light.sky()),
+                lightCode(light.block())
+        );
     }
 
-    private static float light(int lightCode) {
-        return Math.max(0, Math.min(255, lightCode)) / 255.0f;
+    private static int lightCode(float value) {
+        return Math.max(0, Math.min(255, Math.round(value * 255.0f)));
+    }
+
+    private static LightSample light(LightCode code) {
+        return new LightSample(
+                light(code.combined()),
+                light(code.sky()),
+                light(code.block())
+        );
+    }
+
+    private static float light(int code) {
+        return Math.max(0, Math.min(255, code)) / 255.0f;
     }
 
     private static int[] ambientOcclusionCodes(WorldView world, int x, int y, int z, Face face) {
@@ -320,7 +366,7 @@ public final class ChunkMesher {
         return values;
     }
 
-    private static void addFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, float light, boolean ambientOcclusion) {
+    private static void addFace(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, Face face, short blockId, LightSample light, boolean ambientOcclusion) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         for (float[] corner : face.corners) {
             vertices.add(x + corner[0]);
@@ -330,7 +376,9 @@ public final class ChunkMesher {
             vertices.add((float) face.ny);
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
-            vertices.add(light);
+            vertices.add(light.combined());
+            vertices.add(light.sky());
+            vertices.add(light.block());
             vertices.add(ambientOcclusion ? ambientOcclusion(world, x, y, z, face, corner) : 1.0f);
             float[] uv = faceUv(face, corner);
             vertices.add(uv[0]);
@@ -344,7 +392,7 @@ public final class ChunkMesher {
         indices.add(baseVertex + 3);
     }
 
-    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, int x, int y, int z, Face face, short blockId, float light, int width, int height, int[] aoValues) {
+    private static void addMergedFace(FloatMeshBuffer vertices, IntMeshBuffer indices, int x, int y, int z, Face face, short blockId, LightSample light, int width, int height, int[] aoValues) {
         int baseVertex = vertices.size() / FLOATS_PER_VERTEX;
         int uAxis = uAxis(face);
         int vAxis = vAxis(face);
@@ -364,7 +412,9 @@ public final class ChunkMesher {
             vertices.add((float) face.ny);
             vertices.add((float) face.nz);
             vertices.add((float) blockId);
-            vertices.add(light);
+            vertices.add(light.combined());
+            vertices.add(light.sky());
+            vertices.add(light.block());
             vertices.add(aoValues == null ? 1.0f : aoValues[cornerIndex] / 255.0f);
             float[] uv = faceUv(face, mergedCorner);
             vertices.add(uv[0]);
@@ -380,7 +430,7 @@ public final class ChunkMesher {
     }
 
 
-    private static void addCrossSprite(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion) {
+    private static void addCrossSprite(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, LightSample light, boolean ambientOcclusion) {
         addSpriteQuad(vertices, indices, world, x, y, z, blockId, light, ambientOcclusion, new Face(0, 0, 1, new float[][]{
                 {0.0f, 0.0f, 0.5f},
                 {1.0f, 0.0f, 0.5f},
@@ -395,7 +445,7 @@ public final class ChunkMesher {
         }));
     }
 
-    private static void addSpriteQuad(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, float light, boolean ambientOcclusion, Face face) {
+    private static void addSpriteQuad(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, int x, int y, int z, short blockId, LightSample light, boolean ambientOcclusion, Face face) {
         addFace(vertices, indices, world, x, y, z, face, blockId, light, ambientOcclusion);
         int firstBase = indices.get(indices.size() - 6);
         indices.add(firstBase + 2);
@@ -458,8 +508,14 @@ public final class ChunkMesher {
         return face.ny != 0 ? 2 : 1;
     }
 
-    private record GreedyCell(short blockId, int lightCode, int ao0, int ao1, int ao2, int ao3) {
-        float light() {
+    private record LightSample(float combined, float sky, float block) {
+    }
+
+    private record LightCode(int combined, int sky, int block) {
+    }
+
+    private record GreedyCell(short blockId, LightCode lightCode, int ao0, int ao1, int ao2, int ao3) {
+        LightSample light() {
             return ChunkMesher.light(lightCode);
         }
 

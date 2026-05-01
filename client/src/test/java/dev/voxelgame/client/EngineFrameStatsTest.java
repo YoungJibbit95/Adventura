@@ -7,6 +7,7 @@ import dev.voxelgame.client.render.WorldRenderer;
 import dev.voxelgame.client.render.entity.EntityRenderer;
 import dev.voxelgame.client.render.particle.ParticleSystem;
 import dev.voxelgame.client.world.ClientWorld;
+import dev.voxelgame.common.engine.EngineJobType;
 import dev.voxelgame.common.net.GamePacket;
 import org.junit.jupiter.api.Test;
 
@@ -20,10 +21,37 @@ class EngineFrameStatsTest {
         EngineFrameStats stats = EngineFrameStats.empty();
 
         assertEquals(0, stats.frame().fps());
+        assertEquals(0.0, stats.phases().updateTotalMilliseconds(), 0.001);
+        assertEquals(0.0, stats.phases().renderTotalMilliseconds(), 0.001);
+        assertEquals(0, stats.jobs().chunkMesh().pendingJobs());
+        assertEquals(0L, stats.jobs().forType(EngineJobType.NET_ENCODE).completedJobs());
         assertEquals(0, stats.chunks().loadedChunks());
+        assertEquals(0, stats.chunks().terrainCacheChunks());
+        assertEquals(0L, stats.chunks().terrainCacheBytes());
         assertEquals(0, stats.rendering().drawCalls());
         assertEquals(0, stats.entities().entityCount());
         assertFalse(stats.network().online());
+        assertEquals(0.0, stats.budgets().frameTargetMilliseconds(), 0.001);
+    }
+
+    @Test
+    void framePhasesClampInvalidValuesAndExposeTotals() {
+        EngineFrameStats.FramePhases phases = new EngineFrameStats.FramePhases(
+                -1.0,
+                Double.NaN,
+                1.25,
+                2.75,
+                3.0,
+                -4.0,
+                5.5,
+                0.8
+        );
+
+        assertEquals(0.0, phases.inputMilliseconds(), 0.001);
+        assertEquals(0.0, phases.networkMilliseconds(), 0.001);
+        assertEquals(0.0, phases.gpuUploadMilliseconds(), 0.001);
+        assertEquals(4.0, phases.updateTotalMilliseconds(), 0.001);
+        assertEquals(8.5, phases.renderTotalMilliseconds(), 0.001);
     }
 
     @Test
@@ -144,8 +172,18 @@ class EngineFrameStatsTest {
 
         assertEquals(60, stats.frame().fps());
         assertEquals(2.0, stats.frame().clientTickMilliseconds(), 0.001);
+        assertEquals(2.0, stats.phases().playerMilliseconds(), 0.001);
+        assertEquals(7.5, stats.phases().renderPassMilliseconds(), 0.001);
+        assertEquals(2.0, stats.phases().updateTotalMilliseconds(), 0.001);
+        assertEquals(7.5, stats.phases().renderTotalMilliseconds(), 0.001);
+        assertEquals(world.dirtyChunkCount(), stats.jobs().chunkMesh().pendingJobs());
+        assertEquals(9L, stats.jobs().chunkGenerate().completedJobs());
+        assertEquals(9L, stats.jobs().chunkLight().completedJobs());
+        assertEquals(10L + networkStats.serverStats().sentPackets(), stats.jobs().netEncode().completedJobs());
         assertEquals(8, stats.chunks().renderDistanceChunks());
         assertEquals(9, stats.chunks().loadedChunks());
+        assertEquals(world.terrainCacheChunkCount(), stats.chunks().terrainCacheChunks());
+        assertEquals(world.terrainCacheBytes(), stats.chunks().terrainCacheBytes());
         assertEquals(3, stats.chunks().visibleChunks());
         assertEquals(2, stats.chunks().builtChunks());
         assertEquals(6, stats.rendering().drawCalls());
@@ -183,5 +221,60 @@ class EngineFrameStatsTest {
         assertEquals(2.5, stats.gpuResources().lastShaderReloadMilliseconds(), 0.001);
         assertEquals(2, stats.gpuResources().liveEntityBuffers());
         assertEquals(1, stats.gpuResources().liveFramebuffers());
+        assertEquals("Custom", stats.budgets().profile());
+        assertEquals(1000.0 / 60.0, stats.budgets().frameTargetMilliseconds(), 0.001);
+        assertEquals(16.6 / (1000.0 / 60.0), stats.budgets().frameUsage(), 0.001);
+        assertEquals(3.0, stats.budgets().meshingBudgetMilliseconds(), 0.001);
+        assertEquals(2.0, stats.budgets().gpuUploadBudgetMilliseconds(), 0.001);
+        assertEquals(4096.0 / 2_000_000.0, stats.budgets().gpuUploadBytesUsage(), 0.001);
+        assertEquals(6.0 / 1_100.0, stats.budgets().drawCallUsage(), 0.001);
+        assertEquals(240.0 / 800_000.0, stats.budgets().triangleUsage(), 0.001);
+        assertEquals(0.25, stats.budgets().particleUsage(), 0.001);
+    }
+
+    @Test
+    void captureKeepsExplicitFramePhaseTimings() {
+        EngineFrameStats.FramePhases phases = new EngineFrameStats.FramePhases(
+                0.2,
+                0.3,
+                0.4,
+                0.5,
+                1.2,
+                0.6,
+                4.0,
+                0.8
+        );
+
+        EngineFrameStats stats = EngineFrameStats.capture(
+                55,
+                18.0,
+                1.4,
+                5.2,
+                0.8,
+                phases,
+                GameSettings.fromOptions(new ConnectionOptions(false, null, 25565, "Player", 1L, 2, 2, false, false)),
+                4,
+                null,
+                null,
+                0,
+                0,
+                0,
+                0,
+                null,
+                0,
+                0,
+                0,
+                0,
+                0,
+                null,
+                false,
+                null,
+                null
+        );
+
+        assertEquals(1.4, stats.phases().updateTotalMilliseconds(), 0.001);
+        assertEquals(5.2, stats.phases().renderTotalMilliseconds(), 0.001);
+        assertEquals(0.6, stats.phases().gpuUploadMilliseconds(), 0.001);
+        assertEquals(0.8, stats.phases().uiMilliseconds(), 0.001);
     }
 }

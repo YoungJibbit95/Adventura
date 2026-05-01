@@ -52,7 +52,7 @@ class InteractionHintTest {
 
         assertEquals("Cooking pot", hint.title());
         assertEquals("Press E nearby to cook", hint.action());
-        assertEquals("Soups, stew, tea, and jam", hint.detail());
+        assertEquals("Needs water, bowl, herbs or berries", hint.detail());
         assertEquals(InteractionHint.Tone.READY, hint.tone());
     }
 
@@ -72,7 +72,7 @@ class InteractionHintTest {
 
         assertEquals("Forge", hint.title());
         assertEquals("Press E nearby to forge", hint.action());
-        assertEquals("Iron ingots and ruin seals", hint.detail());
+        assertEquals("Ore, fuel and heat required", hint.detail());
         assertEquals(InteractionHint.Tone.READY, hint.tone());
     }
 
@@ -131,8 +131,9 @@ class InteractionHintTest {
         InteractionHint hint = InteractionHint.forBlock(blocks.requireById(Blocks.IRON_ORE), context(true, false, false, false, false, 0.55f, 0.0f));
 
         assertEquals("Need Level 2 pickaxe", hint.action());
-        assertEquals("Swap tools, then hold left", hint.detail());
+        assertEquals("Wrong tool selected. Swap tools, then hold left", hint.detail());
         assertEquals(InteractionHint.Tone.WARNING, hint.tone());
+        assertEquals(2, hint.chips().size());
     }
 
     @Test
@@ -140,7 +141,8 @@ class InteractionHintTest {
         InteractionHint hint = InteractionHint.forBlock(blocks.requireById(Blocks.STONE), context(true, false, false, false, true, 1.0f, 0.42f));
 
         assertEquals("Mining 42%", hint.action());
-        assertEquals("Keep holding left", hint.detail());
+        assertEquals("Hold left to mine", hint.detail());
+        assertEquals(0.42f, hint.progress(), 0.001f);
         assertEquals(InteractionHint.Tone.READY, hint.tone());
     }
 

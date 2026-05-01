@@ -20,16 +20,16 @@ public final class PlayerMovementRules {
     }
 
     public static boolean isFinite(double x, double y, double z, float yaw, float pitch) {
-        return Double.isFinite(x)
-                && Double.isFinite(y)
-                && Double.isFinite(z)
-                && Float.isFinite(yaw)
-                && Float.isFinite(pitch);
+        return PhysicsNumericGuard.allFinite(x, y, z) && PhysicsNumericGuard.allFinite(yaw, pitch);
     }
 
     public static boolean withinVerticalBounds(double eyeY, PlayerPhysicsConfig config, int minY, int maxYExclusive) {
         PlayerBounds bounds = config.bounds();
         return bounds.minY(eyeY) >= minY && bounds.maxY(eyeY) < maxYExclusive;
+    }
+
+    public static boolean withinVerticalBounds(double eyeY, PlayerPhysicsConfig config, PhysicsStepContext context) {
+        return context != null && withinVerticalBounds(eyeY, config, context.dimension().minY(), context.dimension().maxYExclusive());
     }
 
     public static boolean groundedClaimPlausible(boolean claimedOnGround, boolean hasGroundSupport) {
@@ -151,6 +151,33 @@ public final class PlayerMovementRules {
             case SURVIVAL -> isPlausibleSurvivalDelta(fromX, fromY, fromZ, toX, toY, toZ, deltaSeconds, config, water);
             case FLYING, SPECTATOR -> isPlausibleDelta(fromX, fromY, fromZ, toX, toY, toZ, deltaSeconds, config);
         };
+    }
+
+    public static boolean isPlausibleModeDelta(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            PlayerPhysicsConfig config,
+            PhysicsStepContext context
+    ) {
+        if (context == null) {
+            return false;
+        }
+        return isPlausibleModeDelta(
+                fromX,
+                fromY,
+                fromZ,
+                toX,
+                toY,
+                toZ,
+                context.deltaSeconds(),
+                config,
+                context.waterState(),
+                context.movementMode()
+        );
     }
 
     public static boolean isPlausibleHorizontalAcceleration(

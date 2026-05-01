@@ -102,6 +102,16 @@ class BlockRenderPropertiesTest {
     }
 
     @Test
+    void emissiveVisualsStaySeparateFromWorldLightValues() {
+        Registry<BlockType> blocks = Blocks.createDefaultRegistry();
+
+        assertEquals(0, blocks.requireById(Blocks.CAMPFIRE).lightEmission());
+        assertTrue(BlockRenderProperties.forBlock(Blocks.CAMPFIRE).emissive() > 0.0f);
+        assertEquals(14, blocks.requireById(Blocks.CAMPFIRE_ACTIVE).lightEmission());
+        assertEquals(1.0f, BlockRenderProperties.forBlock(Blocks.CAMPFIRE_ACTIVE).emissive(), 0.0001f);
+    }
+
+    @Test
     void materialLutPacksUvAndRenderMetadataRows() {
         RenderMaterial[] materials = new RenderMaterial[Blocks.WATER + 1];
         Arrays.fill(materials, RenderMaterial.fallback());

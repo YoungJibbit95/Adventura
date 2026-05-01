@@ -10,7 +10,10 @@ public enum RenderDebugView {
     BIOME_TINT(4, "biome"),
     RENDER_LAYER(5, "layer"),
     UV_ATLAS(6, "uv"),
-    TRANSPARENT(7, "transparent");
+    TRANSPARENT(7, "transparent"),
+    SKY_LIGHT(8, "sky"),
+    BLOCK_LIGHT(9, "block"),
+    EMISSIVE(10, "emissive");
 
     private final int shaderId;
     private final String commandName;
@@ -39,7 +42,10 @@ public enum RenderDebugView {
             case "layer", "renderlayer", "render_layer", "layers" -> RENDER_LAYER;
             case "uv", "atlas", "uvatlas", "uv_atlas" -> UV_ATLAS;
             case "transparent", "translucent", "overdraw", "alpha" -> TRANSPARENT;
-            default -> throw new IllegalArgumentException("Usage: /debugview off|material|light|ao|biome|layer|uv|transparent");
+            case "sky", "skylight", "sky_light" -> SKY_LIGHT;
+            case "block", "blocklight", "block_light" -> BLOCK_LIGHT;
+            case "emissive", "emit", "glow" -> EMISSIVE;
+            default -> throw new IllegalArgumentException("Usage: /debugview off|material|light|sky|block|emissive|ao|biome|layer|uv|transparent");
         };
     }
 }

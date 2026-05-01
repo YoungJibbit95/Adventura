@@ -2,6 +2,7 @@ package dev.voxelgame.common.physics;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
@@ -40,7 +41,7 @@ class PhysicsGoldenReplayTest {
                 doubleValue(replay, "delta"),
                 ProjectilePhysicsConfig.arrow(),
                 (x, y, z, bounds) -> bounds.intersectsBlock(x, y, z, 18, 64, 0),
-                (x, y, z) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
                 List.of()
         );
 
@@ -49,6 +50,56 @@ class PhysicsGoldenReplayTest {
         assertNotEquals(
                 ChunkPos.fromBlock((int) Math.floor(state.x()), (int) Math.floor(state.z())),
                 ChunkPos.fromBlock((int) Math.floor(hit.state().x()), (int) Math.floor(hit.state().z()))
+        );
+    }
+
+    @Test
+    void playerMultiStepReplayRunsThroughSharedStepContext() throws IOException {
+        Properties replay = load("physics-replays/player_multi_step.properties");
+        PhysicsTestWorld world = new PhysicsTestWorld();
+
+        PlayerState state = PhysicsReplayHarness.replayPlayer(replay, world);
+
+        assertTrue(state.x() > doubleValue(replay, "expectedMinX"));
+        assertTrue(state.y() > doubleValue(replay, "expectedMinY"));
+        assertEquals(Boolean.parseBoolean(replay.getProperty("expectedAirborne")), !state.onGround());
+    }
+
+    @Test
+    void projectileMultiStepReplayStopsOnTerminalHit() throws IOException {
+        Properties replay = load("physics-replays/projectile_multi_step_block.properties");
+        PhysicsTestWorld world = new PhysicsTestWorld();
+        PhysicsReplayHarness.addSolidBlocks(replay, world);
+
+        ProjectileHit hit = PhysicsReplayHarness.replayProjectile(replay, world);
+
+        assertEquals(ProjectileHit.Type.valueOf(replay.getProperty("expectedType")), hit.type());
+        assertEquals(intValue(replay, "expectedBlockX"), hit.blockX());
+        assertTrue(hit.terminal());
+    }
+
+    @Test
+    void entityMultiStepReplaySeparatesFromNeighbor() throws IOException {
+        Properties replay = load("physics-replays/entity_multi_step_separation.properties");
+
+        EntitySnapshot state = PhysicsReplayHarness.replayEntity(replay);
+        EntitySnapshot neighbor = new EntitySnapshot(
+                intValue(replay, "neighborId"),
+                replay.getProperty("neighborTypeKey"),
+                null,
+                doubleValue(replay, "neighborX"),
+                doubleValue(replay, "neighborY"),
+                doubleValue(replay, "neighborZ"),
+                0.0f,
+                0.0f,
+                10
+        );
+
+        assertTrue(state.x() < doubleValue(replay, "expectedMaxX"));
+        assertTrue(state.z() > doubleValue(replay, "expectedMinZ"));
+        assertEquals(
+                Boolean.parseBoolean(replay.getProperty("expectedSeparated")),
+                !EntityPhysics.overlaps(state, neighbor, 0.02)
         );
     }
 

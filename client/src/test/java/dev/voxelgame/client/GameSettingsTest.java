@@ -27,6 +27,8 @@ class GameSettingsTest {
         assertEquals(40, settings.mouseSensitivityPercent());
         assertEquals(150, settings.uiScalePercent());
         assertEquals(12, settings.meshBuildBudgetChunks());
+        assertEquals(24, settings.chunkUnloadBudgetChunks());
+        assertEquals(24, settings.gpuReleaseBudgetChunks());
         assertEquals(16.0, settings.meshBuildBudgetMilliseconds(), 0.001);
         assertEquals(16.0, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(1.0, settings.particleQuality(), 0.001);
@@ -67,6 +69,7 @@ class GameSettingsTest {
         assertFalse(settings.softShadowsEnabled());
         assertFalse(settings.bloomEnabled());
         assertFalse(settings.hudEnabled());
+        assertEquals(GameSettings.HudMode.HIDDEN, settings.hudMode());
         assertFalse(settings.chatEnabled());
         assertFalse(settings.transparentWaterEnabled());
         assertFalse(settings.greedyMeshingEnabled());
@@ -77,6 +80,25 @@ class GameSettingsTest {
         assertTrue(settings.debugSectionBoundsEnabled());
         assertTrue(settings.debugParticleBoundsEnabled());
         assertEquals(RenderDebugView.MATERIAL_INDEX, settings.renderDebugView());
+    }
+
+    @Test
+    void cyclesAndParsesHudModes() {
+        GameSettings settings = GameSettings.fromOptions(new ConnectionOptions(false, null, 25565, "Player", 1L, 3, 8, false, false));
+
+        settings.cycleHudMode();
+        assertEquals(GameSettings.HudMode.MINIMAL, settings.hudMode());
+        assertTrue(settings.hudEnabled());
+
+        settings.cycleHudMode();
+        assertEquals(GameSettings.HudMode.HIDDEN, settings.hudMode());
+        assertFalse(settings.hudEnabled());
+
+        settings.setHudMode(GameSettings.HudMode.parse("normal"));
+        assertEquals(GameSettings.HudMode.NORMAL, settings.hudMode());
+
+        assertEquals(GameSettings.HudMode.MINIMAL, GameSettings.HudMode.parse("min"));
+        assertEquals(GameSettings.HudMode.HIDDEN, GameSettings.HudMode.parse("off"));
     }
 
     @Test
@@ -112,6 +134,27 @@ class GameSettingsTest {
         assertTrue(settings.bloomEnabled());
         assertFalse(settings.simpleWaterEnabled());
         assertEquals(1.0, settings.particleQuality(), 0.001);
+    }
+
+    @Test
+    void renderPresetsScaleRenderingCostFromLowToHigh() {
+        assertTrue(RenderPreset.LOW.renderDistanceChunks() < RenderPreset.MEDIUM.renderDistanceChunks());
+        assertTrue(RenderPreset.MEDIUM.renderDistanceChunks() < RenderPreset.HIGH.renderDistanceChunks());
+        assertTrue(RenderPreset.LOW.meshBuildBudgetMilliseconds() < RenderPreset.MEDIUM.meshBuildBudgetMilliseconds());
+        assertTrue(RenderPreset.MEDIUM.meshBuildBudgetMilliseconds() < RenderPreset.HIGH.meshBuildBudgetMilliseconds());
+        assertTrue(RenderPreset.LOW.gpuUploadBudgetMilliseconds() < RenderPreset.MEDIUM.gpuUploadBudgetMilliseconds());
+        assertTrue(RenderPreset.MEDIUM.gpuUploadBudgetMilliseconds() < RenderPreset.HIGH.gpuUploadBudgetMilliseconds());
+        assertTrue(RenderPreset.LOW.particleQuality() < RenderPreset.MEDIUM.particleQuality());
+        assertTrue(RenderPreset.MEDIUM.particleQuality() < RenderPreset.HIGH.particleQuality());
+
+        assertFalse(RenderPreset.LOW.ambientOcclusionEnabled());
+        assertFalse(RenderPreset.LOW.softShadowsEnabled());
+        assertFalse(RenderPreset.LOW.bloomEnabled());
+        assertTrue(RenderPreset.LOW.simpleWaterEnabled());
+        assertTrue(RenderPreset.MEDIUM.ambientOcclusionEnabled());
+        assertTrue(RenderPreset.MEDIUM.bloomEnabled());
+        assertTrue(RenderPreset.HIGH.softShadowsEnabled());
+        assertFalse(RenderPreset.HIGH.simpleWaterEnabled());
     }
 
     @Test
@@ -152,6 +195,9 @@ class GameSettingsTest {
     void parsesRenderDebugViewAliases() {
         assertEquals(RenderDebugView.NONE, RenderDebugView.parse("off"));
         assertEquals(RenderDebugView.LIGHT, RenderDebugView.parse("lighting"));
+        assertEquals(RenderDebugView.SKY_LIGHT, RenderDebugView.parse("sky_light"));
+        assertEquals(RenderDebugView.BLOCK_LIGHT, RenderDebugView.parse("blocklight"));
+        assertEquals(RenderDebugView.EMISSIVE, RenderDebugView.parse("glow"));
         assertEquals(RenderDebugView.RENDER_LAYER, RenderDebugView.parse("layers"));
         assertEquals(RenderDebugView.UV_ATLAS, RenderDebugView.parse("uv_atlas"));
         assertEquals(RenderDebugView.TRANSPARENT, RenderDebugView.parse("overdraw"));

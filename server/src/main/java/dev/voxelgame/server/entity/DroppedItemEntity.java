@@ -3,6 +3,8 @@ package dev.voxelgame.server.entity;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.physics.FluidPhysics;
+import dev.voxelgame.common.physics.PhysicsNumericGuard;
 
 import java.util.Objects;
 
@@ -33,22 +35,40 @@ public record DroppedItemEntity(
         if (stack.isEmpty()) {
             throw new IllegalArgumentException("Dropped item stack cannot be empty");
         }
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
-                || !Double.isFinite(groundY)
-                || !Double.isFinite(velocityX) || !Double.isFinite(velocityY) || !Double.isFinite(velocityZ)) {
+        if (!PhysicsNumericGuard.allFinite(x, y, z, groundY, velocityX, velocityY, velocityZ)) {
             throw new IllegalArgumentException("Dropped item coordinates must be finite");
         }
     }
 
     public DroppedItemEntity tick(long tick) {
-        double nextVelocityY = velocityY - GRAVITY * TICK_SECONDS;
-        double nextX = x + velocityX * TICK_SECONDS;
-        double nextY = y + nextVelocityY * TICK_SECONDS;
-        double nextZ = z + velocityZ * TICK_SECONDS;
-        double nextVelocityX = velocityX * AIR_DRAG;
-        double nextVelocityZ = velocityZ * AIR_DRAG;
+        return tick(tick, (x, y, z) -> FluidPhysics.air());
+    }
 
-        if (nextY <= groundY) {
+    public DroppedItemEntity tick(long tick, FluidPhysics.FluidQuery fluidQuery) {
+        Objects.requireNonNull(fluidQuery, "fluidQuery");
+        FluidPhysics.FluidSample fluid = fluidQuery.sample(x, y, z);
+        double nextVelocityX;
+        double nextVelocityY;
+        double nextVelocityZ;
+        if (fluid.inFluid()) {
+            FluidPhysics.Velocity velocity = FluidPhysics.applyFloatingBodyForces(
+                    new FluidPhysics.Velocity(velocityX, velocityY, velocityZ),
+                    TICK_SECONDS,
+                    fluid
+            );
+            nextVelocityX = velocity.x();
+            nextVelocityY = velocity.y();
+            nextVelocityZ = velocity.z();
+        } else {
+            nextVelocityX = velocityX * AIR_DRAG;
+            nextVelocityY = velocityY - GRAVITY * TICK_SECONDS;
+            nextVelocityZ = velocityZ * AIR_DRAG;
+        }
+        double nextX = x + nextVelocityX * TICK_SECONDS;
+        double nextY = y + nextVelocityY * TICK_SECONDS;
+        double nextZ = z + nextVelocityZ * TICK_SECONDS;
+
+        if (!fluid.inFluid() && nextY <= groundY) {
             nextY = groundY;
             if (Math.abs(nextVelocityY) > REST_VELOCITY) {
                 nextVelocityY = -nextVelocityY * BOUNCE;
@@ -76,6 +96,14 @@ public record DroppedItemEntity(
 
     public boolean canPickup(long tick) {
         return tick - createdTick >= PICKUP_DELAY_TICKS;
+    }
+
+    public DroppedItemEntity withPosition(double x, double y, double z) {
+        return new DroppedItemEntity(entityId, itemKey, stack, x, y, z, groundY, velocityX, velocityY, velocityZ, createdTick);
+    }
+
+    public DroppedItemEntity withStack(ItemStack stack, long createdTick) {
+        return new DroppedItemEntity(entityId, itemKey, stack, x, y, z, groundY, velocityX, velocityY, velocityZ, createdTick);
     }
 
     public double distanceSquared(double targetX, double targetY, double targetZ) {

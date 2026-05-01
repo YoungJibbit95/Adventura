@@ -3,6 +3,7 @@ package dev.voxelgame.common.net;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.world.ChunkPos;
 
 import java.util.List;
@@ -22,6 +23,8 @@ public sealed interface GamePacket permits
         GamePacket.PlayerPositionSnapshot,
         GamePacket.EntitySnapshots,
         GamePacket.EntityInteract,
+        GamePacket.ProjectileShoot,
+        GamePacket.ProjectileImpact,
         GamePacket.InventorySnapshot,
         GamePacket.PlayerStatsSnapshot,
         GamePacket.ServerStatsSnapshot,
@@ -30,17 +33,19 @@ public sealed interface GamePacket permits
         GamePacket.CookRequest,
         GamePacket.CampfireStatus,
         GamePacket.StorageOpen,
+        GamePacket.StorageClose,
         GamePacket.StorageTransfer,
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 20;
+    int PROTOCOL_VERSION = 23;
     int MAX_CLIENT_NAME_LENGTH = 64;
     int MAX_USERNAME_LENGTH = 32;
     int MAX_AUTH_TOKEN_LENGTH = 128;
     int MAX_LOGIN_REJECTED_REASON_LENGTH = 160;
     int MAX_RECIPE_KEY_LENGTH = 96;
     int MAX_CHAT_MESSAGE_LENGTH = 192;
+    int MAX_PROJECTILE_TYPE_KEY_LENGTH = 96;
 
     PacketType type();
 
@@ -229,13 +234,56 @@ public sealed interface GamePacket permits
             boolean onGround,
             boolean feetInWater,
             boolean bodyInWater,
-            boolean headUnderwater
+            boolean headUnderwater,
+            MovementCorrection correction
     ) implements GamePacket {
         public PlayerPositionSnapshot {
             requireSequence(sequence);
+            correction = Objects.requireNonNull(correction, "correction");
+        }
+
+        public PlayerPositionSnapshot(
+                long sequence,
+                double x,
+                double y,
+                double z,
+                float yaw,
+                float pitch,
+                boolean onGround,
+                boolean feetInWater,
+                boolean bodyInWater,
+                boolean headUnderwater
+        ) {
+            this(
+                    sequence,
+                    x,
+                    y,
+                    z,
+                    yaw,
+                    pitch,
+                    onGround,
+                    feetInWater,
+                    bodyInWater,
+                    headUnderwater,
+                    MovementCorrection.SOFT
+            );
         }
 
         public PlayerPositionSnapshot(long sequence, double x, double y, double z, float yaw, float pitch, boolean onGround, PlayerWaterState waterState) {
+            this(sequence, x, y, z, yaw, pitch, onGround, waterState, MovementCorrection.SOFT);
+        }
+
+        public PlayerPositionSnapshot(
+                long sequence,
+                double x,
+                double y,
+                double z,
+                float yaw,
+                float pitch,
+                boolean onGround,
+                PlayerWaterState waterState,
+                MovementCorrection correction
+        ) {
             this(
                     sequence,
                     x,
@@ -246,7 +294,8 @@ public sealed interface GamePacket permits
                     onGround,
                     Objects.requireNonNull(waterState, "waterState").feetInWater(),
                     waterState.bodyInWater(),
-                    waterState.headUnderwater()
+                    waterState.headUnderwater(),
+                    correction
             );
         }
 
@@ -258,6 +307,12 @@ public sealed interface GamePacket permits
         public PacketType type() {
             return PacketType.PLAYER_POSITION_SNAPSHOT;
         }
+    }
+
+    enum MovementCorrection {
+        SOFT,
+        HARD,
+        RESPAWN_TELEPORT
     }
 
     record BlockInteract(int selectedSlot, int targetX, int targetY, int targetZ) implements GamePacket {
@@ -301,6 +356,75 @@ public sealed interface GamePacket permits
             OBSERVE,
             FEED,
             ATTACK
+        }
+    }
+
+    record ProjectileShoot(int selectedSlot, long sequence) implements GamePacket {
+        public ProjectileShoot {
+            if (selectedSlot < 0) {
+                throw new IllegalArgumentException("selectedSlot must be >= 0");
+            }
+            requireSequence(sequence);
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.PROJECTILE_SHOOT;
+        }
+    }
+
+    record ProjectileImpact(
+            long projectileId,
+            String projectileTypeKey,
+            ProjectileHit.Type hitType,
+            double x,
+            double y,
+            double z,
+            int blockX,
+            int blockY,
+            int blockZ,
+            ProjectileHit.BlockFace blockFace,
+            long entityId,
+            boolean stuck,
+            long serverTick
+    ) implements GamePacket {
+        public ProjectileImpact {
+            projectileTypeKey = requireText(projectileTypeKey, "projectileTypeKey", MAX_PROJECTILE_TYPE_KEY_LENGTH);
+            Objects.requireNonNull(hitType, "hitType");
+            Objects.requireNonNull(blockFace, "blockFace");
+            if (hitType == ProjectileHit.Type.MISS) {
+                throw new IllegalArgumentException("ProjectileImpact cannot carry MISS hits");
+            }
+            if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+                throw new IllegalArgumentException("Projectile impact coordinates must be finite");
+            }
+            if (serverTick < 0L) {
+                throw new IllegalArgumentException("serverTick must be >= 0");
+            }
+        }
+
+        public static ProjectileImpact fromHit(ProjectileHit hit, long serverTick) {
+            Objects.requireNonNull(hit, "hit");
+            return new ProjectileImpact(
+                    hit.state().projectileId(),
+                    hit.state().typeKey(),
+                    hit.type(),
+                    hit.impactX(),
+                    hit.impactY(),
+                    hit.impactZ(),
+                    hit.blockX(),
+                    hit.blockY(),
+                    hit.blockZ(),
+                    hit.blockFace(),
+                    hit.entityId(),
+                    hit.type() == ProjectileHit.Type.BLOCK,
+                    serverTick
+            );
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.PROJECTILE_IMPACT;
         }
     }
 
@@ -462,6 +586,13 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.STORAGE_OPEN;
+        }
+    }
+
+    record StorageClose(int x, int y, int z) implements GamePacket {
+        @Override
+        public PacketType type() {
+            return PacketType.STORAGE_CLOSE;
         }
     }
 

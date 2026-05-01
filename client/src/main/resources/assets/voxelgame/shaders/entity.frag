@@ -10,6 +10,7 @@ uniform vec3 uFogColor;
 uniform float uEmissive;
 uniform float uEntityLight;
 uniform float uGlobalBrightness;
+uniform float uWeatherFlash;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform int uFogEnabled;
@@ -26,6 +27,10 @@ void main() {
     lit = mix(lit, emissive, clamp(uEmissive, 0.0, 1.0));
     if (uUnderwater == 1) {
         lit = mix(lit, lit * vec3(0.62, 0.82, 0.92) + vec3(0.01, 0.04, 0.06), 0.28);
+    }
+    float flash = clamp(uWeatherFlash, 0.0, 1.0);
+    if (flash > 0.0) {
+        lit = mix(lit, vec3(0.78, 0.86, 1.00), flash * 0.30);
     }
     if (uFogEnabled == 1) {
         float fogStart = min(uFogStart, uFogEnd - 0.001);

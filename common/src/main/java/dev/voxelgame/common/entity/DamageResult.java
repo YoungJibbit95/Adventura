@@ -1,5 +1,7 @@
 package dev.voxelgame.common.entity;
 
+import dev.voxelgame.common.physics.PhysicsNumericGuard;
+
 import java.util.Optional;
 
 public record DamageResult(
@@ -38,7 +40,7 @@ public record DamageResult(
             knockbackY = 0.0;
             knockbackZ = 0.0;
         }
-        if (!Double.isFinite(knockbackX) || !Double.isFinite(knockbackY) || !Double.isFinite(knockbackZ)) {
+        if (!PhysicsNumericGuard.allFinite(knockbackX, knockbackY, knockbackZ)) {
             throw new IllegalArgumentException("Damage knockback must be finite");
         }
     }

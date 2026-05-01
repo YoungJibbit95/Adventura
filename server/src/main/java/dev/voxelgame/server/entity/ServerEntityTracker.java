@@ -3,15 +3,20 @@ package dev.voxelgame.server.entity;
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
 import dev.voxelgame.common.entity.DamageResult;
 import dev.voxelgame.common.entity.DamageSource;
-import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.item.Items;
+import dev.voxelgame.common.physics.EntityPhysics;
+import dev.voxelgame.common.physics.EntityPhysicsProfile;
+import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.physics.ProjectilePhysics;
 import dev.voxelgame.common.physics.ProjectilePhysicsConfig;
 import dev.voxelgame.common.physics.ProjectileState;
 import dev.voxelgame.common.physics.PhysicsTickets;
+import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
 
 import java.util.ArrayList;
@@ -26,8 +31,9 @@ import java.util.function.Predicate;
 
 public final class ServerEntityTracker {
     public static final double SLEEP_DANGER_RADIUS = 8.0;
-    private static final double LOCAL_AVOIDANCE_PADDING = 0.08;
     private static final double AMBIENT_DAMAGE_INVULNERABILITY_SECONDS = 0.28;
+    private static final double ITEM_MERGE_RADIUS_SQUARED = 0.42 * 0.42;
+    private static final Registry<ItemType> ITEMS = Items.createDefaultRegistry();
 
     private final Map<UUID, EntitySnapshot> players = new ConcurrentHashMap<>();
     private final Map<Long, EntitySnapshot> ambientEntities = new ConcurrentHashMap<>();
@@ -211,8 +217,19 @@ public final class ServerEntityTracker {
             ProjectilePhysics.WaterQuery waterQuery,
             double nowSeconds
     ) {
-        Objects.requireNonNull(blockCollision, "blockCollision");
         Objects.requireNonNull(waterQuery, "waterQuery");
+        FluidPhysics.FluidQuery fluidQuery = (x, y, z) -> waterQuery.inWater(x, y, z) ? FluidPhysics.stillWater() : FluidPhysics.air();
+        return tickProjectiles(deltaSeconds, blockCollision, fluidQuery, nowSeconds);
+    }
+
+    public List<ProjectileHit> tickProjectiles(
+            double deltaSeconds,
+            ProjectilePhysics.BlockCollisionQuery blockCollision,
+            FluidPhysics.FluidQuery fluidQuery,
+            double nowSeconds
+    ) {
+        Objects.requireNonNull(blockCollision, "blockCollision");
+        Objects.requireNonNull(fluidQuery, "fluidQuery");
         long startNanos = System.nanoTime();
         if (projectiles.isEmpty()) {
             lastProjectileTickStats = new ProjectileTickStats(0, 0, 0, 0, 0, 0, System.nanoTime() - startNanos);
@@ -226,7 +243,7 @@ public final class ServerEntityTracker {
         for (Map.Entry<Long, ProjectileState> entry : projectiles.entrySet()) {
             ProjectileState current = entry.getValue();
             ProjectilePhysicsConfig config = projectileConfig(current.typeKey());
-            ProjectileHit hit = ProjectilePhysics.step(current, deltaSeconds, config, blockCollision, waterQuery, targets);
+            ProjectileHit hit = ProjectilePhysics.step(current, deltaSeconds, config, blockCollision, fluidQuery, targets);
             hits.add(hit);
             if (hit.type() == ProjectileHit.Type.MISS) {
                 projectiles.put(entry.getKey(), hit.state());
@@ -375,9 +392,15 @@ public final class ServerEntityTracker {
 
     public List<EntitySnapshot> tickAmbient(long tick, MovementValidator movementValidator) {
         Objects.requireNonNull(movementValidator, "movementValidator");
+        return tickAmbient(tick, movementValidator, (x, y, z) -> FluidPhysics.air());
+    }
+
+    public List<EntitySnapshot> tickAmbient(long tick, MovementValidator movementValidator, FluidPhysics.FluidQuery fluidQuery) {
+        Objects.requireNonNull(movementValidator, "movementValidator");
+        Objects.requireNonNull(fluidQuery, "fluidQuery");
         long startNanos = System.nanoTime();
         if (ambientEntities.isEmpty()) {
-            List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick);
+            List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick, fluidQuery);
             lastAmbientTickStats = new AmbientTickStats(
                     0,
                     0,
@@ -404,37 +427,25 @@ public final class ServerEntityTracker {
             activeAmbient++;
             FleeThreat fleeThreat = followTarget == null ? fleeThreatFor(current).orElse(null) : null;
             EntitySnapshot moved = moveAmbient(anchor, current, followTarget, fleeThreat, tick);
+            EntityPhysicsProfile profile = EntityPhysicsProfile.forType(current.typeKey());
+            List<EntitySnapshot> neighbors = separationNeighbors(current.entityId());
+            moved = EntityPhysics.applyImpulseMotion(current, moved, profile);
+            moved = EntityPhysics.applySeparation(current, moved, neighbors);
 
-            // Apply knockback velocity
-            if (current.velocityX() != 0.0 || current.velocityY() != 0.0 || current.velocityZ() != 0.0) {
-                moved = new EntitySnapshot(
-                        moved.entityId(),
-                        moved.typeKey(),
-                        moved.ownerPlayerId(),
-                        moved.x() + current.velocityX(),
-                        moved.y() + current.velocityY(),
-                        moved.z() + current.velocityZ(),
-                        moved.yaw(),
-                        moved.pitch(),
-                        moved.health(),
-                        moved.stateKey(),
-                        current.velocityX() * 0.9,
-                        Math.max(current.velocityY() - 0.05, -0.3),
-                        current.velocityZ() * 0.9
-                );
-            } else {
-                moved = moved.withVelocity(0.0, 0.0, 0.0);
-            }
-
-            boolean blocked = !movementValidator.canMove(current, moved) || locallyBlocked(current, moved);
-            if (blocked) {
+            EntityPhysics.MoveResult moveResult = EntityPhysics.sweepWithSlide(
+                    current,
+                    moved,
+                    (from, candidate) -> movementValidator.canMove(from, candidate)
+                            && !EntityPhysics.overlapsAny(candidate, neighbors, profile.separationPadding())
+            );
+            if (moveResult.blocked()) {
                 blockedMoves++;
-                moved = blockedAmbientMove(current, moved);
             }
+            moved = moveResult.snapshot();
             ambientEntities.put(entry.getKey(), moved);
             updated.add(moved);
         }
-        List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick);
+        List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick, fluidQuery);
         updated.addAll(itemDropUpdates);
         lastAmbientTickStats = new AmbientTickStats(
                 ambientEntities.size(),
@@ -467,10 +478,28 @@ public final class ServerEntityTracker {
     }
 
     private List<EntitySnapshot> projectileTargets() {
-        List<EntitySnapshot> targets = new ArrayList<>(players.size() + ambientEntities.size());
+        List<EntitySnapshot> targets = new ArrayList<>(players.size() + ambientEntities.size() + projectiles.size());
         targets.addAll(players.values());
         targets.addAll(ambientEntities.values());
+        projectiles.values().stream()
+                .map(ProjectileState::snapshot)
+                .forEach(targets::add);
         return targets;
+    }
+
+    private List<EntitySnapshot> separationNeighbors(long entityId) {
+        List<EntitySnapshot> neighbors = new ArrayList<>(players.size() + ambientEntities.size() + itemDrops.size());
+        neighbors.addAll(players.values());
+        for (EntitySnapshot other : ambientEntities.values()) {
+            if (other.entityId() != entityId) {
+                neighbors.add(other);
+            }
+        }
+        itemDrops.values().stream()
+                .map(DroppedItemEntity::snapshot)
+                .filter(snapshot -> snapshot.entityId() != entityId)
+                .forEach(neighbors::add);
+        return neighbors;
     }
 
     private static ProjectilePhysicsConfig projectileConfig(String typeKey) {
@@ -478,51 +507,6 @@ public final class ServerEntityTracker {
             return ProjectilePhysicsConfig.arrow();
         }
         return ProjectilePhysicsConfig.arrow();
-    }
-
-    private boolean locallyBlocked(EntitySnapshot current, EntitySnapshot candidate) {
-        for (EntitySnapshot player : players.values()) {
-            if (overlaps(candidate, player, LOCAL_AVOIDANCE_PADDING)) {
-                return true;
-            }
-        }
-        for (EntitySnapshot other : ambientEntities.values()) {
-            if (other.entityId() != current.entityId() && overlaps(candidate, other, LOCAL_AVOIDANCE_PADDING)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static EntitySnapshot blockedAmbientMove(EntitySnapshot current, EntitySnapshot candidate) {
-        return new EntitySnapshot(
-                current.entityId(),
-                current.typeKey(),
-                current.ownerPlayerId(),
-                current.x(),
-                current.y(),
-                current.z(),
-                candidate.yaw(),
-                candidate.pitch(),
-                candidate.health(),
-                candidate.stateKey(),
-                0.0,
-                0.0,
-                0.0
-        );
-    }
-
-    private static boolean overlaps(EntitySnapshot first, EntitySnapshot second, double padding) {
-        EntityBounds firstBounds = EntityBounds.forType(first.typeKey());
-        EntityBounds secondBounds = EntityBounds.forType(second.typeKey());
-        double firstBaseY = EntityBounds.baseY(first);
-        double secondBaseY = EntityBounds.baseY(second);
-        return firstBounds.minX(first.x()) < secondBounds.maxX(second.x()) + padding
-                && firstBounds.maxX(first.x()) > secondBounds.minX(second.x()) - padding
-                && firstBounds.minY(firstBaseY) < secondBounds.maxY(secondBaseY) + padding
-                && firstBounds.maxY(firstBaseY) > secondBounds.minY(secondBaseY) - padding
-                && firstBounds.minZ(first.z()) < secondBounds.maxZ(second.z()) + padding
-                && firstBounds.maxZ(first.z()) > secondBounds.minZ(second.z()) - padding;
     }
 
     public int playerCount() {
@@ -562,16 +546,112 @@ public final class ServerEntityTracker {
     }
 
     private List<EntitySnapshot> tickItemDrops(long tick) {
+        return tickItemDrops(tick, (x, y, z) -> FluidPhysics.air());
+    }
+
+    private List<EntitySnapshot> tickItemDrops(long tick, FluidPhysics.FluidQuery fluidQuery) {
         if (itemDrops.isEmpty()) {
             return List.of();
         }
+        for (Long entityId : itemDropIds()) {
+            DroppedItemEntity drop = itemDrops.get(entityId);
+            if (drop != null) {
+                itemDrops.put(entityId, drop.tick(tick, fluidQuery));
+            }
+        }
+        separateItemDrops();
+        mergeItemDrops(tick);
+
         List<EntitySnapshot> updated = new ArrayList<>(itemDrops.size());
-        for (Map.Entry<Long, DroppedItemEntity> entry : itemDrops.entrySet()) {
-            DroppedItemEntity moved = entry.getValue().tick(tick);
-            itemDrops.put(entry.getKey(), moved);
-            updated.add(moved.snapshot());
+        for (Long entityId : itemDropIds()) {
+            DroppedItemEntity drop = itemDrops.get(entityId);
+            if (drop != null) {
+                updated.add(drop.snapshot());
+            }
         }
         return updated;
+    }
+
+    private void separateItemDrops() {
+        for (Long entityId : itemDropIds()) {
+            DroppedItemEntity drop = itemDrops.get(entityId);
+            if (drop == null) {
+                continue;
+            }
+            EntitySnapshot current = drop.snapshot();
+            EntitySnapshot separated = EntityPhysics.applySeparation(current, current, separationNeighbors(entityId));
+            if (Math.abs(separated.x() - current.x()) > 0.0001
+                    || Math.abs(separated.y() - current.y()) > 0.0001
+                    || Math.abs(separated.z() - current.z()) > 0.0001) {
+                itemDrops.put(entityId, drop.withPosition(separated.x(), separated.y(), separated.z()));
+            }
+        }
+    }
+
+    private void mergeItemDrops(long tick) {
+        for (Long targetId : itemDropIds()) {
+            DroppedItemEntity target = itemDrops.get(targetId);
+            if (target == null) {
+                continue;
+            }
+            int maxStackSize = maxStackSize(target.itemKey());
+            if (maxStackSize <= 1 || target.stack().count() >= maxStackSize) {
+                continue;
+            }
+            for (Long sourceId : itemDropIds()) {
+                if (targetId.equals(sourceId)) {
+                    continue;
+                }
+                DroppedItemEntity source = itemDrops.get(sourceId);
+                if (source == null || !canMerge(target, source, maxStackSize)) {
+                    continue;
+                }
+                if (target.distanceSquared(source.x(), source.y(), source.z()) > ITEM_MERGE_RADIUS_SQUARED) {
+                    continue;
+                }
+                int room = maxStackSize - target.stack().count();
+                int moved = Math.min(room, source.stack().count());
+                if (moved <= 0) {
+                    continue;
+                }
+                target = target.withStack(
+                        new ItemStack(target.stack().itemId(), target.stack().count() + moved, target.stack().damage()),
+                        Math.max(target.createdTick(), Math.max(source.createdTick(), tick - 8L))
+                );
+                if (moved >= source.stack().count()) {
+                    itemDrops.remove(sourceId);
+                } else {
+                    itemDrops.put(sourceId, source.withStack(
+                            new ItemStack(source.stack().itemId(), source.stack().count() - moved, source.stack().damage()),
+                            source.createdTick()
+                    ));
+                }
+                itemDrops.put(targetId, target);
+                if (target.stack().count() >= maxStackSize) {
+                    break;
+                }
+            }
+        }
+    }
+
+    private static boolean canMerge(DroppedItemEntity target, DroppedItemEntity source, int maxStackSize) {
+        return target.itemKey().equals(source.itemKey())
+                && target.stack().itemId() == source.stack().itemId()
+                && target.stack().damage() == source.stack().damage()
+                && target.stack().count() < maxStackSize
+                && source.stack().count() > 0;
+    }
+
+    private static int maxStackSize(String itemKey) {
+        return ITEMS.findByKey(itemKey)
+                .map(ItemType::maxStackSize)
+                .orElse(64);
+    }
+
+    private List<Long> itemDropIds() {
+        return itemDrops.keySet().stream()
+                .sorted()
+                .toList();
     }
 
     private static double launchVelocity(String itemKey, int axis) {

@@ -8,6 +8,7 @@ import dev.voxelgame.server.world.ServerWorld;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Properties;
 
 public final class WorldSaveStore {
     private static final Registry<ItemType> ITEMS = Items.createDefaultRegistry();
@@ -27,7 +28,9 @@ public final class WorldSaveStore {
         long now = System.currentTimeMillis();
         long createdAt = now;
         if (Files.exists(path)) {
-            createdAt = WorldSaveCodec.read(path, ITEMS).metadata().createdAtEpochMillis();
+            Properties existing = WorldSaveCodec.readProperties(path);
+            SaveBackup.createBeforeMigrationIfNeeded(path, existing);
+            createdAt = WorldSaveCodec.decode(existing, ITEMS).metadata().createdAtEpochMillis();
         }
         WorldSaveCodec.write(path, snapshot(world, nowSeconds, createdAt, now), ITEMS);
     }

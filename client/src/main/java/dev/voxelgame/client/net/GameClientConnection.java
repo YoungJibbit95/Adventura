@@ -27,6 +27,7 @@ public final class GameClientConnection implements AutoCloseable {
     private final PlayerStats playerStats;
     private final ChatLog chatLog;
     private final Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler;
+    private final Consumer<GamePacket.ProjectileImpact> projectileImpactHandler;
     private final ClientNetworkStats stats = new ClientNetworkStats();
     private final EventLoopGroup group = new NioEventLoopGroup(1);
     private Channel channel;
@@ -46,6 +47,21 @@ public final class GameClientConnection implements AutoCloseable {
             ChatLog chatLog,
             Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler
     ) {
+        this(host, port, username, world, hotbar, playerStats, chatLog, playerPositionHandler, impact -> {
+        });
+    }
+
+    public GameClientConnection(
+            String host,
+            int port,
+            String username,
+            ClientWorld world,
+            Hotbar hotbar,
+            PlayerStats playerStats,
+            ChatLog chatLog,
+            Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler,
+            Consumer<GamePacket.ProjectileImpact> projectileImpactHandler
+    ) {
         this.host = host;
         this.port = port;
         this.username = username;
@@ -55,6 +71,8 @@ public final class GameClientConnection implements AutoCloseable {
         this.chatLog = chatLog;
         this.playerPositionHandler = playerPositionHandler == null ? snapshot -> {
         } : playerPositionHandler;
+        this.projectileImpactHandler = projectileImpactHandler == null ? impact -> {
+        } : projectileImpactHandler;
     }
 
     public void connect() {
@@ -71,7 +89,7 @@ public final class GameClientConnection implements AutoCloseable {
                                     .addLast(new LengthFieldPrepender(4))
                                     .addLast(new ClientPacketDecoder(stats))
                                     .addLast(new ClientPacketEncoder())
-                                    .addLast(new ClientConnectionHandler(username, world, hotbar, playerStats, chatLog, stats, playerPositionHandler));
+                                    .addLast(new ClientConnectionHandler(username, world, hotbar, playerStats, chatLog, stats, playerPositionHandler, projectileImpactHandler));
                         }
                     });
             channel = bootstrap.connect(host, port).sync().channel();

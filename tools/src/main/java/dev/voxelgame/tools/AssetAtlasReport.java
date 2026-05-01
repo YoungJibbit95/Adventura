@@ -143,25 +143,32 @@ public final class AssetAtlasReport {
     private static Map<Short, List<String>> fallbackSheetsByBlock() {
         Map<Short, List<String>> sheets = new LinkedHashMap<>();
         put(sheets, "ui_hud_sheet.png",
-                Blocks.FLOWER_POT,
-                Blocks.LANTERN,
                 Blocks.CAMPFIRE,
                 Blocks.CAMPFIRE_ACTIVE,
                 Blocks.CAMPFIRE_BURNED_OUT,
                 Blocks.STORAGE_CRATE,
                 Blocks.SMALL_TABLE,
+                Blocks.WORKBENCH,
                 Blocks.WOODEN_CHAIR,
                 Blocks.WOVEN_RUG,
+                Blocks.SLEEPING_MAT,
                 Blocks.GARDEN_FENCE
         );
         put(sheets, "nature_food_sheet.png",
+                Blocks.FLOWER_POT,
+                Blocks.COOKING_POT,
+                Blocks.LANTERN,
+                Blocks.ANCIENT_LANTERN,
                 Blocks.BERRY_BUSH,
                 Blocks.HERB_PLANTER,
-                Blocks.TREE_STUMP,
                 Blocks.WILD_GRASS,
+                Blocks.REEDS,
+                Blocks.TWIG_PILE,
+                Blocks.SMALL_STONE,
                 Blocks.SUN_BLOOM,
                 Blocks.RED_MUSHROOM,
-                Blocks.MUSHROOM_CLUSTER
+                Blocks.MUSHROOM_CLUSTER,
+                Blocks.SPORE_BLOSSOM
         );
         put(sheets, "blocks_tiles_sheet.png",
                 Blocks.STONE,
@@ -170,9 +177,11 @@ public final class AssetAtlasReport {
                 Blocks.SAND,
                 Blocks.SKYROOT_LOG,
                 Blocks.SKYROOT_LEAVES,
+                Blocks.TREE_STUMP,
                 Blocks.CLAY,
                 Blocks.CACTUS,
                 Blocks.MOSSY_STONE,
+                Blocks.MOSSY_PATH,
                 Blocks.GRAVEL,
                 Blocks.SNOW,
                 Blocks.ICE,
@@ -187,7 +196,9 @@ public final class AssetAtlasReport {
                 Blocks.IRON_ORE,
                 Blocks.COPPER_ORE,
                 Blocks.CLAY_DEPOSIT,
-                Blocks.GLOW_CRYSTAL_NODE
+                Blocks.GLOW_CRYSTAL_NODE,
+                Blocks.FORGE,
+                Blocks.GLOW_MUSHROOM
         );
         return sheets;
     }

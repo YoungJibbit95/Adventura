@@ -31,13 +31,16 @@ public record ProjectilePhysicsConfig(
         if (typeKey.isBlank()) {
             throw new IllegalArgumentException("Projectile type key must not be blank");
         }
-        if (!Double.isFinite(initialSpeed) || initialSpeed <= 0.0
-                || !Double.isFinite(gravity) || gravity < 0.0
-                || !Double.isFinite(waterDrag) || waterDrag <= 0.0 || waterDrag > 1.0
-                || !Double.isFinite(maxStep) || maxStep <= 0.0
-                || maxLifetimeTicks <= 0
-                || damage <= 0) {
+        initialSpeed = PhysicsNumericGuard.requireFinitePositive("Projectile initial speed", initialSpeed);
+        gravity = PhysicsNumericGuard.requireFiniteNonNegative("Projectile gravity", gravity);
+        waterDrag = PhysicsNumericGuard.requireFinitePositive("Projectile water drag", waterDrag);
+        maxStep = PhysicsNumericGuard.requireFinitePositive("Projectile max step", maxStep);
+        if (waterDrag > 1.0 || maxLifetimeTicks <= 0 || damage <= 0) {
             throw new IllegalArgumentException("Projectile config values must be valid");
         }
+    }
+
+    public String fingerprint() {
+        return PhysicsConfigSnapshot.projectileFingerprint(this);
     }
 }

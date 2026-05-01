@@ -1,5 +1,6 @@
 package dev.voxelgame.common.physics;
 
+import dev.voxelgame.common.world.DimensionSettings;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -182,6 +183,24 @@ class PlayerPhysicsTest {
     }
 
     @Test
+    void survivalStepAcceptsSharedPhysicsStepContext() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PhysicsStepContext context = PhysicsStepContext.survival(
+                0.05,
+                10L,
+                DimensionSettings.OVERWORLD,
+                new PlayerWaterState(false, false, false)
+        );
+        PhysicsTestWorld world = new PhysicsTestWorld();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepSurvival(state, new PlayerInput(1.0f, 0.0f, false, false, false), context, config, world.playerCollision(config));
+
+        assertTrue(next.x() > state.x());
+        assertTrue(context.containsEyeY(config, next.y()));
+    }
+
+    @Test
     void survivalStepBuffersJumpPressedJustBeforeLanding() {
         PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
         PlayerInput jump = new PlayerInput(0.0f, 0.0f, true, false, false);
@@ -257,6 +276,19 @@ class PlayerPhysicsTest {
         assertTrue(landed.onGround());
         assertEquals(0.0f, landed.velocityY(), 0.001f);
         assertTrue(landed.fallImpactSpeed() > 15.0f);
+    }
+
+    @Test
+    void survivalStepSuppressesFallImpactWhenEnteringWater() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState falling = new PlayerState(8.0, 65.2, 8.0, 0.0f, -30.0f, 0.0f, false, false, 0.0f);
+        PlayerWaterState bodyInWater = new PlayerWaterState(true, true, false);
+
+        PlayerState landed = PlayerPhysics.stepSurvival(falling, PlayerInput.idle(), bodyInWater, 0.1f, config, (x, y, z) -> y <= 64.0);
+
+        assertEquals(0.0f, landed.fallImpactSpeed(), 0.001f);
+        assertTrue(landed.velocityY() > -30.0f);
+        assertFalse(landed.underwater());
     }
 
     @Test

@@ -112,6 +112,36 @@ class ChunkMesherTest {
         assertEquals(24, transparent.vertexCount());
     }
 
+    @Test
+    void sectionLayerMeshRestrictsOutputToRequestedVerticalSection() {
+        MeshWorld meshWorld = meshWorld();
+        meshWorld.world().setBlockId(0, 64, 0, Blocks.STONE);
+        meshWorld.world().setBlockId(0, 96, 0, Blocks.STONE);
+
+        ChunkMesh sectionMesh = new ChunkMesher().buildSectionLayerMesh(
+                meshWorld.world(),
+                meshWorld.chunk(),
+                4,
+                BlockRenderLayer.SOLID,
+                false
+        );
+
+        assertEquals(24, sectionMesh.vertexCount());
+        assertBounds(sectionMesh, 0.0f, 1.0f, 64.0f, 65.0f, 0.0f, 1.0f);
+    }
+
+    @Test
+    void verticesCarrySeparateSkyAndBlockLightForDebugViews() {
+        MeshWorld meshWorld = meshWorld();
+        meshWorld.world().setBlockId(0, 64, 0, Blocks.STONE);
+        meshWorld.world().setSkyLight(0, 65, 0, 15);
+        meshWorld.world().setBlockLight(0, 65, 0, 6);
+
+        ChunkMesh mesh = new ChunkMesher().buildTerrainMesh(meshWorld.world(), meshWorld.chunk(), false);
+
+        assertTopFaceLight(mesh, 252.0f / 255.0f, 1.0f, 0.4f);
+    }
+
     private static MeshWorld meshWorld() {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
         InMemoryWorld world = new InMemoryWorld(DimensionSettings.OVERWORLD, blocks);
@@ -161,11 +191,26 @@ class ChunkMesherTest {
     private static void assertHasTiledUv(ChunkMesh mesh, float value) {
         float[] vertices = mesh.vertices();
         for (int offset = 0; offset < vertices.length; offset += ChunkMesher.FLOATS_PER_VERTEX) {
-            if (Math.abs(vertices[offset + 9] - value) < 0.0001f || Math.abs(vertices[offset + 10] - value) < 0.0001f) {
+            if (Math.abs(vertices[offset + ChunkMesher.FACE_UV_OFFSET] - value) < 0.0001f
+                    || Math.abs(vertices[offset + ChunkMesher.FACE_UV_OFFSET + 1] - value) < 0.0001f) {
                 return;
             }
         }
         throw new AssertionError("Expected merged mesh to contain tiled UV coordinate " + value);
+    }
+
+    private static void assertTopFaceLight(ChunkMesh mesh, float combined, float sky, float block) {
+        float[] vertices = mesh.vertices();
+        for (int offset = 0; offset < vertices.length; offset += ChunkMesher.FLOATS_PER_VERTEX) {
+            float normalY = vertices[offset + ChunkMesher.NORMAL_OFFSET + 1];
+            if (Math.abs(normalY - 1.0f) < 0.0001f) {
+                assertEquals(combined, vertices[offset + ChunkMesher.LIGHT_OFFSET], 0.0001f);
+                assertEquals(sky, vertices[offset + ChunkMesher.SKY_LIGHT_OFFSET], 0.0001f);
+                assertEquals(block, vertices[offset + ChunkMesher.BLOCK_LIGHT_OFFSET], 0.0001f);
+                return;
+            }
+        }
+        throw new AssertionError("Expected mesh to contain a top face");
     }
 
     private record MeshWorld(InMemoryWorld world, Chunk chunk) {

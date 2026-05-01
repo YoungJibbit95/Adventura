@@ -28,6 +28,7 @@ class LightEngineTest {
     @Test
     void registeredLightSourcesKeepExpectedValues() {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
+        LightSourceRegistry sources = LightSourceRegistry.fromBlocks(blocks);
 
         assertEquals(14, blocks.requireById(Blocks.TORCH).lightEmission());
         assertEquals(13, blocks.requireById(Blocks.LANTERN).lightEmission());
@@ -39,6 +40,10 @@ class LightEngineTest {
         assertEquals(1, blocks.requireById(Blocks.MUSHROOM_CLUSTER).lightEmission());
         assertEquals(0, blocks.requireById(Blocks.CAMPFIRE).lightEmission());
         assertEquals(0, blocks.requireById(Blocks.CAMPFIRE_BURNED_OUT).lightEmission());
+        assertEquals(8, sources.sourceCount());
+        assertEquals(14, sources.lightValue(Blocks.CAMPFIRE_ACTIVE));
+        assertEquals(0, sources.lightValue(Blocks.CAMPFIRE));
+        assertTrue(sources.sourceFor(Blocks.GLOW_CRYSTAL_NODE).isPresent());
     }
 
     @Test
@@ -82,7 +87,7 @@ class LightEngineTest {
     }
 
     @Test
-    void skyLightFallsOffBelowOpaqueRoofButPassesThroughWater() {
+    void skyLightFallsOffBelowOpaqueRoofAndWeakensThroughWater() {
         InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
         Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
         buildRoof(chunk, 2, 6, 2, 6, 10);
@@ -93,7 +98,20 @@ class LightEngineTest {
         assertEquals(15, world.skyLight(4, 10, 4));
         assertEquals(12, world.skyLight(4, 9, 4));
         assertEquals(15, world.skyLight(8, 10, 8));
-        assertEquals(15, world.skyLight(8, 9, 8));
+        assertEquals(14, world.skyLight(8, 9, 8));
+    }
+
+    @Test
+    void openCutoutStaysBrightButLeavesDimSkyLightSlightly() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
+        chunk.setBlockId(4, 10, 4, Blocks.WILD_GRASS);
+        buildWorldColumns(world, 7, 9, 7, 9, 10, 10, Blocks.SKYROOT_LEAVES);
+
+        new LightEngine().rebuildSkyLightColumn(world, chunk);
+
+        assertEquals(15, world.skyLight(4, 9, 4));
+        assertEquals(13, world.skyLight(8, 9, 8));
     }
 
     @Test
@@ -138,6 +156,133 @@ class LightEngineTest {
         assertEquals(12, world.skyLight(17, 9, 8));
     }
 
+    @Test
+    void skyLightRemainsContinuousBelowHighMountainAcrossChunkBoundary() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 64), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0));
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        buildWorldColumns(world, 14, 17, 6, 10, 12, 30, Blocks.STONE);
+
+        new LightEngine().rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        int leftBoundaryCaveLight = world.skyLight(15, 11, 8);
+        int rightBoundaryCaveLight = world.skyLight(16, 11, 8);
+        assertEquals(leftBoundaryCaveLight, rightBoundaryCaveLight);
+        assertTrue(leftBoundaryCaveLight > 0);
+        assertTrue(leftBoundaryCaveLight < 15);
+        assertEquals(15, world.skyLight(13, 11, 8));
+        assertEquals(15, world.skyLight(18, 11, 8));
+    }
+
+    @Test
+    void blockLightPassesThroughTransparentBlocksAcrossChunkBoundary() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0));
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        world.setBlockId(15, 8, 8, Blocks.TORCH);
+        world.setBlockId(16, 8, 8, Blocks.WATER);
+        world.setBlockId(17, 8, 8, Blocks.ICE);
+        world.setBlockId(18, 8, 8, Blocks.SKYROOT_LEAVES);
+
+        new LightEngine().rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        assertEquals(14, world.blockLight(15, 8, 8));
+        assertEquals(13, world.blockLight(16, 8, 8));
+        assertEquals(12, world.blockLight(17, 8, 8));
+        assertEquals(11, world.blockLight(18, 8, 8));
+    }
+
+    @Test
+    void boundaryPropagationDoesNotCreateUnloadedNeighborChunk() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0)).setBlockId(15, 8, 8, Blocks.TORCH);
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        assertTrue(world.findChunk(new ChunkPos(1, 0)).isEmpty());
+        assertEquals(14, world.blockLight(15, 8, 8));
+        assertEquals(0, world.blockLight(16, 8, 8));
+
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        assertEquals(13, world.blockLight(16, 8, 8));
+    }
+
+    @Test
+    void lightSourceOnNeighborBoundaryLightsBothSides() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0));
+        world.getOrCreateChunk(new ChunkPos(1, 0)).setBlockId(16, 8, 8, Blocks.TORCH);
+
+        new LightEngine().rebuildChunkLighting(world, new ChunkPos(1, 0));
+
+        assertEquals(13, world.blockLight(15, 8, 8));
+        assertEquals(14, world.blockLight(16, 8, 8));
+        assertEquals(13, world.blockLight(17, 8, 8));
+    }
+
+    @Test
+    void fullRebuildFallbackClearsStaleBoundaryBlockLight() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0)).setBlockId(15, 8, 8, Blocks.TORCH);
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        LightEngine lightEngine = new LightEngine();
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        world.setBlockLight(16, 8, 8, 0);
+        world.setBlockLight(20, 8, 8, 15);
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        assertEquals(13, world.blockLight(16, 8, 8));
+        assertEquals(9, world.blockLight(20, 8, 8));
+    }
+
+    @Test
+    void incrementalBlockLightAddPropagatesAcrossChunkBoundary() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0));
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        world.setBlockId(15, 8, 8, Blocks.LANTERN);
+
+        LightEngine.LightUpdateResult result = new LightEngine().updateBlockLight(world, 15, 8, 8);
+
+        assertEquals(false, result.fullRebuildFallback());
+        assertTrue(result.affectedChunks().contains(new ChunkPos(0, 0)));
+        assertTrue(result.affectedChunks().contains(new ChunkPos(1, 0)));
+        assertEquals(13, world.blockLight(15, 8, 8));
+        assertEquals(12, world.blockLight(16, 8, 8));
+    }
+
+    @Test
+    void incrementalBlockLightRemoveClearsGhostLightAndRepropagatesOtherSources() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0));
+        world.setBlockId(8, 8, 8, Blocks.TORCH);
+        world.setBlockId(12, 8, 8, Blocks.LANTERN);
+        LightEngine lightEngine = new LightEngine();
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        world.setBlockId(8, 8, 8, Blocks.AIR);
+        LightEngine.LightUpdateResult result = lightEngine.updateBlockLight(world, 8, 8, 8);
+
+        assertEquals(false, result.fullRebuildFallback());
+        assertEquals(9, world.blockLight(8, 8, 8));
+        assertEquals(10, world.blockLight(9, 8, 8));
+        assertEquals(13, world.blockLight(12, 8, 8));
+    }
+
+    @Test
+    void invalidIncrementalBlockLightUpdateRequestsFullRebuildFallback() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+
+        LightEngine.LightUpdateResult result = new LightEngine().updateBlockLight(world, 1, 8, 1);
+
+        assertEquals(true, result.fullRebuildFallback());
+        assertTrue(result.affectedChunks().isEmpty());
+    }
+
     private static void buildRoof(Chunk chunk, int minX, int maxX, int minZ, int maxZ, int y) {
         for (int z = minZ; z <= maxZ; z++) {
             for (int x = minX; x <= maxX; x++) {
@@ -150,6 +295,25 @@ class LightEngineTest {
         for (int z = minZ; z <= maxZ; z++) {
             for (int x = minX; x <= maxX; x++) {
                 world.setBlockId(x, y, z, Blocks.STONE);
+            }
+        }
+    }
+
+    private static void buildWorldColumns(
+            InMemoryWorld world,
+            int minX,
+            int maxX,
+            int minZ,
+            int maxZ,
+            int minY,
+            int maxY,
+            short blockId
+    ) {
+        for (int y = minY; y <= maxY; y++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int x = minX; x <= maxX; x++) {
+                    world.setBlockId(x, y, z, blockId);
+                }
             }
         }
     }

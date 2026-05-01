@@ -7,6 +7,7 @@ import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.math.Raycast;
+import dev.voxelgame.common.net.GamePacket;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
@@ -58,6 +59,7 @@ public final class ParticleSystem implements AutoCloseable {
     private final Map<Long, Double> nextCampfireSmokeTimes = new HashMap<>();
     private final Map<Long, Double> nextCampfireSparkTimes = new HashMap<>();
     private final Map<Long, Double> nextEntityGlowTimes = new HashMap<>();
+    private final Map<Long, Double> nextProjectileTrailTimes = new HashMap<>();
     private final Map<Long, Double> nextCookingSteamTimes = new HashMap<>();
     private final Map<Long, Double> nextLeafTimes = new HashMap<>();
     private final Map<Long, Double> nextSporeTimes = new HashMap<>();
@@ -203,6 +205,42 @@ public final class ParticleSystem implements AutoCloseable {
             spawn(origin, velocity, color, randomRange(0.045f, 0.075f), 0.62f, now, 0.0f, 0.985f);
         }
         nextEntityGlowTimes.put(key, now + randomRange(0.10f, 0.18f));
+    }
+
+    public void spawnProjectileTrail(EntitySnapshot snapshot, double now) {
+        if (!EntitySnapshot.STATE_PROJECTILE.equals(snapshot.stateKey())) {
+            return;
+        }
+        long key = snapshot.entityId();
+        if (now < nextProjectileTrailTimes.getOrDefault(key, 0.0)) {
+            return;
+        }
+        Vector3f origin = new Vector3f((float) snapshot.x(), (float) snapshot.y(), (float) snapshot.z());
+        Vector3f color = new Vector3f(0.92f, 0.86f, 0.68f);
+        Vector3f drift = new Vector3f((float) -snapshot.velocityX(), (float) -snapshot.velocityY(), (float) -snapshot.velocityZ());
+        if (drift.lengthSquared() > 0.0001f) {
+            drift.normalize(0.20f);
+        }
+        for (int i = 0; i < 2; i++) {
+            spawn(origin, new Vector3f(drift).add(randomRange(-0.04f, 0.04f), randomRange(-0.02f, 0.04f), randomRange(-0.04f, 0.04f)), color, 0.045f, 0.24f, now, 0.0f, 0.95f);
+        }
+        nextProjectileTrailTimes.put(key, now + 0.035);
+    }
+
+    public void spawnProjectileImpact(GamePacket.ProjectileImpact impact, double now) {
+        Vector3f origin = new Vector3f((float) impact.x(), (float) impact.y(), (float) impact.z());
+        boolean entityHit = impact.hitType() == dev.voxelgame.common.physics.ProjectileHit.Type.ENTITY;
+        Vector3f color = entityHit ? new Vector3f(0.92f, 0.36f, 0.28f) : new Vector3f(0.82f, 0.72f, 0.50f);
+        int count = entityHit ? 12 : 9;
+        Vector3f normal = new Vector3f(impact.blockFace().normalX(), impact.blockFace().normalY(), impact.blockFace().normalZ());
+        if (normal.lengthSquared() > 0.0001f) {
+            normal.normalize(0.28f);
+        }
+        for (int i = 0; i < count; i++) {
+            Vector3f velocity = new Vector3f(normal)
+                    .add(randomRange(-0.22f, 0.22f), randomRange(0.04f, 0.30f), randomRange(-0.22f, 0.22f));
+            spawn(origin, velocity, color, randomRange(0.050f, 0.080f), 0.36f, now, 1.2f, 0.94f);
+        }
     }
 
     public RenderStats render(Matrix4f projection, Matrix4f view, double now) {
@@ -440,6 +478,7 @@ public final class ParticleSystem implements AutoCloseable {
         pruneSourceTimers(nextCampfireSmokeTimes, now);
         pruneSourceTimers(nextCampfireSparkTimes, now);
         pruneSourceTimers(nextEntityGlowTimes, now);
+        pruneSourceTimers(nextProjectileTrailTimes, now);
         pruneSourceTimers(nextCookingSteamTimes, now);
         pruneSourceTimers(nextLeafTimes, now);
         pruneSourceTimers(nextSporeTimes, now);

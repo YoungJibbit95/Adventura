@@ -147,6 +147,16 @@ public final class ServerPlayerSurvivalState {
         return damage;
     }
 
+    public int applyEnvironmentalDamage(int amount) {
+        if (amount <= 0) {
+            return 0;
+        }
+        int before = health;
+        health = Math.max(0, health - amount);
+        regenTimer = 0.0f;
+        return before - health;
+    }
+
     public static int fallDamageFor(double fallDistanceBlocks, boolean waterCushioned) {
         if (!Double.isFinite(fallDistanceBlocks) || fallDistanceBlocks <= SAFE_FALL_DISTANCE_BLOCKS) {
             return 0;

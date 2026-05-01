@@ -67,6 +67,21 @@ public final class UiAnimationPresets {
                 .build();
     }
 
+    public static AnimationClip damageFlash(String name, double durationSeconds) {
+        return AnimationClip.named(name)
+                .duration(durationSeconds)
+                .track(FloatAnimationTrack.channel(AnimationChannels.ALPHA)
+                        .key(0.0, 1.0f)
+                        .key(durationSeconds * 0.18, 0.76f, AnimationCurve.SMOOTH_STEP)
+                        .key(durationSeconds, 0.0f)
+                        .build())
+                .track(FloatAnimationTrack.channel(AnimationChannels.AMOUNT)
+                        .key(0.0, 1.0f, AnimationCurve.EASE_OUT_CUBIC)
+                        .key(durationSeconds, 0.0f)
+                        .build())
+                .build();
+    }
+
     private static FloatAnimationTrack pulseTrack(String channel, double duration, float base, float amplitude) {
         return FloatAnimationTrack.channel(channel)
                 .key(0.0, base + amplitude * 0.5f, AnimationCurve.SMOOTH_STEP)

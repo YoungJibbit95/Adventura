@@ -82,8 +82,7 @@ public record BlockCollisionShape(List<Box> boxes) {
             int blockY,
             int blockZ
     ) {
-        if (!Double.isFinite(minX) || !Double.isFinite(minY) || !Double.isFinite(minZ)
-                || !Double.isFinite(maxX) || !Double.isFinite(maxY) || !Double.isFinite(maxZ)) {
+        if (!PhysicsNumericGuard.allFinite(minX, minY, minZ, maxX, maxY, maxZ)) {
             return true;
         }
         for (Box box : boxes) {
@@ -101,9 +100,8 @@ public record BlockCollisionShape(List<Box> boxes) {
 
     public record Box(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         public Box {
-            if (!Double.isFinite(minX) || !Double.isFinite(minY) || !Double.isFinite(minZ)
-                    || !Double.isFinite(maxX) || !Double.isFinite(maxY) || !Double.isFinite(maxZ)
-                    || minX < 0.0 || minY < 0.0 || minZ < 0.0
+            PhysicsNumericGuard.requireFiniteBounds(minX, minY, minZ, maxX, maxY, maxZ);
+            if (minX < 0.0 || minY < 0.0 || minZ < 0.0
                     || maxX > 1.0 || maxY > 1.5 || maxZ > 1.0
                     || minX >= maxX || minY >= maxY || minZ >= maxZ) {
                 throw new IllegalArgumentException("Invalid block collision box");

@@ -51,10 +51,14 @@ public final class GpuChunkMesh implements AutoCloseable {
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(3, 1, GL_FLOAT, false, stride, ChunkMesher.LIGHT_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(3);
-        glVertexAttribPointer(4, 1, GL_FLOAT, false, stride, ChunkMesher.AO_OFFSET * (long) Float.BYTES);
+        glVertexAttribPointer(4, 1, GL_FLOAT, false, stride, ChunkMesher.SKY_LIGHT_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(4);
-        glVertexAttribPointer(5, 2, GL_FLOAT, false, stride, ChunkMesher.FACE_UV_OFFSET * (long) Float.BYTES);
+        glVertexAttribPointer(5, 1, GL_FLOAT, false, stride, ChunkMesher.BLOCK_LIGHT_OFFSET * (long) Float.BYTES);
         glEnableVertexAttribArray(5);
+        glVertexAttribPointer(6, 1, GL_FLOAT, false, stride, ChunkMesher.AO_OFFSET * (long) Float.BYTES);
+        glEnableVertexAttribArray(6);
+        glVertexAttribPointer(7, 2, GL_FLOAT, false, stride, ChunkMesher.FACE_UV_OFFSET * (long) Float.BYTES);
+        glEnableVertexAttribArray(7);
 
         glBindVertexArray(0);
         RenderResourceTracker.registerChunkMesh(estimatedBytes);

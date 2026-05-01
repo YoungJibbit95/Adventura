@@ -26,7 +26,10 @@ public enum PacketType {
     COOK_REQUEST(20),
     CAMPFIRE_STATUS(21),
     PLAYER_POSITION_SNAPSHOT(22),
-    SERVER_STATS_SNAPSHOT(23);
+    SERVER_STATS_SNAPSHOT(23),
+    PROJECTILE_SHOOT(24),
+    PROJECTILE_IMPACT(25),
+    STORAGE_CLOSE(26);
 
     private static final Map<Integer, PacketType> BY_ID = new HashMap<>();
 

@@ -28,4 +28,21 @@ class AmbientEntitySpawnerTest {
         assertTrue(snapshots.stream().anyMatch(snapshot -> "voxel:forest_bunny".equals(snapshot.typeKey())));
         assertTrue(snapshots.stream().anyMatch(snapshot -> "voxel:firefly_swarm".equals(snapshot.typeKey())));
     }
+
+    @Test
+    void baseAmbientSpawnsStayWithinRegionBudget() {
+        OverworldGenerator generator = new OverworldGenerator(42L);
+        int baseSpawns = 0;
+        for (int z = 0; z < AmbientSpawnRules.REGION_SIZE_CHUNKS; z++) {
+            for (int x = 0; x < AmbientSpawnRules.REGION_SIZE_CHUNKS; x++) {
+                for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnForChunk(42L, generator, new ChunkPos(x, z), 12 * 60)) {
+                    if (!"voxel:firefly_swarm".equals(snapshot.typeKey())) {
+                        baseSpawns++;
+                    }
+                }
+            }
+        }
+
+        assertTrue(baseSpawns <= AmbientSpawnRules.MAX_BASE_SPAWNS_PER_REGION);
+    }
 }

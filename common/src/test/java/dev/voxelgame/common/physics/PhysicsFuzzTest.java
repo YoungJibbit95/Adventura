@@ -63,7 +63,7 @@ class PhysicsFuzzTest {
                     random.nextDouble(-24.0, 24.0),
                     0
             );
-            ProjectileHit hit = ProjectilePhysics.step(projectile, random.nextDouble(0.001, 0.12), ProjectilePhysicsConfig.arrow(), (px, py, pz, bounds) -> false, (px, py, pz) -> random.nextBoolean(), List.of(sheep));
+            ProjectileHit hit = ProjectilePhysics.step(projectile, random.nextDouble(0.001, 0.12), ProjectilePhysicsConfig.arrow(), (px, py, pz, bounds) -> false, (ProjectilePhysics.WaterQuery) (px, py, pz) -> random.nextBoolean(), List.of(sheep));
             assertTrue(Double.isFinite(hit.state().x()));
             assertTrue(Double.isFinite(hit.state().y()));
             assertTrue(Double.isFinite(hit.state().z()));

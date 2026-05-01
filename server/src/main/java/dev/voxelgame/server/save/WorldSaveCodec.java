@@ -9,7 +9,6 @@ import dev.voxelgame.server.world.ServerWorld;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -24,21 +23,19 @@ public final class WorldSaveCodec {
 
     public static void write(Path path, WorldSave save, Registry<ItemType> items) throws IOException {
         Properties properties = encode(save, items);
-        Path parent = path.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try (OutputStream out = Files.newOutputStream(path)) {
-            properties.store(out, "Adventura world save");
-        }
+        SaveFiles.writePropertiesAtomically(path, properties, "Adventura world save");
     }
 
     public static WorldSave read(Path path, Registry<ItemType> items) throws IOException {
+        return decode(readProperties(path), items);
+    }
+
+    static Properties readProperties(Path path) throws IOException {
         Properties properties = new Properties();
         try (InputStream in = Files.newInputStream(path)) {
             properties.load(in);
         }
-        return decode(properties, items);
+        return properties;
     }
 
     public static Properties encode(WorldSave save, Registry<ItemType> items) {

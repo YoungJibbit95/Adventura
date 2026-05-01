@@ -22,8 +22,8 @@ public record ProjectileState(
         if (typeKey.isBlank()) {
             throw new IllegalArgumentException("Projectile type key must not be blank");
         }
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
-                || !Double.isFinite(velocityX) || !Double.isFinite(velocityY) || !Double.isFinite(velocityZ)
+        if (!PhysicsNumericGuard.allFinite(x, y, z)
+                || !PhysicsNumericGuard.allFinite(velocityX, velocityY, velocityZ)
                 || ageTicks < 0) {
             throw new IllegalArgumentException("Projectile state values must be finite");
         }

@@ -32,6 +32,12 @@ class WorldRendererTest {
         assertTrue(settings.bloomEnabled());
         assertEquals(8, settings.renderDistanceChunks());
         assertTrue(settings.fogEnd() > settings.fogStart());
+        assertEquals(0.22f, settings.bloomStrength(), 0.0001f);
+        assertEquals(0.18f, settings.bloomThreshold(), 0.0001f);
+        assertEquals(1.0f, settings.globalBrightness(), 0.0001f);
+        assertEquals(0.0f, settings.nightLightBoost(), 0.0001f);
+        assertTrue(settings.caveDarkness() > 0.0f);
+        assertEquals(0.0f, settings.weatherFlash(), 0.0001f);
         assertEquals(RenderDebugView.NONE, settings.debugView());
     }
 
@@ -117,6 +123,9 @@ class WorldRendererTest {
         assertEquals(0, stats.sortedTransparentMeshes());
         assertEquals(5, stats.loadedGpuMeshes());
         assertEquals(4, stats.loadedChunkPositions());
+        assertEquals(RenderPassPlan.TERRAIN_OPAQUE, stats.opaquePass().passName());
+        assertEquals(RenderPassPlan.TERRAIN_CUTOUT, stats.cutoutPass().passName());
+        assertEquals(RenderPassPlan.TERRAIN_TRANSLUCENT, stats.transparentPass().passName());
     }
 
     @Test
@@ -137,5 +146,35 @@ class WorldRendererTest {
 
         assertEquals(240.0f, bounds.minY());
         assertEquals(256.0f, bounds.maxY());
+    }
+
+    @Test
+    void chunkAabbFallsBackToDimensionHeightWhenChunkHasNoSections() {
+        ClientWorld world = new ClientWorld(123L);
+
+        WorldRenderer.ChunkAabb bounds = WorldRenderer.chunkAabb(world, new ChunkPos(-2, 3));
+
+        assertEquals(-32.0f, bounds.minX());
+        assertEquals(world.dimension().minY(), bounds.minY(), 0.0001f);
+        assertEquals(48.0f, bounds.minZ());
+        assertEquals(-16.0f, bounds.maxX());
+        assertEquals(world.dimension().maxYExclusive(), bounds.maxY(), 0.0001f);
+        assertEquals(64.0f, bounds.maxZ());
+    }
+
+    @Test
+    void chunkAabbSpansAllNonEmptySectionsWithoutExpandingHorizontally() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(-24, 32, 55, Blocks.STONE));
+        world.applyBlock(new GamePacket.BlockUpdate(-20, 95, 60, Blocks.STONE));
+
+        WorldRenderer.ChunkAabb bounds = WorldRenderer.chunkAabb(world, new ChunkPos(-2, 3));
+
+        assertEquals(-32.0f, bounds.minX());
+        assertEquals(32.0f, bounds.minY());
+        assertEquals(48.0f, bounds.minZ());
+        assertEquals(-16.0f, bounds.maxX());
+        assertEquals(96.0f, bounds.maxY());
+        assertEquals(64.0f, bounds.maxZ());
     }
 }

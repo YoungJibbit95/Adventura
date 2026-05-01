@@ -1,6 +1,7 @@
 package dev.voxelgame.server.net;
 
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.server.TickLoop;
 import dev.voxelgame.server.auth.AuthProvider;
 import dev.voxelgame.server.entity.ServerEntityTracker;
@@ -75,13 +76,19 @@ public final class GameServer implements AutoCloseable {
 
     public void tickEntities(long tick) {
         long startNanos = System.nanoTime();
-        boolean ambientChanged = !entityTracker.tickAmbient(tick, world::canMoveAmbientEntity).isEmpty();
-        boolean projectileChanged = !entityTracker.tickProjectiles(
+        boolean ambientChanged = !entityTracker.tickAmbient(tick, world::canMoveAmbientEntity, world::fluidSample).isEmpty();
+        List<ProjectileHit> projectileHits = entityTracker.tickProjectiles(
                 ENTITY_TICK_SECONDS,
                 world::collidesProjectile,
-                world::projectileInWater,
+                world::fluidSample,
                 System.nanoTime() / 1_000_000_000.0
-        ).isEmpty();
+        );
+        boolean projectileChanged = !projectileHits.isEmpty();
+        for (ProjectileHit hit : projectileHits) {
+            if (hit.terminal()) {
+                ServerConnectionHandler.broadcast(world, GamePacket.ProjectileImpact.fromHit(hit, tick));
+            }
+        }
         boolean clientStateChanged = ServerConnectionHandler.consumeEntitySnapshotDirty(world);
         lastPhysicsTickNanos = System.nanoTime() - startNanos;
         if (!ambientChanged && !projectileChanged && !clientStateChanged) {

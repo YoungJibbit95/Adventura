@@ -9,16 +9,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ClientWorldSpawnTest {
     @Test
-    void spawnEyeStartsOneBlockAboveTerrainSurface() {
+    void spawnEyeUsesGeneratorSafeSpawnPoint() {
         long seed = 123L;
         ClientWorld world = new ClientWorld(seed);
         Vector3f spawn = world.spawnPosition();
 
-        int x = (int) Math.floor(spawn.x);
-        int z = (int) Math.floor(spawn.z);
         OverworldGenerator generator = new OverworldGenerator(seed);
-        int surfaceY = generator.terrainHeight(x, z, generator.biomeAt(x, z));
+        OverworldGenerator.SpawnPoint safeSpawn = generator.safeSpawnPoint();
 
-        assertEquals(surfaceY + 1 + PlayerBounds.DEFAULT.eyeHeight(), spawn.y, 0.001f);
+        assertEquals(safeSpawn.eyeX(), spawn.x, 0.001f);
+        assertEquals(safeSpawn.eyeY(), spawn.y, 0.001f);
+        assertEquals(safeSpawn.eyeZ(), spawn.z, 0.001f);
+        assertEquals(safeSpawn.feetY() + PlayerBounds.DEFAULT.eyeHeight(), spawn.y, 0.001f);
     }
 }

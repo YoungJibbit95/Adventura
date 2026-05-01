@@ -1,6 +1,7 @@
 package dev.voxelgame.common.physics;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.world.DimensionSettings;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -15,13 +16,14 @@ class ProjectilePhysicsTest {
     @Tag("physicsRegression")
     void sweptProjectileHitsBlockWithoutTunneling() {
         ProjectileState arrow = arrow(0.0, 64.5, 0.5, 42.0, 0.0, 0.0);
+        PhysicsTestWorld world = new PhysicsTestWorld().solid(2, 64, 0);
 
         ProjectileHit hit = ProjectilePhysics.step(
                 arrow,
-                0.1,
+                PhysicsStepContext.projectile(0.1, 1L, DimensionSettings.OVERWORLD, "projectile-test"),
                 ProjectilePhysicsConfig.arrow(),
-                (x, y, z, bounds) -> bounds.intersectsBlock(x, y, z, 2, 64, 0),
-                (x, y, z) -> false,
+                world.projectileCollision(),
+                world.waterQuery(),
                 List.of()
         );
 
@@ -46,7 +48,7 @@ class ProjectilePhysicsTest {
                 0.1,
                 ProjectilePhysicsConfig.arrow(),
                 (x, y, z, bounds) -> false,
-                (x, y, z) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
                 List.of(sheep)
         );
 
@@ -66,8 +68,26 @@ class ProjectilePhysicsTest {
                 0.1,
                 ProjectilePhysicsConfig.arrow(),
                 (x, y, z, bounds) -> false,
-                (x, y, z) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
                 List.of(ownerSnapshot)
+        );
+
+        assertEquals(ProjectileHit.Type.MISS, hit.type());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void projectileTargetsAreIgnoredForProjectileEntityHits() {
+        ProjectileState arrow = new ProjectileState(7L, null, "voxel:arrow_projectile", 0.0, 80.45, 0.0, 36.0, 0.0, 0.0, 0);
+        EntitySnapshot otherProjectile = new EntitySnapshot(8L, "voxel:arrow_projectile", null, 1.8, 80.45, 0.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE);
+
+        ProjectileHit hit = ProjectilePhysics.step(
+                arrow,
+                0.1,
+                ProjectilePhysicsConfig.arrow(),
+                (x, y, z, bounds) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
+                List.of(otherProjectile)
         );
 
         assertEquals(ProjectileHit.Type.MISS, hit.type());
@@ -87,18 +107,47 @@ class ProjectilePhysicsTest {
                 4
         );
         ProjectileState arrow = arrow(0.0, 64.5, 0.0, 10.0, 0.0, 0.0);
+        PhysicsTestWorld world = new PhysicsTestWorld().water(0, 64, 0);
 
         ProjectileHit hit = ProjectilePhysics.step(
                 arrow,
                 0.05,
                 config,
                 (x, y, z, bounds) -> false,
-                (x, y, z) -> true,
+                world.waterQuery(),
                 List.of()
         );
 
         assertEquals(ProjectileHit.Type.MISS, hit.type());
         assertTrue(hit.state().velocityX() < 10.0);
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void fluidCurrentCarriesProjectile() {
+        ProjectilePhysicsConfig config = new ProjectilePhysicsConfig(
+                "voxel:arrow_projectile",
+                ProjectileBounds.ARROW,
+                36.0,
+                0.0,
+                0.82,
+                20,
+                0.18,
+                4
+        );
+        ProjectileState arrow = arrow(0.0, 64.5, 0.0, 0.0, 0.0, 0.0);
+
+        ProjectileHit hit = ProjectilePhysics.step(
+                arrow,
+                0.05,
+                config,
+                (x, y, z, bounds) -> false,
+                (FluidPhysics.FluidQuery) (x, y, z) -> FluidPhysics.water(0.8, 0.0, 0.0, 0.82, 5.0),
+                List.of()
+        );
+
+        assertEquals(ProjectileHit.Type.MISS, hit.type());
+        assertTrue(hit.state().velocityX() > 0.0);
     }
 
     @Test
@@ -121,7 +170,7 @@ class ProjectilePhysicsTest {
                 0.05,
                 config,
                 (x, y, z, bounds) -> false,
-                (x, y, z) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
                 List.of()
         );
 
@@ -138,7 +187,7 @@ class ProjectilePhysicsTest {
                 0.05,
                 ProjectilePhysicsConfig.arrow(),
                 (x, y, z, bounds) -> bounds.intersectsBlock(x, y, z, 18, 64, 0),
-                (x, y, z) -> false,
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
                 List.of()
         );
 

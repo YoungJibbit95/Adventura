@@ -29,6 +29,19 @@ class CozyColorPipelineTest {
     }
 
     @Test
+    void dayNightBrightnessAndFogDistanceStayPlayableAndSmooth() {
+        float night = CozyColorPipeline.globalBrightnessForMinute(2 * 60);
+        float dawn = CozyColorPipeline.globalBrightnessForMinute(6 * 60);
+        float noon = CozyColorPipeline.globalBrightnessForMinute(12 * 60);
+
+        assertTrue(night >= 0.40f);
+        assertTrue(dawn > night);
+        assertTrue(noon > dawn);
+        assertTrue(CozyColorPipeline.fogDistanceScaleForMinute(2 * 60) < CozyColorPipeline.fogDistanceScaleForMinute(12 * 60));
+        assertTrue(CozyColorPipeline.nightLightBoostForMinute(2 * 60) > CozyColorPipeline.nightLightBoostForMinute(12 * 60));
+    }
+
+    @Test
     void prefersNamedBiomeTintsAndFallsBackToBiomeClimate() {
         Vector3f pine = CozyColorPipeline.biomeTint("voxel:pine_forest", null);
         Vector3f lake = CozyColorPipeline.biomeTint("voxel:lakeside", null);

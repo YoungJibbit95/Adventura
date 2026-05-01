@@ -81,6 +81,18 @@ class HotbarTest {
     }
 
     @Test
+    void storageCloseOnlyClosesMatchingOpenCrate() {
+        Hotbar hotbar = new Hotbar();
+        hotbar.openStorage(1, 70, -2);
+
+        hotbar.closeStorage(2, 70, -2);
+        assertTrue(hotbar.storageOpen());
+
+        hotbar.closeStorage(1, 70, -2);
+        assertFalse(hotbar.storageOpen());
+    }
+
+    @Test
     void quickMoveMovesBackpackStackIntoHotbar() {
         Hotbar hotbar = new Hotbar();
         List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));

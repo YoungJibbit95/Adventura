@@ -43,6 +43,21 @@ public record PlayerPhysicsConfig(
         if (bounds == null) {
             throw new IllegalArgumentException("Player bounds are required");
         }
+        gravity = PhysicsNumericGuard.requireFinitePositive("Player gravity", gravity);
+        jumpSpeed = PhysicsNumericGuard.requireFinitePositive("Player jump speed", jumpSpeed);
+        walkSpeed = PhysicsNumericGuard.requireFinitePositive("Player walk speed", walkSpeed);
+        sprintSpeed = PhysicsNumericGuard.requireFinitePositive("Player sprint speed", sprintSpeed);
+        flySpeed = PhysicsNumericGuard.requireFinitePositive("Player fly speed", flySpeed);
+        flySprintSpeed = PhysicsNumericGuard.requireFinitePositive("Player fly sprint speed", flySprintSpeed);
+        waterSpeedMultiplier = PhysicsNumericGuard.requireFinitePositive("Player water speed multiplier", waterSpeedMultiplier);
+        waterHorizontalDrag = PhysicsNumericGuard.requireFinitePositive("Player water horizontal drag", waterHorizontalDrag);
+        waterGravityMultiplier = PhysicsNumericGuard.requireFinitePositive("Player water gravity multiplier", waterGravityMultiplier);
+        waterVerticalDrag = PhysicsNumericGuard.requireFinitePositive("Player water vertical drag", waterVerticalDrag);
+        swimRiseSpeed = PhysicsNumericGuard.requireFinitePositive("Player swim rise speed", swimRiseSpeed);
+        maxFallSpeed = PhysicsNumericGuard.requireFinitePositive("Player max fall speed", maxFallSpeed);
+        maxWaterFallSpeed = PhysicsNumericGuard.requireFinitePositive("Player max water fall speed", maxWaterFallSpeed);
+        groundProbeDistance = PhysicsNumericGuard.requireFiniteNonNegative("Player ground probe distance", groundProbeDistance);
+        maxCollisionStep = PhysicsNumericGuard.requireFinitePositive("Player max collision step", maxCollisionStep);
         if (gravity <= 0.0f || jumpSpeed <= 0.0f || walkSpeed <= 0.0f || sprintSpeed <= 0.0f
                 || flySpeed <= 0.0f || flySprintSpeed <= 0.0f) {
             throw new IllegalArgumentException("Movement speeds must be positive");
@@ -57,5 +72,9 @@ public record PlayerPhysicsConfig(
         if (groundProbeDistance < 0.0f || maxCollisionStep <= 0.0f) {
             throw new IllegalArgumentException("Collision distances must be valid");
         }
+    }
+
+    public String fingerprint() {
+        return PhysicsConfigSnapshot.playerFingerprint(this);
     }
 }

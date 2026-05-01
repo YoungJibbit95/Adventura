@@ -51,7 +51,7 @@ public record ProjectileHit(
         type = Objects.requireNonNull(type, "type");
         state = Objects.requireNonNull(state, "state");
         blockFace = Objects.requireNonNull(blockFace, "blockFace");
-        if (!Double.isFinite(impactX) || !Double.isFinite(impactY) || !Double.isFinite(impactZ)) {
+        if (!PhysicsNumericGuard.allFinite(impactX, impactY, impactZ)) {
             throw new IllegalArgumentException("Projectile impact coordinates must be finite");
         }
     }

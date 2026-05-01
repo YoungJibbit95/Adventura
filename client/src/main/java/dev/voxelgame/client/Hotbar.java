@@ -117,6 +117,12 @@ public final class Hotbar {
         openStorageInventory = null;
     }
 
+    public synchronized void closeStorage(int x, int y, int z) {
+        if (openStoragePos != null && openStoragePos.equals(new StoragePos(x, y, z))) {
+            closeStorage();
+        }
+    }
+
     public synchronized boolean storageOpen() {
         return openStorageInventory != null && openStoragePos != null;
     }

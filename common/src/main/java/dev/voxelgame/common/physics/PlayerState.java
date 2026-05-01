@@ -28,11 +28,8 @@ public record PlayerState(
     }
 
     public PlayerState {
-        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
-                || !Float.isFinite(velocityX) || !Float.isFinite(velocityY) || !Float.isFinite(velocityZ)
-                || !Float.isFinite(fallImpactSpeed)
-                || !Float.isFinite(coyoteTimeSeconds)
-                || !Float.isFinite(jumpBufferSeconds)) {
+        if (!PhysicsNumericGuard.allFinite(x, y, z)
+                || !PhysicsNumericGuard.allFinite(velocityX, velocityY, velocityZ, fallImpactSpeed, coyoteTimeSeconds, jumpBufferSeconds)) {
             throw new IllegalArgumentException("Player state must be finite");
         }
         coyoteTimeSeconds = Math.max(0.0f, coyoteTimeSeconds);

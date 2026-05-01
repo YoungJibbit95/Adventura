@@ -2,6 +2,7 @@ package dev.voxelgame.common.net;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.item.ItemStack;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.world.ChunkPos;
 import org.junit.jupiter.api.Test;
 
@@ -149,7 +150,19 @@ class PacketCodecTest {
     @Test
     void roundTripsPlayerPositionSnapshot() {
         GamePacket.PlayerPositionSnapshot decoded = (GamePacket.PlayerPositionSnapshot) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.PlayerPositionSnapshot(99L, 8.5, 120.0, -4.5, 12.0f, -3.0f, true, true, true, false)
+                new GamePacket.PlayerPositionSnapshot(
+                        99L,
+                        8.5,
+                        120.0,
+                        -4.5,
+                        12.0f,
+                        -3.0f,
+                        true,
+                        true,
+                        true,
+                        false,
+                        GamePacket.MovementCorrection.HARD
+                )
         ));
 
         assertEquals(99L, decoded.sequence());
@@ -162,6 +175,7 @@ class PacketCodecTest {
         assertTrue(decoded.feetInWater());
         assertTrue(decoded.bodyInWater());
         assertFalse(decoded.headUnderwater());
+        assertEquals(GamePacket.MovementCorrection.HARD, decoded.correction());
     }
 
     @Test
@@ -237,6 +251,67 @@ class PacketCodecTest {
         assertEquals(123L, decoded.entityId());
         assertEquals(4, decoded.selectedSlot());
         assertEquals(GamePacket.EntityInteract.Action.ATTACK, decoded.action());
+    }
+
+    @Test
+    void roundTripsProjectileShoot() {
+        GamePacket.ProjectileShoot decoded = (GamePacket.ProjectileShoot) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.ProjectileShoot(8, 77L)
+        ));
+
+        assertEquals(8, decoded.selectedSlot());
+        assertEquals(77L, decoded.sequence());
+    }
+
+    @Test
+    void roundTripsProjectileImpact() {
+        GamePacket.ProjectileImpact decoded = (GamePacket.ProjectileImpact) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.ProjectileImpact(
+                        -12L,
+                        "voxel:arrow_projectile",
+                        ProjectileHit.Type.BLOCK,
+                        1.25,
+                        80.5,
+                        -3.75,
+                        1,
+                        80,
+                        -4,
+                        ProjectileHit.BlockFace.WEST,
+                        0L,
+                        true,
+                        1234L
+                )
+        ));
+
+        assertEquals(-12L, decoded.projectileId());
+        assertEquals("voxel:arrow_projectile", decoded.projectileTypeKey());
+        assertEquals(ProjectileHit.Type.BLOCK, decoded.hitType());
+        assertEquals(1.25, decoded.x(), 0.0001);
+        assertEquals(ProjectileHit.BlockFace.WEST, decoded.blockFace());
+        assertTrue(decoded.stuck());
+        assertEquals(1234L, decoded.serverTick());
+    }
+
+    @Test
+    void rejectsOversizedProjectileImpactTypeKey() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new GamePacket.ProjectileImpact(
+                        -12L,
+                        "x".repeat(GamePacket.MAX_PROJECTILE_TYPE_KEY_LENGTH + 1),
+                        ProjectileHit.Type.BLOCK,
+                        1.25,
+                        80.5,
+                        -3.75,
+                        1,
+                        80,
+                        -4,
+                        ProjectileHit.BlockFace.WEST,
+                        0L,
+                        true,
+                        1234L
+                )
+        );
     }
 
     @Test
@@ -376,6 +451,17 @@ class PacketCodecTest {
         assertEquals(-4, decoded.z());
         assertEquals(new ItemStack((short) 55, 1), decoded.slots().getFirst());
         assertEquals(ItemStack.EMPTY, decoded.slots().get(1));
+    }
+
+    @Test
+    void roundTripsStorageClose() {
+        GamePacket.StorageClose decoded = (GamePacket.StorageClose) PacketCodec.decode(PacketCodec.encode(
+                new GamePacket.StorageClose(3, 81, -4)
+        ));
+
+        assertEquals(3, decoded.x());
+        assertEquals(81, decoded.y());
+        assertEquals(-4, decoded.z());
     }
 
     @Test

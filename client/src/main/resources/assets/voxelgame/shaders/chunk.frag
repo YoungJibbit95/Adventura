@@ -1,6 +1,8 @@
 #version 330 core
 
 in float vLight;
+in float vSkyLight;
+in float vBlockLight;
 in float vMaterialIndex;
 in float vShade;
 in float vDistance;
@@ -18,7 +20,11 @@ uniform float uTime;
 uniform float uFogStart;
 uniform float uFogEnd;
 uniform float uBloomStrength;
+uniform float uBloomThreshold;
 uniform float uGlobalBrightness;
+uniform float uNightLightBoost;
+uniform float uCaveDarkness;
+uniform float uWeatherFlash;
 uniform vec3 uFogColor;
 uniform vec3 uBiomeTintColor;
 uniform sampler2D uBlockAtlas;
@@ -58,6 +64,11 @@ bool translucentLayer() {
     return materialTexel(5).z > 1.5;
 }
 
+bool cutoutLayer() {
+    float layer = materialTexel(5).z;
+    return layer > 0.5 && layer < 1.5;
+}
+
 float biomeTintMode() {
     return materialTexel(5).x;
 }
@@ -91,6 +102,11 @@ vec3 materialDebugColor() {
             fract(index * 0.271 + 0.19),
             fract(index * 0.419 + 0.37)
     );
+}
+
+vec3 lightRamp(float value, vec3 tint) {
+    float light = clamp(value, 0.0, 1.0);
+    return mix(vec3(0.035, 0.040, 0.050), tint, light);
 }
 
 vec2 faceUv() {
@@ -148,6 +164,32 @@ float emissiveStrength() {
     return materialTexel(1).x;
 }
 
+float terrainLight(float emissive) {
+    float sky = clamp(vSkyLight, 0.0, 1.0) * uGlobalBrightness;
+    float block = clamp(vBlockLight, 0.0, 1.0) * (0.74 + uNightLightBoost * 0.34);
+    float light = max(sky * 0.86, block);
+    if (cutoutLayer()) {
+        light += 0.07;
+    }
+    if (animatedFluid()) {
+        light = max(light, 0.18 + vBlockLight * 0.22);
+    }
+    float cave = (1.0 - smoothstep(0.18, 0.72, clamp(vSkyLight, 0.0, 1.0))) * uCaveDarkness;
+    cave *= 1.0 - clamp(vBlockLight * 1.35 + emissive, 0.0, 1.0);
+    light *= mix(1.0, 0.54, cave);
+    return clamp(max(light, 0.12), 0.0, 1.18);
+}
+
+float aoForLight(float emissive) {
+    float blockLift = clamp(vBlockLight * 0.50 + emissive * 0.70, 0.0, 0.68);
+    return mix(clamp(vAo, 0.0, 1.0), 1.0, blockLift);
+}
+
+float bloomAmount(float emissive) {
+    float threshold = clamp(uBloomThreshold, 0.0, 0.95);
+    return smoothstep(threshold, 1.0, clamp(emissive, 0.0, 1.0));
+}
+
 vec3 applyBiomeTint(vec3 color) {
     float mode = biomeTintMode();
     if (mode < 0.5) {
@@ -200,15 +242,35 @@ void main() {
         fragColor = vec4(color, alpha);
         return;
     }
-
-    float normalizedLight = clamp(vLight, 0.0, 1.15);
-    vec3 lit = surface.rgb * normalizedLight * vShade * vAo * uGlobalBrightness;
-    if (uBloomEnabled == 1) {
+    if (uRenderDebugMode == 8) {
+        fragColor = vec4(lightRamp(vSkyLight, vec3(0.40, 0.66, 1.00)), max(0.72, materialAlpha() * surface.a));
+        return;
+    }
+    if (uRenderDebugMode == 9) {
+        fragColor = vec4(lightRamp(vBlockLight, vec3(1.00, 0.58, 0.18)), max(0.72, materialAlpha() * surface.a));
+        return;
+    }
+    if (uRenderDebugMode == 10) {
         float glow = emissiveStrength();
-        lit += surface.rgb * glow * uBloomStrength * (1.0 + normalizedLight * 0.35);
+        vec3 color = mix(vec3(0.035, 0.025, 0.045), surface.rgb, clamp(glow, 0.0, 1.0));
+        fragColor = vec4(color, max(0.72, materialAlpha() * surface.a));
+        return;
+    }
+
+    float emissive = emissiveStrength();
+    float normalizedLight = terrainLight(emissive);
+    float ao = aoForLight(emissive);
+    float foliageShade = biomeTintMode() > 1.5 && biomeTintMode() < 2.5 ? 0.94 : 1.0;
+    vec3 lit = surface.rgb * normalizedLight * vShade * ao * foliageShade;
+    vec3 glowContribution = vec3(0.0);
+    float bloom = bloomAmount(emissive);
+    if (uBloomEnabled == 1 && bloom > 0.0) {
+        glowContribution = surface.rgb * bloom * uBloomStrength * (1.0 + uNightLightBoost * 0.85 + normalizedLight * 0.25);
+        glowContribution = clamp(glowContribution, vec3(0.0), vec3(0.42));
+        lit += glowContribution * 0.55;
     }
     if (animatedFluid()) {
-        float waterLift = uSimpleWater == 1 ? 0.10 : 0.18;
+        float waterLift = uSimpleWater == 1 ? 0.12 : 0.20;
         lit = max(lit, surface.rgb * waterLift);
         lit = mix(lit, lit + vec3(0.03, 0.06, 0.10), uSimpleWater == 1 ? 0.12 : 0.25);
     }
@@ -221,6 +283,17 @@ void main() {
         float fogStart = min(uFogStart, uFogEnd - 0.001);
         float fog = smoothstep(fogStart, uFogEnd, vDistance) * fogAffectFactor();
         lit = mix(lit, uFogColor, fog);
+    }
+    float flash = clamp(uWeatherFlash, 0.0, 1.0);
+    if (flash > 0.0) {
+        vec3 lightningColor = vec3(0.78, 0.86, 1.00);
+        lit = mix(lit, lightningColor, flash * 0.34);
+        lit += lightningColor * flash * 0.08;
+    }
+    if (uBloomEnabled == 1) {
+        lit += glowContribution * 0.45;
+    } else if (emissive > 0.0) {
+        lit += surface.rgb * emissive * 0.10;
     }
     fragColor = vec4(lit, materialAlpha() * surface.a);
 }

@@ -9,7 +9,7 @@ Build, gather, craft, explore biomes, host a server, and slowly turn a rough wor
 <br>
 
 ![Java](https://img.shields.io/badge/Java-21-f89820?style=for-the-badge&logo=openjdk&logoColor=white)
-![Gradle](https://img.shields.io/badge/Gradle-9.3.0-02303A?style=for-the-badge&logo=gradle&logoColor=white)
+![Gradle](https://img.shields.io/badge/Gradle-9.3.1-02303A?style=for-the-badge&logo=gradle&logoColor=white)
 ![LWJGL](https://img.shields.io/badge/LWJGL-3.4.1-c32222?style=for-the-badge)
 ![Netty](https://img.shields.io/badge/Netty-4.1-4f8cc9?style=for-the-badge)
 ![JUnit](https://img.shields.io/badge/JUnit-5-25A162?style=for-the-badge&logo=junit5&logoColor=white)
@@ -154,6 +154,9 @@ Then set `JAVA_HOME` to the JDK folder and add `%JAVA_HOME%\bin` to `Path`.
 | `./gradlew runClient` | Starts the client and opens the main menu. |
 | `./gradlew runServer` | Starts a dedicated server on port `25565` with seed `1337`. |
 | `./gradlew joinLocal` | Starts the client and joins `127.0.0.1:25565` as `Player`. |
+| `./gradlew profileSingleplayerJfr` | Records a short singleplayer JFR profile under `build/reports/jfr/`. |
+| `./gradlew profileJoinLocalJfr` | Records a client join-local JFR profile; start `runServer` first. |
+| `./gradlew profileLongExploreJfr` | Records a higher-distance long-explore JFR profile. |
 | `./gradlew buildGame` | Builds all game modules and runs their checks. |
 | `./gradlew test` | Runs the JUnit test suite. |
 

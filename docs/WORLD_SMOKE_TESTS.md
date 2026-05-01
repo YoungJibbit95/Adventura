@@ -1,6 +1,6 @@
 # Adventura – Reproducible Smoke Tests
 
-Stand: 2026-04-30
+Stand: 2026-05-01
 
 Diese Smoke-Tests sind feste Prüfanker für Rendering, Gameplay, Worldgen, Physics, Lighting, UI/HUD, Networking und Persistenz.
 
@@ -25,6 +25,20 @@ Nützliche Commands im Spiel:
 - `/tp x y z`
 - `/debug`
 - `/debuglight`
+- `/debugview material`
+- `/debugview light`
+- `/debugview sky`
+- `/debugview block`
+- `/debugview emissive`
+- `/debugview ao`
+- `/debugview layer`
+- `/debugview uv`
+- `/debugview transparent`
+- `/preset low`
+- `/preset medium`
+- `/preset high`
+- `/shaderreload`
+- `/lightning`
 - `/renderdistance n`
 - `/preview n`
 - `/meshbudget n`
@@ -216,15 +230,18 @@ Ablauf:
 
 1. `runSingleplayer` starten.
 2. Debug HUD aktivieren.
-3. 10 Minuten in eine Richtung fliegen/laufen.
-4. Loaded Chunks, GPU Meshes und Entity Count beobachten.
-5. zurück zum Spawn teleportieren.
-6. prüfen, ob Chunks neu laden.
+3. 10 Minuten in eine Richtung fliegen/laufen: Loaded Chunks, GPU Meshes, Entity Count und `TCACHE` beobachten.
+4. weitere 10 Minuten diagonal laufen/fliegen: keine stetig wachsende Queue, keine sichtbaren Chunk-Holes.
+5. weitere 10 Minuten mit Rueckwaertsbewegung und Richtungswechseln: Retain-Hysterese soll Stutter und Mesh-Churn begrenzen.
+6. nach 10/20/30 Minuten jeweils Debugwerte notieren.
+7. zurück zum Spawn teleportieren.
+8. prüfen, ob Chunks kontrolliert neu laden.
 
 Akzeptanz:
 
 - Loaded Chunks wachsen nicht unbegrenzt.
 - GPU Mesh Count wächst nicht unbegrenzt.
+- `TCACHE` bleibt an Loaded Chunks gekoppelt und waechst nicht unbegrenzt.
 - keine GL Errors.
 - Rückkehr funktioniert.
 
@@ -312,6 +329,35 @@ Akzeptanz:
 - nichts überlappt kritisch.
 - Tooltips bleiben lesbar.
 - Drag/drop funktioniert.
+
+## G. Rendering Preset Matrix
+
+Ablauf:
+
+1. `/shaderreload` ausführen und auf Fehlermeldungen achten.
+2. `/lightning` ausführen und auf kurzen Sky/Fog-Flash plus verzögerten Thunder-Hook achten.
+3. `/debug` aktivieren.
+4. `/preset low` setzen und Spawn, River/Lakeside, Mushroom Grove und Cave Pocket besuchen.
+5. `/preset medium` setzen und dieselben Orte vergleichen.
+6. `/preset high` setzen und dieselben Orte vergleichen.
+7. Pro Ort `/debugview material`, `/debugview light`, `/debugview sky`, `/debugview block`, `/debugview emissive`, `/debugview ao`, `/debugview layer`, `/debugview uv` und `/debugview transparent` kurz prüfen.
+8. Am River Wasser bei Tag und Nacht prüfen.
+9. Im Pine Forest Cutout-Pflanzen vor und hinter Wasser prüfen.
+10. Im Mushroom Grove Glow-Mushrooms nachts prüfen.
+11. Am Spawn Campfire/Lantern bei Nacht prüfen.
+12. Danach Long Explore / Chunk Unload ausführen und Preset im Debug-HUD beobachten.
+
+Akzeptanz:
+
+- `PRESET LOW`, `PRESET MEDIUM`, `PRESET HIGH` oder `PRESET CUSTOM` ist im Debug-HUD eindeutig sichtbar.
+- Low reduziert sichtbare Kosten: niedrigere Render Distance, kleinere Mesh-/Upload-Budgets, Bloom aus, einfaches Wasser und niedrigere Particle Quality.
+- Medium und High erhöhen Kosten sichtbar und bleiben ohne starke Frame-Spikes spielbar.
+- Weather-Lightning erzeugt keinen Block-Light-Rebuild und keine Light-Seams.
+- Wasser bleibt lesbar und sortiert plausibel.
+- Cutout-Pflanzen bleiben scharf und landen nicht im Transparenz-Sortierproblem.
+- Glow, Campfire und Lantern bleiben sichtbar, ohne Pixel-Art zu ueberstrahlen.
+- Debug Views helfen beim Eingrenzen von Material-, UV-, Layer-, Light- und AO-Problemen.
+- Chunk-Unload/Reload erzeugt keine dauerhaft wachsenden GPU-Mesh- oder Loaded-Chunk-Werte.
 
 ---
 

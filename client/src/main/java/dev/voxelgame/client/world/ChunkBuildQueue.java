@@ -1,5 +1,6 @@
 package dev.voxelgame.client.world;
 
+import dev.voxelgame.common.engine.EngineJobPriority;
 import dev.voxelgame.common.world.ChunkPos;
 import org.joml.Vector3f;
 
@@ -16,6 +17,8 @@ public final class ChunkBuildQueue {
     private long replacedBuilds;
     private long canceledBuilds;
     private long completedBuilds;
+    private long completedGenerationJobs;
+    private long completedLightingJobs;
     private final long createdNanos = System.nanoTime();
     private double averageWaitMilliseconds;
     private double lastMeshingMilliseconds;
@@ -59,7 +62,7 @@ public final class ChunkBuildQueue {
         }
         long now = System.nanoTime();
         Comparator<Entry> priorityComparator = Comparator
-                .comparingInt((Entry entry) -> entry.urgent() ? 0 : 1)
+                .comparingInt((Entry entry) -> effectivePriority(entry, priorityPosition, renderDistanceChunks, previewRadiusChunks).sortOrder())
                 .thenComparingDouble((Entry entry) -> priorityScore(entry.pos(), priorityPosition, renderDistanceChunks, previewRadiusChunks))
                 .thenComparingLong(Entry::sequence);
         Optional<Entry> selected = entries.values()
@@ -111,13 +114,15 @@ public final class ChunkBuildQueue {
     }
 
     void recordGeneration(double milliseconds) {
+        completedGenerationJobs++;
         lastGenerationMilliseconds = nonNegative(milliseconds);
-        averageGenerationMilliseconds = smooth(averageGenerationMilliseconds, lastGenerationMilliseconds, enqueuedBuilds + completedBuilds);
+        averageGenerationMilliseconds = smooth(averageGenerationMilliseconds, lastGenerationMilliseconds, completedGenerationJobs);
     }
 
     void recordLighting(double milliseconds) {
+        completedLightingJobs++;
         lastLightingMilliseconds = nonNegative(milliseconds);
-        averageLightingMilliseconds = smooth(averageLightingMilliseconds, lastLightingMilliseconds, enqueuedBuilds + completedBuilds);
+        averageLightingMilliseconds = smooth(averageLightingMilliseconds, lastLightingMilliseconds, completedLightingJobs);
     }
 
     void recordGpuUpload(double milliseconds) {
@@ -137,6 +142,8 @@ public final class ChunkBuildQueue {
                 replacedBuilds,
                 canceledBuilds,
                 completedBuilds,
+                completedGenerationJobs,
+                completedLightingJobs,
                 completedBuilds / elapsedSeconds,
                 averageWaitMilliseconds,
                 lastGenerationMilliseconds,
@@ -154,25 +161,36 @@ public final class ChunkBuildQueue {
     }
 
     private static double priorityScore(ChunkPos pos, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks) {
+        EngineJobPriority priority = distancePriority(pos, priorityPosition, renderDistanceChunks, previewRadiusChunks);
+        return priority.sortOrder() * 1_000_000_000.0 + distanceSquaredToChunkCenter(pos, priorityPosition);
+    }
+
+    private static EngineJobPriority effectivePriority(Entry entry, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks) {
+        if (entry.urgent()) {
+            return EngineJobPriority.PLAYER_ACTION;
+        }
+        return distancePriority(entry.pos(), priorityPosition, renderDistanceChunks, previewRadiusChunks);
+    }
+
+    private static EngineJobPriority distancePriority(ChunkPos pos, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks) {
         if (priorityPosition == null) {
-            return 0.0;
+            return EngineJobPriority.VISIBLE_CHUNK;
         }
         ChunkPos center = ChunkPos.fromBlock((int) Math.floor(priorityPosition.x), (int) Math.floor(priorityPosition.z));
         int chunkDistance = Math.max(Math.abs(pos.x() - center.x()), Math.abs(pos.z() - center.z()));
-        int band;
-        if (chunkDistance <= 1) {
-            band = 0;
-        } else if (chunkDistance <= Math.max(0, renderDistanceChunks)) {
-            band = 1;
-        } else if (chunkDistance <= Math.max(renderDistanceChunks, previewRadiusChunks)) {
-            band = 2;
-        } else {
-            band = 3;
+        if (chunkDistance <= Math.max(0, renderDistanceChunks)) {
+            return EngineJobPriority.VISIBLE_CHUNK;
         }
-        return band * 1_000_000_000.0 + distanceSquaredToChunkCenter(pos, priorityPosition);
+        if (chunkDistance <= Math.max(renderDistanceChunks, previewRadiusChunks)) {
+            return EngineJobPriority.PREVIEW;
+        }
+        return EngineJobPriority.BACKGROUND;
     }
 
     private static double distanceSquaredToChunkCenter(ChunkPos pos, Vector3f priorityPosition) {
+        if (priorityPosition == null) {
+            return 0.0;
+        }
         double centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
         double centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
         double dx = centerX - priorityPosition.x;
@@ -206,6 +224,8 @@ public final class ChunkBuildQueue {
             long replacedBuilds,
             long canceledBuilds,
             long completedBuilds,
+            long completedGenerationJobs,
+            long completedLightingJobs,
             double chunksBuiltPerSecond,
             double averageWaitMilliseconds,
             double lastGenerationMilliseconds,
@@ -221,7 +241,7 @@ public final class ChunkBuildQueue {
             double averageGpuUploadMilliseconds
     ) {
         public static Snapshot empty() {
-            return new Snapshot(0, 0L, 0L, 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0L, 0.0, 0.0, 0.0, 0.0);
+            return new Snapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0L, 0.0, 0.0, 0.0, 0.0);
         }
     }
 }

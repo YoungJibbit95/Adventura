@@ -5,10 +5,14 @@ import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.registry.Registry;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,6 +55,36 @@ class PlayerSaveCodecTest {
     }
 
     @Test
+    void playerSaveWriteUsesAtomicRenameAndCleansTemporaryFile(@TempDir Path tempDir) throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        PlayerSave save = new PlayerSave(
+                SaveMetadata.CURRENT_SAVE_VERSION,
+                UUID.fromString("00000000-0000-0000-0000-000000000456"),
+                "Grace",
+                1.0,
+                82.0,
+                3.0,
+                0.0f,
+                0.0f,
+                List.of(),
+                0,
+                PlayerSave.SurvivalStats.defaults(),
+                PlayerSave.SpawnPoint.empty(),
+                "survival",
+                List.of(),
+                List.of(),
+                List.of(),
+                "overworld"
+        );
+        Path savePath = tempDir.resolve("players").resolve(save.playerId() + ".properties");
+
+        PlayerSaveCodec.write(savePath, save, items);
+
+        assertEquals(save.playerId(), PlayerSaveCodec.read(savePath, items).playerId());
+        assertFalse(hasTempSaveFile(savePath.getParent()));
+    }
+
+    @Test
     void playerSaveDecodeUsesAliasesAndDropsUnknownItems() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         short berries = items.requireByKey("voxel:berries").id();
@@ -70,5 +104,11 @@ class PlayerSaveCodecTest {
 
         assertEquals(new ItemStack(berries, 3), decoded.inventory().get(0));
         assertTrue(decoded.inventory().get(1).isEmpty());
+    }
+
+    private static boolean hasTempSaveFile(Path directory) throws Exception {
+        try (Stream<Path> files = Files.list(directory)) {
+            return files.anyMatch(path -> path.getFileName().toString().endsWith(".tmp"));
+        }
     }
 }

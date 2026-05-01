@@ -47,6 +47,20 @@ class AssetAtlasReportTest {
     }
 
     @Test
+    void bundledFallbackSheetsCoverRegisteredBlocks() throws Exception {
+        Files.write(tempDir.resolve("ui_hud_sheet.png"), new byte[]{1});
+        Files.write(tempDir.resolve("blocks_tiles_sheet.png"), new byte[]{1});
+        Files.write(tempDir.resolve("tools_weapons_sheet.png"), new byte[]{1});
+        Files.write(tempDir.resolve("nature_food_sheet.png"), new byte[]{1});
+        Files.write(tempDir.resolve("ores_materials_sheet.png"), new byte[]{1});
+
+        AssetAtlasReport.Report report = AssetAtlasReport.generate(tempDir);
+
+        assertEquals(0, report.missingBlocks().size());
+        assertTrue(report.fallbackBlockCount() > 0);
+    }
+
+    @Test
     void reportsUnmappedRootPngFiles() throws Exception {
         Files.write(tempDir.resolve("unknown_sheet.png"), new byte[]{1});
 

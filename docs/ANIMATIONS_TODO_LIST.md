@@ -36,7 +36,6 @@ Animationen sollen:
   - Pickup Pop
   - UI Pulse
   - Feedback Fade
-  - Damage Flash
 - Animationen müssen UI Scale und Pause-State respektieren.
 
 ## Akzeptanz

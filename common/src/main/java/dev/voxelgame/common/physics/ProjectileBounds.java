@@ -4,9 +4,7 @@ public record ProjectileBounds(float radius) {
     public static final ProjectileBounds ARROW = new ProjectileBounds(0.09f);
 
     public ProjectileBounds {
-        if (!Float.isFinite(radius) || radius <= 0.0f) {
-            throw new IllegalArgumentException("Projectile radius must be finite and positive");
-        }
+        radius = PhysicsNumericGuard.requireFinitePositive("Projectile radius", radius);
     }
 
     public boolean intersectsBlock(double x, double y, double z, int blockX, int blockY, int blockZ) {

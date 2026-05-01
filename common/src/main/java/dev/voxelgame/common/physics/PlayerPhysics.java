@@ -20,6 +20,19 @@ public final class PlayerPhysics {
     public static PlayerState stepSurvival(
             PlayerState state,
             PlayerInput input,
+            PhysicsStepContext context,
+            PlayerPhysicsConfig config,
+            CollisionQuery collisionQuery
+    ) {
+        if (context == null) {
+            throw new IllegalArgumentException("Player physics context is required");
+        }
+        return stepSurvival(state, input, context.waterState(), context.floatDeltaSeconds(), config, collisionQuery);
+    }
+
+    public static PlayerState stepSurvival(
+            PlayerState state,
+            PlayerInput input,
             PlayerWaterState water,
             float deltaSeconds,
             PlayerPhysicsConfig config,
@@ -28,9 +41,7 @@ public final class PlayerPhysics {
         if (state == null || input == null || water == null || config == null || collisionQuery == null) {
             throw new IllegalArgumentException("Player physics step arguments are required");
         }
-        if (!Float.isFinite(deltaSeconds) || deltaSeconds < 0.0f) {
-            throw new IllegalArgumentException("Delta seconds must be finite and non-negative");
-        }
+        deltaSeconds = PhysicsNumericGuard.requireFiniteNonNegative("Delta seconds", deltaSeconds);
         if (deltaSeconds == 0.0f) {
             return new PlayerState(
                     state.x(),
@@ -152,6 +163,22 @@ public final class PlayerPhysics {
             float moveY,
             float moveZ,
             boolean sprinting,
+            PhysicsStepContext context,
+            PlayerPhysicsConfig config,
+            CollisionQuery collisionQuery
+    ) {
+        if (context == null) {
+            throw new IllegalArgumentException("Player flying context is required");
+        }
+        return stepFlying(state, moveX, moveY, moveZ, sprinting, context.floatDeltaSeconds(), config, collisionQuery);
+    }
+
+    public static PlayerState stepFlying(
+            PlayerState state,
+            float moveX,
+            float moveY,
+            float moveZ,
+            boolean sprinting,
             float deltaSeconds,
             PlayerPhysicsConfig config,
             CollisionQuery collisionQuery
@@ -159,10 +186,10 @@ public final class PlayerPhysics {
         if (state == null || config == null || collisionQuery == null) {
             throw new IllegalArgumentException("Player flying step arguments are required");
         }
-        if (!Float.isFinite(moveX) || !Float.isFinite(moveY) || !Float.isFinite(moveZ)
-                || !Float.isFinite(deltaSeconds) || deltaSeconds < 0.0f) {
+        if (!PhysicsNumericGuard.allFinite(moveX, moveY, moveZ)) {
             throw new IllegalArgumentException("Flying movement must be finite and delta must be non-negative");
         }
+        deltaSeconds = PhysicsNumericGuard.requireFiniteNonNegative("Delta seconds", deltaSeconds);
 
         float velocityX = 0.0f;
         float velocityY = 0.0f;

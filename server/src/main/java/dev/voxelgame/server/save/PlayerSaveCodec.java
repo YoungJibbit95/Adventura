@@ -6,7 +6,6 @@ import dev.voxelgame.common.registry.Registry;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -22,21 +21,19 @@ public final class PlayerSaveCodec {
 
     public static void write(Path path, PlayerSave save, Registry<ItemType> items) throws IOException {
         Properties properties = encode(save, items);
-        Path parent = path.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-        try (OutputStream out = Files.newOutputStream(path)) {
-            properties.store(out, "Adventura player save");
-        }
+        SaveFiles.writePropertiesAtomically(path, properties, "Adventura player save");
     }
 
     public static PlayerSave read(Path path, Registry<ItemType> items) throws IOException {
+        return decode(readProperties(path), items);
+    }
+
+    static Properties readProperties(Path path) throws IOException {
         Properties properties = new Properties();
         try (InputStream in = Files.newInputStream(path)) {
             properties.load(in);
         }
-        return decode(properties, items);
+        return properties;
     }
 
     public static Properties encode(PlayerSave save, Registry<ItemType> items) {

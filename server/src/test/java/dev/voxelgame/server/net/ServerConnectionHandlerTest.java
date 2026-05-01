@@ -3,14 +3,20 @@ package dev.voxelgame.server.net;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.item.CraftingCategory;
+import dev.voxelgame.common.item.CraftingRecipe;
+import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.item.Inventory;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
+import dev.voxelgame.common.item.RecipeUnlock;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.registry.Registry;
+import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.server.auth.AuthResult;
 import dev.voxelgame.server.entity.ServerEntityTracker;
 import dev.voxelgame.server.save.PlayerSave;
@@ -25,8 +31,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -92,6 +101,51 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void craftRequestRejectsServerLockedRecipeEvenWithIngredients() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short pebble = items.requireByKey("voxel:pebble").id();
+        short knife = items.requireByKey("voxel:stone_knife").id();
+        CraftingRecipe lockedRecipe = lockedInventoryRecipe(items);
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), new ServerEntityTracker(), PLAYER_ID, List.of(lockedRecipe));
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(pebble, 1));
+
+            channel.writeInbound(new GamePacket.CraftRequest(lockedRecipe.key(), 1, false, 0, 0, 0, 1));
+
+            List<ItemStack> slots = readLastInventory(channel);
+            assertEquals(new ItemStack(pebble, 1), slots.getFirst());
+            assertEquals(0, count(slots, items, "voxel:stone_knife"));
+            assertEquals(1, count(slots, items, "voxel:pebble"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void craftRequestAcceptsServerDiscoveredLockedRecipe() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short pebble = items.requireByKey("voxel:pebble").id();
+        CraftingRecipe lockedRecipe = lockedInventoryRecipe(items);
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), new ServerEntityTracker(), PLAYER_ID, List.of(lockedRecipe));
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(pebble, 1));
+            setDiscoveredRecipes(channel, List.of(lockedRecipe.key()));
+
+            channel.writeInbound(new GamePacket.CraftRequest(lockedRecipe.key(), 1, false, 0, 0, 0, 1));
+
+            List<ItemStack> slots = readLastInventory(channel);
+            assertEquals(0, count(slots, items, "voxel:pebble"));
+            assertEquals(1, count(slots, items, "voxel:stone_knife"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void timedCampfireRecipeRejectsLegacyCraftRequest() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         ServerWorld world = new ServerWorld(123L);
@@ -122,6 +176,33 @@ class ServerConnectionHandlerTest {
 
             assertEquals(0, count(slots, items, "voxel:charcoal"));
             assertEquals(6, count(slots, items, "voxel:skyroot_log"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void cookRequestRejectsServerLockedRecipeEvenAtValidStation() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.COOKING_POT);
+        CraftingRecipe lockedRecipe = lockedCookingRecipe(items);
+        EmbeddedChannel channel = loggedInChannel(world, new ServerEntityTracker(), PLAYER_ID, List.of(lockedRecipe));
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.add(items.requireByKey("voxel:wild_herbs").id(), 2, items);
+            inventory.add(items.requireByKey("voxel:water_container").id(), 1, items);
+            inventory.add(items.requireByKey("voxel:clay_bowl").id(), 1, items);
+
+            channel.writeInbound(new GamePacket.CookRequest(8, 120, 9, lockedRecipe.key(), List.of(0, 1, 2), 1));
+
+            List<ItemStack> slots = readLastInventory(channel);
+            assertEquals(2, count(slots, items, "voxel:wild_herbs"));
+            assertEquals(1, count(slots, items, "voxel:water_container"));
+            assertEquals(1, count(slots, items, "voxel:clay_bowl"));
+            assertEquals(0, count(slots, items, "voxel:herb_soup"));
+            assertNull(pendingCook(channel));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -552,6 +633,7 @@ class ServerConnectionHandlerTest {
                             .interestStats()
                             .discardedUpdatesOutsideInterest()
             );
+            assertTrue(containsInterestLog(distantViewer, "filter block_update outside_chunk_interest"));
         } finally {
             viewer.finishAndReleaseAll();
             distantViewer.finishAndReleaseAll();
@@ -570,6 +652,86 @@ class ServerConnectionHandlerTest {
             assertTrue(stats.packetRatePerSecond() > 0.0);
         } finally {
             channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void chunkSubscriptionsUseSharedStreamingRingOrder() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker(),
+                1,
+                null,
+                ServerChunkStreamer.direct()
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+
+            List<GamePacket.ChunkData> chunks = readChunkDataPackets(channel);
+
+            assertEquals(9, chunks.size());
+            assertEquals(new ChunkPos(0, 0), chunks.getFirst().pos());
+            assertTrue(chunks.stream().anyMatch(chunk -> chunk.pos().equals(new ChunkPos(-1, -1))));
+            assertTrue(chunks.stream().anyMatch(chunk -> chunk.pos().equals(new ChunkPos(1, 1))));
+            assertEquals(9, handler(channel).interestStats().chunkSubscriptions());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void asyncChunkCompletionIgnoresChunkAfterViewerMovesOutOfInterest() throws Exception {
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        ChunkPos initialPos = ChunkPos.fromBlock(8, 8);
+        ChunkPos movedPos = ChunkPos.fromBlock(96, 8);
+        CountDownLatch enteredInitialLoad = new CountDownLatch(1);
+        CountDownLatch releaseInitialLoad = new CountDownLatch(1);
+        CountDownLatch loadedMovedChunk = new CountDownLatch(1);
+        ServerChunkStreamer streamer = ServerChunkStreamer.async(
+                "test-chunk-streamer",
+                1,
+                8,
+                (serverWorld, pos) -> {
+                    if (pos.equals(initialPos)) {
+                        enteredInitialLoad.countDown();
+                        assertTrue(await(releaseInitialLoad));
+                    }
+                    if (pos.equals(movedPos)) {
+                        loadedMovedChunk.countDown();
+                    }
+                    return emptyChunk(pos);
+                }
+        );
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                tracker,
+                TEST_STREAM_RADIUS_CHUNKS,
+                null,
+                streamer
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+            assertTrue(enteredInitialLoad.await(3, TimeUnit.SECONDS));
+
+            channel.writeInbound(new GamePacket.PlayerMove(96.5, 180.0, 8.5, 0.0f, 0.0f, false));
+            drainOutbound(channel);
+
+            releaseInitialLoad.countDown();
+            assertTrue(loadedMovedChunk.await(3, TimeUnit.SECONDS));
+            channel.runPendingTasks();
+
+            List<GamePacket.ChunkData> chunks = readChunkDataPackets(channel);
+            assertFalse(chunks.stream().anyMatch(chunk -> chunk.pos().equals(initialPos)));
+            assertTrue(chunks.stream().anyMatch(chunk -> chunk.pos().equals(movedPos)));
+            assertEquals(1, handler(channel).interestStats().chunkSubscriptions());
+        } finally {
+            channel.finishAndReleaseAll();
+            streamer.close();
         }
     }
 
@@ -598,6 +760,7 @@ class ServerConnectionHandlerTest {
         world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
         EmbeddedChannel channel = loggedInChannel(world);
         try {
+            long packetsBefore = handler(channel).interestStats().sentPackets();
             channel.writeInbound(new GamePacket.BlockInteract(0, 8, 120, 9));
 
             GamePacket.StorageOpen storage = readLastStorageOpen(channel);
@@ -606,8 +769,31 @@ class ServerConnectionHandlerTest {
             assertEquals(120, storage.y());
             assertEquals(9, storage.z());
             assertEquals(ServerWorld.STORAGE_CRATE_SLOTS, storage.slots().size());
+            assertTrue(handler(channel).interestStats().sentPackets() > packetsBefore);
         } finally {
             channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void storageOpenSnapshotOnlyReachesRequestingUiConnection() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel opener = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel bystander = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
+        try {
+            drainOutbound(opener);
+            drainOutbound(bystander);
+
+            opener.writeInbound(new GamePacket.StorageOpenRequest(8, 120, 9));
+
+            GamePacket.StorageOpen storage = readLastStorageOpen(opener);
+            assertEquals(8, storage.x());
+            assertFalse(drainHasStorageOpen(bystander));
+        } finally {
+            opener.finishAndReleaseAll();
+            bystander.finishAndReleaseAll();
         }
     }
 
@@ -660,6 +846,101 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void storageTransferSnapshotOnlyReachesRequestingUiConnection() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel sender = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel bystander = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
+        try {
+            drainOutbound(sender);
+            drainOutbound(bystander);
+
+            sender.writeInbound(new GamePacket.StorageTransfer(
+                    8,
+                    120,
+                    9,
+                    false,
+                    0,
+                    GamePacket.StorageTransfer.AUTO_TARGET_SLOT,
+                    1,
+                    1
+            ));
+
+            assertTrue(readStorageOpenResponse(sender).hasStorageOpen());
+            assertFalse(drainHasStorageOpen(bystander));
+        } finally {
+            sender.finishAndReleaseAll();
+            bystander.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void breakingStorageCrateClosesOpenUiForViewers() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel opener = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel breaker = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
+        try {
+            drainOutbound(opener);
+            drainOutbound(breaker);
+            opener.writeInbound(new GamePacket.StorageOpenRequest(8, 120, 9, 1));
+            readLastStorageOpen(opener);
+
+            breaker.writeInbound(new GamePacket.BlockAction(
+                    GamePacket.BlockAction.Action.BREAK,
+                    0,
+                    8,
+                    120,
+                    9,
+                    0,
+                    0,
+                    0,
+                    Blocks.AIR
+            ));
+
+            assertTrue(drainHasStorageClose(opener));
+            assertFalse(drainHasStorageClose(breaker));
+            assertEquals(Blocks.AIR, world.blockAt(8, 120, 9).orElseThrow().id());
+        } finally {
+            opener.finishAndReleaseAll();
+            breaker.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void storageTransferAfterCrateDestroyedClosesUiAndKeepsInventory() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.STORAGE_CRATE);
+        EmbeddedChannel channel = loggedInChannel(world);
+        try {
+            channel.writeInbound(new GamePacket.StorageOpenRequest(8, 120, 9, 1));
+            readLastStorageOpen(channel);
+            world.setBlock(8, 120, 9, Blocks.AIR);
+
+            channel.writeInbound(new GamePacket.StorageTransfer(
+                    8,
+                    120,
+                    9,
+                    false,
+                    0,
+                    GamePacket.StorageTransfer.AUTO_TARGET_SLOT,
+                    1,
+                    2
+            ));
+            StorageCloseResponse response = readStorageCloseResponse(channel);
+
+            assertTrue(response.hasStorageClose());
+            assertEquals(16, count(response.inventory().slots(), items, "voxel:dirt"));
+            assertTrue(containsInterestLog(channel, "reject storage_transfer missing_block_entity"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void storageOpenRequestRejectsFarCrate() {
         ServerWorld world = new ServerWorld(123L);
         world.setBlock(80, 120, 80, Blocks.STORAGE_CRATE);
@@ -670,6 +951,7 @@ class ServerConnectionHandlerTest {
             StorageOpenResponse response = readStorageOpenResponse(channel);
 
             assertFalse(response.hasStorageOpen());
+            assertTrue(containsInterestLog(channel, "reject storage_open outside_ui_interest"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -687,6 +969,7 @@ class ServerConnectionHandlerTest {
             StorageOpenResponse response = readStorageOpenResponse(channel);
 
             assertFalse(response.hasStorageOpen());
+            assertTrue(containsInterestLog(channel, "reject storage_open outside_ui_interest"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -714,6 +997,7 @@ class ServerConnectionHandlerTest {
 
             assertFalse(response.hasStorageOpen());
             assertEquals(16, count(response.inventory().slots(), items, "voxel:dirt"));
+            assertTrue(containsInterestLog(channel, "reject storage_transfer outside_ui_interest"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1210,6 +1494,117 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void projectileShootSpawnsServerAuthorizedProjectileAndDamagesLauncher() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short knife = items.requireByKey("voxel:stone_knife").id();
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(knife, 1));
+
+            channel.writeInbound(new GamePacket.ProjectileShoot(0, 1L));
+
+            EntityInteractResponse response = readEntityInteractResponse(channel);
+            assertEquals(1, tracker.projectileCount());
+            assertEquals(new ItemStack(knife, 1, 1), response.inventory().slots().getFirst());
+            assertTrue(response.hasEntitySnapshots());
+            assertTrue(response.entitySnapshots().snapshots().stream()
+                    .anyMatch(snapshot -> PLAYER_ID.equals(snapshot.ownerPlayerId())
+                            && EntitySnapshot.STATE_PROJECTILE.equals(snapshot.stateKey())));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void projectileShootRejectsNonLauncherItem() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(items.requireByKey("voxel:dirt").id(), 1));
+
+            channel.writeInbound(new GamePacket.ProjectileShoot(0, 1L));
+
+            EntityInteractResponse response = readEntityInteractResponse(channel);
+            assertEquals(0, tracker.projectileCount());
+            assertFalse(response.hasEntitySnapshots());
+            assertEquals(new ItemStack(items.requireByKey("voxel:dirt").id(), 1), response.inventory().slots().getFirst());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void projectileShootRejectsForgedSlotOutsideInventory() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            channel.writeInbound(new GamePacket.ProjectileShoot(999, 1L));
+
+            EntityInteractResponse response = readEntityInteractResponse(channel);
+            assertEquals(0, tracker.projectileCount());
+            assertFalse(response.hasEntitySnapshots());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void projectileShootSpamIsRateLimited() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short knife = items.requireByKey("voxel:stone_knife").id();
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(knife, 1));
+
+            for (int i = 1; i <= 13; i++) {
+                channel.writeInbound(new GamePacket.ProjectileShoot(0, i));
+            }
+            drainOutbound(channel);
+
+            ServerConnectionHandler.IntentRejectStats stats = handler(channel).intentRejectStats();
+            assertEquals(3, stats.totalRejects());
+            assertEquals(3, stats.projectileShootRejects());
+            assertEquals(1, tracker.projectileCount());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void gameServerBroadcastsProjectileImpactFromAuthoritativeTick() throws Exception {
+        ServerWorld world = new ServerWorld(123L);
+        GameServer server = new GameServer(0, world, (username, authToken) -> AuthResult.accepted(PLAYER_ID));
+        ServerEntityTracker tracker = serverEntityTracker(server);
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        try {
+            drainOutbound(channel);
+            world.setBlock(2, 80, 0, Blocks.STONE);
+            tracker.spawnArrowProjectile(PLAYER_ID, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
+
+            server.tickEntities(99L);
+
+            GamePacket.ProjectileImpact impact = readLastProjectileImpact(channel);
+            assertEquals(ProjectileHit.Type.BLOCK, impact.hitType());
+            assertEquals("voxel:arrow_projectile", impact.projectileTypeKey());
+            assertEquals(99L, impact.serverTick());
+            assertEquals(0, tracker.projectileCount());
+        } finally {
+            channel.finishAndReleaseAll();
+            server.close();
+        }
+    }
+
+    @Test
     void playerMoveCollectsNearbyReadyItemDrops() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         ServerEntityTracker tracker = new ServerEntityTracker();
@@ -1321,6 +1716,7 @@ class ServerConnectionHandlerTest {
             GamePacket.PlayerPositionSnapshot position = readLastPlayerPosition(channel);
             assertEquals(9.5, position.x(), 0.001);
             assertEquals(10.5, position.z(), 0.001);
+            assertEquals(GamePacket.MovementCorrection.RESPAWN_TELEPORT, position.correction());
 
             channel.writeInbound(new GamePacket.PlayerMove(
                     1L,
@@ -1347,15 +1743,68 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void loginFallsBackToWorldSpawnWhenSavedPositionIsUnsafe(@TempDir Path playerSaveDirectory) throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short berries = items.requireByKey("voxel:berries").id();
+        PlayerSaveStore.save(playerSaveDirectory, new PlayerSave(
+                SaveMetadata.CURRENT_SAVE_VERSION,
+                PLAYER_ID,
+                "SavedTester",
+                9.5,
+                120.0,
+                10.5,
+                30.0f,
+                4.0f,
+                List.of(new ItemStack(berries, 6)),
+                0,
+                PlayerSave.SurvivalStats.defaults(),
+                PlayerSave.SpawnPoint.empty(),
+                "survival",
+                List.of(),
+                List.of(),
+                List.of(),
+                "overworld"
+        ));
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(9, 118, 10, Blocks.WATER);
+        var spawn = world.spawnPoint();
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker(),
+                TEST_STREAM_RADIUS_CHUNKS,
+                playerSaveDirectory
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+
+            GamePacket.PlayerPositionSnapshot position = readLastPlayerPosition(channel);
+            assertEquals(spawn.eyeX(), position.x(), 0.001);
+            assertEquals(spawn.eyeY(), position.y(), 0.001);
+            assertEquals(spawn.eyeZ(), position.z(), 0.001);
+            assertFalse(position.waterState().movementAffected());
+            assertEquals(GamePacket.MovementCorrection.RESPAWN_TELEPORT, position.correction());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveRejectsExtremeTeleportAfterAcceptedMove() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
         try {
-            channel.writeInbound(new GamePacket.PlayerMove(8.75, 120.0, 8.75, 0.0f, 0.0f, false));
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 8.75, 120.0, 8.75, 0.0f, 0.0f, false));
             drainOutbound(channel);
 
-            channel.writeInbound(new GamePacket.PlayerMove(1000.0, 120.0, 1000.0, 0.0f, 0.0f, false));
-            drainOutbound(channel);
+            channel.writeInbound(new GamePacket.PlayerMove(2L, 1000.0, 120.0, 1000.0, 0.0f, 0.0f, false));
+
+            GamePacket.PlayerPositionSnapshot correction = readLastPlayerPosition(channel);
+            assertEquals(2L, correction.sequence());
+            assertEquals(8.75, correction.x(), 0.001);
+            assertEquals(120.0, correction.y(), 0.001);
+            assertEquals(8.75, correction.z(), 0.001);
+            assertEquals(GamePacket.MovementCorrection.RESPAWN_TELEPORT, correction.correction());
 
             EntitySnapshot player = playerSnapshot(tracker);
             assertEquals(8.75, player.x(), 0.001);
@@ -1608,6 +2057,7 @@ class ServerConnectionHandlerTest {
             assertEquals(8.75, snapshot.z(), 0.001);
             assertEquals(12.0f, snapshot.yaw(), 0.001f);
             assertEquals(-4.0f, snapshot.pitch(), 0.001f);
+            assertEquals(GamePacket.MovementCorrection.SOFT, snapshot.correction());
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1629,6 +2079,7 @@ class ServerConnectionHandlerTest {
             assertEquals(8.75, snapshot.x(), 0.001);
             assertEquals(180.0, snapshot.y(), 0.001);
             assertEquals(8.75, snapshot.z(), 0.001);
+            assertEquals(GamePacket.MovementCorrection.SOFT, snapshot.correction());
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1890,6 +2341,55 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void craftIntentSpamIsRateLimitedBeforeItCanAmplifyResponses() {
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L));
+        try {
+            for (int transactionId = 1; transactionId <= 12; transactionId++) {
+                channel.writeInbound(new GamePacket.CraftRequest(
+                        "voxel:not_a_recipe",
+                        1,
+                        false,
+                        0,
+                        0,
+                        0,
+                        transactionId
+                ));
+            }
+            drainOutbound(channel);
+
+            ServerConnectionHandler.IntentRejectStats stats = handler(channel).intentRejectStats();
+            assertEquals(4, stats.totalRejects());
+            assertEquals(4, stats.craftRejects());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void chatIntentSpamIsRateLimitedBeforeBroadcast() {
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel sender = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel receiver = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
+        try {
+            drainOutbound(sender);
+            drainOutbound(receiver);
+
+            for (int i = 1; i <= 8; i++) {
+                sender.writeInbound(new GamePacket.Chat("hello " + i));
+            }
+
+            assertEquals(5, countChatPackets(receiver));
+            ServerConnectionHandler.IntentRejectStats stats = handler(sender).intentRejectStats();
+            assertEquals(3, stats.totalRejects());
+            assertEquals(3, stats.chatRejects());
+        } finally {
+            sender.finishAndReleaseAll();
+            receiver.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void clientTransactionIdsMustAdvanceByExactlyOne() throws Exception {
         ServerConnectionHandler handler = new ServerConnectionHandler(
                 new ServerWorld(123L),
@@ -1945,6 +2445,26 @@ class ServerConnectionHandlerTest {
         return channel;
     }
 
+    private static EmbeddedChannel loggedInChannel(
+            ServerWorld world,
+            ServerEntityTracker tracker,
+            UUID playerId,
+            List<CraftingRecipe> recipes
+    ) {
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(playerId),
+                tracker,
+                TEST_STREAM_RADIUS_CHUNKS,
+                null,
+                ServerChunkStreamer.direct(),
+                recipes
+        ));
+        channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+        drainOutbound(channel);
+        return channel;
+    }
+
     private static List<ItemStack> readLastInventory(EmbeddedChannel channel) {
         GamePacket.InventorySnapshot snapshot = null;
         Object outbound;
@@ -1988,6 +2508,45 @@ class ServerConnectionHandlerTest {
             throw new AssertionError("Expected storage open or inventory snapshot");
         }
         return new StorageOpenResponse(storage, inventory);
+    }
+
+    private static boolean drainHasStorageOpen(EmbeddedChannel channel) {
+        boolean hasStorageOpen = false;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.StorageOpen) {
+                hasStorageOpen = true;
+            }
+        }
+        return hasStorageOpen;
+    }
+
+    private static boolean drainHasStorageClose(EmbeddedChannel channel) {
+        boolean hasStorageClose = false;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.StorageClose) {
+                hasStorageClose = true;
+            }
+        }
+        return hasStorageClose;
+    }
+
+    private static StorageCloseResponse readStorageCloseResponse(EmbeddedChannel channel) {
+        GamePacket.StorageClose storageClose = null;
+        GamePacket.InventorySnapshot inventory = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.StorageClose close) {
+                storageClose = close;
+            } else if (outbound instanceof GamePacket.InventorySnapshot snapshot) {
+                inventory = snapshot;
+            }
+        }
+        if (storageClose == null && inventory == null) {
+            throw new AssertionError("Expected storage close or inventory snapshot");
+        }
+        return new StorageCloseResponse(storageClose, inventory);
     }
 
     private static OutboundPackets readOutboundPackets(EmbeddedChannel channel) {
@@ -2038,6 +2597,17 @@ class ServerConnectionHandlerTest {
         return new BlockUpdateResponse(blockUpdate);
     }
 
+    private static List<GamePacket.ChunkData> readChunkDataPackets(EmbeddedChannel channel) {
+        List<GamePacket.ChunkData> chunks = new ArrayList<>();
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.ChunkData chunk) {
+                chunks.add(chunk);
+            }
+        }
+        return chunks;
+    }
+
     private static EntityInteractResponse readEntityInteractResponse(EmbeddedChannel channel) {
         GamePacket.InventorySnapshot inventory = null;
         GamePacket.EntitySnapshots entitySnapshots = null;
@@ -2053,6 +2623,20 @@ class ServerConnectionHandlerTest {
             throw new AssertionError("Expected inventory snapshot");
         }
         return new EntityInteractResponse(inventory, entitySnapshots);
+    }
+
+    private static GamePacket.ProjectileImpact readLastProjectileImpact(EmbeddedChannel channel) {
+        GamePacket.ProjectileImpact impact = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.ProjectileImpact projectileImpact) {
+                impact = projectileImpact;
+            }
+        }
+        if (impact == null) {
+            throw new AssertionError("Expected projectile impact");
+        }
+        return impact;
     }
 
     private static GamePacket.PlayerStatsSnapshot readLastPlayerStats(EmbeddedChannel channel) {
@@ -2125,6 +2709,17 @@ class ServerConnectionHandlerTest {
         return chat;
     }
 
+    private static int countChatPackets(EmbeddedChannel channel) {
+        int count = 0;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.Chat) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static GamePacket.EntitySnapshots flushEntitySnapshots(
             ServerWorld world,
             ServerEntityTracker tracker,
@@ -2147,6 +2742,19 @@ class ServerConnectionHandlerTest {
 
     private static void drainOutbound(EmbeddedChannel channel) {
         while (channel.readOutbound() != null) {
+        }
+    }
+
+    private static GamePacket.ChunkData emptyChunk(ChunkPos pos) {
+        return new GamePacket.ChunkData(pos, 0, new short[0], new byte[0], new byte[0]);
+    }
+
+    private static boolean await(CountDownLatch latch) {
+        try {
+            return latch.await(3, TimeUnit.SECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -2205,8 +2813,18 @@ class ServerConnectionHandlerTest {
         gameModeField.set(handler(channel), gameMode);
     }
 
+    private static void setDiscoveredRecipes(EmbeddedChannel channel, List<String> recipeKeys) throws Exception {
+        Field discoveredRecipesField = ServerConnectionHandler.class.getDeclaredField("discoveredRecipes");
+        discoveredRecipesField.setAccessible(true);
+        discoveredRecipesField.set(handler(channel), List.copyOf(recipeKeys));
+    }
+
     private static ServerConnectionHandler handler(EmbeddedChannel channel) {
         return channel.pipeline().get(ServerConnectionHandler.class);
+    }
+
+    private static boolean containsInterestLog(EmbeddedChannel channel, String fragment) {
+        return handler(channel).interestDebugLog().stream().anyMatch(entry -> entry.contains(fragment));
     }
 
     private static boolean containsEntity(GamePacket.EntitySnapshots snapshots, long entityId) {
@@ -2223,6 +2841,44 @@ class ServerConnectionHandlerTest {
         Field inventoryField = ServerConnectionHandler.class.getDeclaredField("inventory");
         inventoryField.setAccessible(true);
         return (Inventory) inventoryField.get(channel.pipeline().get(ServerConnectionHandler.class));
+    }
+
+    private static ServerEntityTracker serverEntityTracker(GameServer server) throws Exception {
+        Field entityTrackerField = GameServer.class.getDeclaredField("entityTracker");
+        entityTrackerField.setAccessible(true);
+        return (ServerEntityTracker) entityTrackerField.get(server);
+    }
+
+    private static CraftingRecipe lockedInventoryRecipe(Registry<ItemType> items) {
+        return new CraftingRecipe(
+                "voxel:locked_knife",
+                "Locked Knife",
+                List.of(new CraftingRecipe.Ingredient(items.requireByKey("voxel:pebble").id(), 1)),
+                new ItemStack(items.requireByKey("voxel:stone_knife").id(), 1),
+                CraftingStationType.INVENTORY,
+                RecipeUnlock.FOUND_LORE_NOTE,
+                0,
+                0,
+                CraftingCategory.TOOLS
+        );
+    }
+
+    private static CraftingRecipe lockedCookingRecipe(Registry<ItemType> items) {
+        return new CraftingRecipe(
+                "voxel:locked_herb_soup",
+                "Locked Herb Soup",
+                List.of(
+                        new CraftingRecipe.Ingredient(items.requireByKey("voxel:wild_herbs").id(), 2),
+                        new CraftingRecipe.Ingredient(items.requireByKey("voxel:water_container").id(), 1),
+                        new CraftingRecipe.Ingredient(items.requireByKey("voxel:clay_bowl").id(), 1)
+                ),
+                new ItemStack(items.requireByKey("voxel:herb_soup").id(), 1),
+                CraftingStationType.COOKING_POT,
+                RecipeUnlock.FOUND_LORE_NOTE,
+                120,
+                0,
+                CraftingCategory.FOOD
+        );
     }
 
     private static int count(List<ItemStack> slots, Registry<ItemType> items, String key) {
@@ -2255,6 +2911,12 @@ class ServerConnectionHandlerTest {
     private record StorageOpenResponse(GamePacket.StorageOpen storageOpen, GamePacket.InventorySnapshot inventory) {
         boolean hasStorageOpen() {
             return storageOpen != null;
+        }
+    }
+
+    private record StorageCloseResponse(GamePacket.StorageClose storageClose, GamePacket.InventorySnapshot inventory) {
+        boolean hasStorageClose() {
+            return storageClose != null;
         }
     }
 

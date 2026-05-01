@@ -17,6 +17,9 @@ import dev.voxelgame.common.loot.LootTableRegistry;
 import dev.voxelgame.common.loot.LootTables;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.BlockCollisionShapes;
+import dev.voxelgame.common.physics.EnvironmentHazardRules;
+import dev.voxelgame.common.physics.EntityPhysicsProfile;
+import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.ProjectileBounds;
@@ -55,6 +58,7 @@ public final class ServerWorld {
     private final long seed;
     private final InMemoryWorld world;
     private final OverworldGenerator generator;
+    private final OverworldGenerator.SpawnPoint spawnPoint;
     private final LightEngine lightEngine = new LightEngine();
     private final Registry<ItemType> items = Items.createDefaultRegistry();
     private final LootTableRegistry lootTables = LootTables.createDefaultRegistry();
@@ -70,10 +74,15 @@ public final class ServerWorld {
         this.seed = seed;
         this.world = new InMemoryWorld(DimensionSettings.OVERWORLD, blocks);
         this.generator = new OverworldGenerator(seed);
+        this.spawnPoint = generator.safeSpawnPoint();
     }
 
     public long seed() {
         return seed;
+    }
+
+    public synchronized OverworldGenerator.SpawnPoint spawnPoint() {
+        return spawnPoint;
     }
 
     public DimensionSettings dimension() {
@@ -152,6 +161,7 @@ public final class ServerWorld {
         getOrGenerateChunk(ChunkPos.fromBlock(x, z));
         short previousBlock = world.blockId(x, y, z);
         world.setBlockId(x, y, z, blockId);
+        world.findChunk(ChunkPos.fromBlock(x, z)).ifPresent(Chunk::invalidateTerrainCache);
         BlockPos pos = new BlockPos(x, y, z);
         syncBlockEntityForBlock(pos, blockId);
         if (previousBlock != blockId && recordDiff) {
@@ -316,10 +326,15 @@ public final class ServerWorld {
         if (collidesEntity(snapshot)) {
             return false;
         }
-        if (ignoresGroundCollision(snapshot.typeKey())) {
+        EntityPhysicsProfile profile = EntityPhysicsProfile.forType(snapshot.typeKey());
+        if (profile.ignoresTerrainSupport()) {
             return true;
         }
-        if (touchesWater(snapshot)) {
+        boolean touchesWater = touchesWater(snapshot);
+        if (touchesWater && profile.acceptsWaterPlacement()) {
+            return true;
+        }
+        if (touchesWater && profile.blocksWaterPlacement()) {
             return false;
         }
 
@@ -374,6 +389,42 @@ public final class ServerWorld {
         return blockIdAt(floor(x), floor(y), floor(z)) == Blocks.WATER;
     }
 
+    public synchronized FluidPhysics.FluidSample fluidSample(double x, double y, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            return FluidPhysics.air();
+        }
+        int blockX = floor(x);
+        int blockY = floor(y);
+        int blockZ = floor(z);
+        if (blockIdAt(blockX, blockY, blockZ) != Blocks.WATER) {
+            return FluidPhysics.air();
+        }
+        double phase = (blockX * 0.37) + (blockZ * 0.61) + (blockY * 0.13) + (seed & 0xFFFFL) * 0.0003;
+        double velocityX = Math.sin(phase) * 0.16;
+        double velocityZ = Math.cos(phase * 0.73) * 0.16;
+        return FluidPhysics.water(velocityX, 0.025, velocityZ);
+    }
+
+    public synchronized EnvironmentHazardRules.Hazard environmentHazardAtPlayer(double eyeX, double eyeY, double eyeZ, PlayerBounds bounds) {
+        if (bounds == null || !Double.isFinite(eyeX) || !Double.isFinite(eyeY) || !Double.isFinite(eyeZ)) {
+            return EnvironmentHazardRules.combine(List.of());
+        }
+        List<EnvironmentHazardRules.Hazard> hazards = new ArrayList<>();
+        for (int y = floor(bounds.minY(eyeY)); y <= floor(bounds.maxY(eyeY)); y++) {
+            if (!world.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = floor(bounds.minZ(eyeZ)); z <= floor(bounds.maxZ(eyeZ)); z++) {
+                for (int x = floor(bounds.minX(eyeX)); x <= floor(bounds.maxX(eyeX)); x++) {
+                    if (bounds.intersectsBlock(eyeX, eyeY, eyeZ, x, y, z)) {
+                        hazards.add(EnvironmentHazardRules.forBlock(blockIdAt(x, y, z)));
+                    }
+                }
+            }
+        }
+        return EnvironmentHazardRules.combine(hazards);
+    }
+
     private boolean collidesEntity(EntitySnapshot snapshot) {
         EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
         double baseY = EntityBounds.baseY(snapshot);
@@ -425,10 +476,6 @@ public final class ServerWorld {
             }
         }
         return false;
-    }
-
-    private static boolean ignoresGroundCollision(String typeKey) {
-        return "voxel:firefly_swarm".equals(typeKey) || "voxel:mire_wisp".equals(typeKey);
     }
 
     private static boolean prefersGrass(String typeKey) {
@@ -772,7 +819,14 @@ public final class ServerWorld {
     }
 
     private Optional<LootMarkerContext> lootMarkerFor(BlockPos pos) {
-        return generator.structureAtChunk(ChunkPos.fromBlock(pos.x(), pos.z()))
+        ChunkPos chunkPos = ChunkPos.fromBlock(pos.x(), pos.z());
+        Optional<OverworldGenerator.GeneratedStructure> generatedStructure = world.findChunk(chunkPos)
+                .flatMap(Chunk::terrainCache)
+                .flatMap(generator::structureAtChunk);
+        if (generatedStructure.isEmpty()) {
+            generatedStructure = generator.structureAtChunk(chunkPos);
+        }
+        return generatedStructure
                 .flatMap(structure -> {
                     for (StructureMarker marker : structure.template().lootMarkers()) {
                         int markerX = structure.originX() + marker.x();

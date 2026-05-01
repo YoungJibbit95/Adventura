@@ -22,10 +22,13 @@ import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkDataCodec;
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.ChunkSection;
+import dev.voxelgame.common.world.ChunkStreamingRings;
+import dev.voxelgame.common.world.ChunkTerrainCache;
 import dev.voxelgame.common.world.DimensionSettings;
 import dev.voxelgame.common.world.InMemoryWorld;
 import dev.voxelgame.common.world.gen.OverworldGenerator;
 import dev.voxelgame.common.world.light.LightEngine;
+import dev.voxelgame.common.world.light.LightRules;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 
@@ -47,6 +50,7 @@ public final class ClientWorld {
 
     private final InMemoryWorld world;
     private final OverworldGenerator generator;
+    private final OverworldGenerator.SpawnPoint spawnPoint;
     private final LightEngine lightEngine = new LightEngine();
     private final long seed;
     private final ChunkBuildQueue buildQueue = new ChunkBuildQueue();
@@ -65,6 +69,7 @@ public final class ClientWorld {
         this.seed = seed;
         this.world = new InMemoryWorld(DimensionSettings.OVERWORLD, blocks);
         this.generator = new OverworldGenerator(seed);
+        this.spawnPoint = generator.safeSpawnPoint();
     }
 
     public DimensionSettings dimension() {
@@ -98,7 +103,12 @@ public final class ClientWorld {
     }
 
     public synchronized void applyBlock(GamePacket.BlockUpdate update) {
+        short oldBlockId = world.blockId(update.x(), update.y(), update.z());
+        BlockType oldBlock = world.blockType(oldBlockId);
+        BlockType newBlock = world.blockType(update.blockId());
         world.setBlockId(update.x(), update.y(), update.z(), update.blockId());
+        world.findChunk(ChunkPos.fromBlock(update.x(), update.z())).ifPresent(Chunk::invalidateTerrainCache);
+        markBoundarySectionsGeometryDirty(update.x(), update.y(), update.z());
         modifiedChunks.add(ChunkPos.fromBlock(update.x(), update.z()));
         BlockPos pos = new BlockPos(update.x(), update.y(), update.z());
         if (!CampfireRules.isActiveCampfire(update.blockId())) {
@@ -108,9 +118,20 @@ public final class ClientWorld {
             campfireStatuses.remove(pos);
         }
         long lightingStartNanos = System.nanoTime();
-        lightEngine.rebuildChunkLighting(world, ChunkPos.fromBlock(update.x(), update.z()));
+        ChunkPos center = ChunkPos.fromBlock(update.x(), update.z());
+        boolean skyRulesChanged = LightRules.skyLightReduction(oldBlock) != LightRules.skyLightReduction(newBlock);
+        LightEngine.LightUpdateResult lightUpdate = lightEngine.updateBlockLight(world, update.x(), update.y(), update.z());
+        if (lightUpdate.fullRebuildFallback()) {
+            lightEngine.rebuildBlockLight(world, center);
+        }
+        if (skyRulesChanged) {
+            lightEngine.rebuildSkyLight(world, center);
+        }
         buildQueue.recordLighting((System.nanoTime() - lightingStartNanos) / 1_000_000.0);
-        markDirtyWithNeighbors(ChunkPos.fromBlock(update.x(), update.z()));
+        markDirtyWithNeighbors(center);
+        for (ChunkPos affected : lightUpdate.affectedChunks()) {
+            enqueueDirty(affected, false);
+        }
     }
 
     public synchronized void applyCampfireStatus(GamePacket.CampfireStatus status) {
@@ -602,11 +623,7 @@ public final class ClientWorld {
     }
 
     public synchronized Vector3f spawnPosition() {
-        int x = 8;
-        int z = 8;
-        int surfaceY = generator.terrainHeight(x, z, generator.biomeAt(x, z));
-        int feetY = surfaceY + 1;
-        return new Vector3f(x + 0.5f, feetY + PLAYER_BOUNDS.eyeHeight(), z + 0.5f);
+        return new Vector3f((float) spawnPoint.eyeX(), (float) spawnPoint.eyeY(), (float) spawnPoint.eyeZ());
     }
 
     public synchronized List<MeshBuild> buildDirtySolidMeshes(ChunkMesher mesher) {
@@ -639,6 +656,7 @@ public final class ClientWorld {
                     stats.temporaryBufferGrowthBytes(),
                     stats.retainedBufferBytes()
             );
+            clearSectionRenderDirtyFlags(chunk.get());
             builds.add(new MeshBuild(request.pos(), mesh));
         }
         return builds;
@@ -709,6 +727,7 @@ public final class ClientWorld {
                     opaqueStats.temporaryBufferGrowthBytes() + cutoutStats.temporaryBufferGrowthBytes() + transparentStats.temporaryBufferGrowthBytes(),
                     Math.max(opaqueStats.retainedBufferBytes(), Math.max(cutoutStats.retainedBufferBytes(), transparentStats.retainedBufferBytes()))
             );
+            clearSectionRenderDirtyFlags(chunk.get());
             builds.add(new LayeredMeshBuild(request.pos(), opaque, cutout, transparent));
         }
         return builds;
@@ -739,16 +758,33 @@ public final class ClientWorld {
     }
 
     public synchronized List<ChunkPos> unloadOutside(Vector3f position, int retainRadiusChunks) {
+        return unloadOutside(position, retainRadiusChunks, Integer.MAX_VALUE);
+    }
+
+    public synchronized List<ChunkPos> unloadOutside(Vector3f position, int retainRadiusChunks, int maxUnloads) {
         ChunkPos center = ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z));
         int retainRadius = Math.max(0, retainRadiusChunks);
+        int unloadLimit = Math.max(0, maxUnloads);
+        if (unloadLimit == 0) {
+            lastUnloadedChunks = 0;
+            return List.of();
+        }
         List<ChunkPos> loadedPositions = world.loadedChunks()
                 .stream()
                 .map(Chunk::pos)
+                .sorted(Comparator
+                        .comparingInt((ChunkPos pos) -> ChunkStreamingRings.distanceSquared(center, pos))
+                        .reversed()
+                        .thenComparingInt(ChunkPos::x)
+                        .thenComparingInt(ChunkPos::z))
                 .toList();
         List<ChunkPos> unloaded = new ArrayList<>();
         for (ChunkPos pos : loadedPositions) {
-            if (insideChunkSquare(pos, center, retainRadius) || modifiedChunks.contains(pos)) {
+            if (ChunkStreamingRings.distance(center, pos) <= retainRadius || modifiedChunks.contains(pos)) {
                 continue;
+            }
+            if (unloaded.size() >= unloadLimit) {
+                break;
             }
             world.removeChunk(pos).ifPresent(chunk -> unloaded.add(chunk.pos()));
         }
@@ -773,11 +809,28 @@ public final class ClientWorld {
         int emptySections = 0;
         int nonEmptySections = 0;
         int chunksWithBounds = 0;
+        int dirtyGeometrySections = 0;
+        int dirtyLightSections = 0;
+        int dirtyFluidSections = 0;
+        int dirtyBlockEntitySections = 0;
         for (Chunk chunk : world.loadedChunks()) {
             boolean hasNonEmptySection = false;
             totalSections += chunk.sectionCount();
             for (int i = 0; i < chunk.sectionCount(); i++) {
-                if (chunk.sectionByIndex(i).isEmpty()) {
+                ChunkSection section = chunk.sectionByIndex(i);
+                if (section.isDirty(ChunkSection.DirtyAspect.GEOMETRY)) {
+                    dirtyGeometrySections++;
+                }
+                if (section.isDirty(ChunkSection.DirtyAspect.LIGHT)) {
+                    dirtyLightSections++;
+                }
+                if (section.isDirty(ChunkSection.DirtyAspect.FLUID)) {
+                    dirtyFluidSections++;
+                }
+                if (section.isDirty(ChunkSection.DirtyAspect.BLOCK_ENTITY)) {
+                    dirtyBlockEntitySections++;
+                }
+                if (section.isEmpty()) {
                     emptySections++;
                 } else {
                     nonEmptySections++;
@@ -788,7 +841,16 @@ public final class ClientWorld {
                 chunksWithBounds++;
             }
         }
-        return new SectionStats(totalSections, emptySections, nonEmptySections, chunksWithBounds);
+        return new SectionStats(
+                totalSections,
+                emptySections,
+                nonEmptySections,
+                chunksWithBounds,
+                dirtyGeometrySections,
+                dirtyLightSections,
+                dirtyFluidSections,
+                dirtyBlockEntitySections
+        );
     }
 
     public synchronized Optional<ChunkVerticalBounds> verticalBounds(ChunkPos pos) {
@@ -805,6 +867,20 @@ public final class ClientWorld {
                 continue;
             }
             addSectionBounds(bounds, chunk);
+        }
+        return bounds;
+    }
+
+    public synchronized List<SectionLayerBounds> sectionLayerBoundsAround(Vector3f cameraPosition, int radiusChunks) {
+        int radius = Math.max(0, radiusChunks);
+        ChunkPos center = ChunkPos.fromBlock((int) Math.floor(cameraPosition.x), (int) Math.floor(cameraPosition.z));
+        List<SectionLayerBounds> bounds = new ArrayList<>();
+        for (Chunk chunk : world.loadedChunks()) {
+            ChunkPos pos = chunk.pos();
+            if (Math.abs(pos.x() - center.x()) > radius || Math.abs(pos.z() - center.z()) > radius) {
+                continue;
+            }
+            addSectionLayerBounds(bounds, chunk);
         }
         return bounds;
     }
@@ -827,6 +903,38 @@ public final class ClientWorld {
         enqueueDirty(west, urgent);
         enqueueDirty(south, urgent);
         enqueueDirty(north, urgent);
+    }
+
+    private void markBoundarySectionsGeometryDirty(int x, int y, int z) {
+        ChunkPos center = ChunkPos.fromBlock(x, z);
+        markSectionDirtyIfLoaded(center, y, ChunkSection.DirtyAspect.GEOMETRY);
+
+        int localX = ChunkPos.localCoord(x);
+        int localY = Math.floorMod(y, ChunkSection.SIZE);
+        int localZ = ChunkPos.localCoord(z);
+        if (localX == 0) {
+            markSectionDirtyIfLoaded(new ChunkPos(center.x() - 1, center.z()), y, ChunkSection.DirtyAspect.GEOMETRY);
+        } else if (localX == ChunkSection.SIZE - 1) {
+            markSectionDirtyIfLoaded(new ChunkPos(center.x() + 1, center.z()), y, ChunkSection.DirtyAspect.GEOMETRY);
+        }
+        if (localZ == 0) {
+            markSectionDirtyIfLoaded(new ChunkPos(center.x(), center.z() - 1), y, ChunkSection.DirtyAspect.GEOMETRY);
+        } else if (localZ == ChunkSection.SIZE - 1) {
+            markSectionDirtyIfLoaded(new ChunkPos(center.x(), center.z() + 1), y, ChunkSection.DirtyAspect.GEOMETRY);
+        }
+        if (localY == 0 && world.dimension().containsY(y - 1)) {
+            markSectionDirtyIfLoaded(center, y - 1, ChunkSection.DirtyAspect.GEOMETRY);
+        } else if (localY == ChunkSection.SIZE - 1 && world.dimension().containsY(y + 1)) {
+            markSectionDirtyIfLoaded(center, y + 1, ChunkSection.DirtyAspect.GEOMETRY);
+        }
+    }
+
+    private void markSectionDirtyIfLoaded(ChunkPos pos, int y, ChunkSection.DirtyAspect aspect) {
+        world.findChunk(pos).ifPresent(chunk -> {
+            if (chunk.dimension().containsY(y)) {
+                chunk.markSectionDirtyForY(y, aspect);
+            }
+        });
     }
 
     private void enqueueDirty(ChunkPos pos, boolean urgent) {
@@ -913,10 +1021,6 @@ public final class ClientWorld {
         return value * value;
     }
 
-    private static boolean insideChunkSquare(ChunkPos pos, ChunkPos center, int radius) {
-        return Math.abs(pos.x() - center.x()) <= radius && Math.abs(pos.z() - center.z()) <= radius;
-    }
-
     private void removeRuntimeDataOutsideLoadedChunks() {
         Set<ChunkPos> loadedPositions = world.loadedChunks()
                 .stream()
@@ -931,6 +1035,15 @@ public final class ClientWorld {
             }
             return !loadedPositions.contains(ChunkPos.fromBlock((int) Math.floor(snapshot.x()), (int) Math.floor(snapshot.z())));
         });
+    }
+
+    private static void clearSectionRenderDirtyFlags(Chunk chunk) {
+        for (int i = 0; i < chunk.sectionCount(); i++) {
+            ChunkSection section = chunk.sectionByIndex(i);
+            section.clearDirty(ChunkSection.DirtyAspect.GEOMETRY);
+            section.clearDirty(ChunkSection.DirtyAspect.LIGHT);
+            section.clearDirty(ChunkSection.DirtyAspect.FLUID);
+        }
     }
 
     private Optional<ChunkVerticalBounds> verticalBounds(Chunk chunk) {
@@ -970,6 +1083,41 @@ public final class ClientWorld {
             float maxY = Math.min(world.dimension().maxYExclusive(), minY + ChunkSection.SIZE);
             target.add(new ChunkMesh.Bounds(minX, minY, minZ, maxX, maxY, maxZ));
         }
+    }
+
+    private void addSectionLayerBounds(List<SectionLayerBounds> target, Chunk chunk) {
+        float minX = chunk.pos().x() * ChunkPos.SIZE;
+        float maxX = minX + ChunkPos.SIZE;
+        float minZ = chunk.pos().z() * ChunkPos.SIZE;
+        float maxZ = minZ + ChunkPos.SIZE;
+        for (int i = 0; i < chunk.sectionCount(); i++) {
+            ChunkSection section = chunk.sectionByIndex(i);
+            if (section.isEmpty()) {
+                continue;
+            }
+            float minY = Math.max(world.dimension().minY(), section.sectionY() * ChunkSection.SIZE);
+            float maxY = Math.min(world.dimension().maxYExclusive(), minY + ChunkSection.SIZE);
+            ChunkMesh.Bounds bounds = new ChunkMesh.Bounds(minX, minY, minZ, maxX, maxY, maxZ);
+            for (BlockRenderLayer layer : BlockRenderLayer.values()) {
+                if (sectionContainsRenderLayer(section, layer)) {
+                    target.add(new SectionLayerBounds(chunk.pos(), section.sectionY(), layer, bounds));
+                }
+            }
+        }
+    }
+
+    private boolean sectionContainsRenderLayer(ChunkSection section, BlockRenderLayer layer) {
+        for (int localY = 0; localY < ChunkSection.SIZE; localY++) {
+            for (int localZ = 0; localZ < ChunkSection.SIZE; localZ++) {
+                for (int localX = 0; localX < ChunkSection.SIZE; localX++) {
+                    short blockId = section.blockId(localX, localY, localZ);
+                    if (blockId != Blocks.AIR && world.blockType(blockId).renderLayer() == layer) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static int floor(double value) {
@@ -1042,7 +1190,52 @@ public final class ClientWorld {
     }
 
     public synchronized String biomeKeyAt(int x, int z) {
-        return generator.biomeAt(x, z).key();
+        return terrainCacheAt(x, z).biomeAtWorld(x, z).key();
+    }
+
+    public synchronized int terrainHeightAt(int x, int z) {
+        return terrainCacheAt(x, z).heightAtWorld(x, z);
+    }
+
+    public synchronized short terrainSurfaceBlockAt(int x, int z) {
+        return terrainCacheAt(x, z).surfaceBlockAtWorld(x, z);
+    }
+
+    public synchronized boolean terrainHasFluidAt(int x, int z) {
+        return terrainCacheAt(x, z).hasFluidAtWorld(x, z);
+    }
+
+    public synchronized boolean terrainHasCaveAt(int x, int z) {
+        return terrainCacheAt(x, z).hasCaveAtWorld(x, z);
+    }
+
+    public synchronized int terrainCacheChunkCount() {
+        int count = 0;
+        for (Chunk chunk : world.loadedChunks()) {
+            if (chunk.terrainCache().isPresent()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public synchronized long terrainCacheBytes() {
+        long bytes = 0L;
+        for (Chunk chunk : world.loadedChunks()) {
+            bytes += chunk.terrainCache().map(ChunkTerrainCache::estimatedBytes).orElse(0);
+        }
+        return bytes;
+    }
+
+    public synchronized OverworldGenerator.BiomeTransition biomeTransitionAt(int x, int z) {
+        return generator.biomeTransitionAt(x, z);
+    }
+
+    private ChunkTerrainCache terrainCacheAt(int x, int z) {
+        ChunkPos pos = ChunkPos.fromBlock(x, z);
+        return world.findChunk(pos)
+                .flatMap(Chunk::terrainCache)
+                .orElseGet(() -> generator.terrainCacheForChunk(pos));
     }
 
     public record MeshBuild(ChunkPos pos, ChunkMesh mesh) {
@@ -1054,7 +1247,19 @@ public final class ClientWorld {
     public record ChunkVerticalBounds(int minY, int maxYExclusive) {
     }
 
-    public record SectionStats(int totalSections, int emptySections, int nonEmptySections, int chunksWithSectionBounds) {
+    public record SectionStats(
+            int totalSections,
+            int emptySections,
+            int nonEmptySections,
+            int chunksWithSectionBounds,
+            int dirtyGeometrySections,
+            int dirtyLightSections,
+            int dirtyFluidSections,
+            int dirtyBlockEntitySections
+    ) {
+    }
+
+    public record SectionLayerBounds(ChunkPos pos, int sectionY, BlockRenderLayer layer, ChunkMesh.Bounds bounds) {
     }
 
     public record BlockPos(int x, int y, int z) {

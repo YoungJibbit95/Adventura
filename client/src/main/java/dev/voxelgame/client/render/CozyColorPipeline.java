@@ -51,6 +51,47 @@ public final class CozyColorPipeline {
         return mix(eveningFog(), nightFog(), Math.min(1.0f, (minute - 19 * 60) / 180.0f));
     }
 
+    public static float globalBrightnessForMinute(int totalMinutes) {
+        int minute = Math.floorMod(totalMinutes, MINUTES_PER_DAY);
+        if (minute < 5 * 60) {
+            return 0.42f;
+        }
+        if (minute < 7 * 60) {
+            return smooth(0.42f, 0.82f, (minute - 5 * 60) / 120.0f);
+        }
+        if (minute < 12 * 60) {
+            return smooth(0.82f, 1.0f, (minute - 7 * 60) / 300.0f);
+        }
+        if (minute < 17 * 60) {
+            return 1.0f;
+        }
+        if (minute < 19 * 60) {
+            return smooth(1.0f, 0.74f, (minute - 17 * 60) / 120.0f);
+        }
+        return smooth(0.74f, 0.42f, Math.min(1.0f, (minute - 19 * 60) / 180.0f));
+    }
+
+    public static float fogDistanceScaleForMinute(int totalMinutes) {
+        int minute = Math.floorMod(totalMinutes, MINUTES_PER_DAY);
+        if (minute < 5 * 60) {
+            return 0.68f;
+        }
+        if (minute < 7 * 60) {
+            return smooth(0.68f, 0.88f, (minute - 5 * 60) / 120.0f);
+        }
+        if (minute < 17 * 60) {
+            return 1.0f;
+        }
+        if (minute < 19 * 60) {
+            return smooth(1.0f, 0.82f, (minute - 17 * 60) / 120.0f);
+        }
+        return smooth(0.82f, 0.68f, Math.min(1.0f, (minute - 19 * 60) / 180.0f));
+    }
+
+    public static float nightLightBoostForMinute(int totalMinutes) {
+        return 1.0f - globalBrightnessForMinute(totalMinutes);
+    }
+
     public static Vector3f biomeTint(String biomeKey, BiomeType biome) {
         String key = biomeKey == null ? "" : biomeKey.toLowerCase(Locale.ROOT);
         if (key.contains("pine") || key.contains("skyroot") || key.contains("forest")) {
@@ -127,6 +168,12 @@ public final class CozyColorPipeline {
 
     private static float clamp01(float value) {
         return clamp(value, 0.0f, 1.0f);
+    }
+
+    private static float smooth(float from, float to, float amount) {
+        float t = clamp01(amount);
+        t = t * t * (3.0f - 2.0f * t);
+        return from + (to - from) * t;
     }
 
     private static float clamp(float value, float min, float max) {

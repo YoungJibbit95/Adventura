@@ -29,6 +29,9 @@ public final class EntityModelRegistry {
     }
 
     private static EntityModel createModel(String typeKey) {
+        if ("voxel:arrow_projectile".equals(typeKey)) {
+            return arrowProjectile(typeKey);
+        }
         if (ItemDropType.isTypeKey(typeKey)) {
             return itemDrop(typeKey);
         }
@@ -175,6 +178,15 @@ public final class EntityModelRegistry {
         ), true);
     }
 
+    private static EntityModel arrowProjectile(String typeKey) {
+        return new EntityModel(typeKey, List.of(
+                part("shaft", 0.0f, 0.08f, 0.0f, 0.62f, 0.035f, 0.035f, EntityModelPart.ColorRole.BASE),
+                part("tip", 0.34f, 0.08f, 0.0f, 0.14f, 0.075f, 0.075f, EntityModelPart.ColorRole.DARK),
+                rotatedPart("left_fletch", -0.30f, 0.08f, -0.035f, 0.12f, 0.030f, 0.085f, EntityModelPart.ColorRole.DETAIL, 0.0f, 0.0f, 0.25f),
+                rotatedPart("right_fletch", -0.30f, 0.08f, 0.035f, 0.12f, 0.030f, 0.085f, EntityModelPart.ColorRole.DETAIL, 0.0f, 0.0f, -0.25f)
+        ), false);
+    }
+
     private static EntityModelPart part(String name, float x, float y, float z, float width, float height, float depth, EntityModelPart.ColorRole role) {
         return new EntityModelPart(name, x, y, z, width, height, depth, role, false);
     }
@@ -198,6 +210,7 @@ public final class EntityModelRegistry {
             case "voxel:dune_crawler" -> new Vector3f(0.54f, 0.38f, 0.18f);
             case "voxel:forest_grazer", "voxel:meadow_grazer" -> new Vector3f(0.18f, 0.28f, 0.20f);
             case "voxel:player" -> new Vector3f(0.18f, 0.24f, 0.30f);
+            case "voxel:arrow_projectile" -> new Vector3f(0.58f, 0.42f, 0.24f);
             default -> new Vector3f(0.24f, 0.28f, 0.20f);
         };
     }
@@ -214,6 +227,7 @@ public final class EntityModelRegistry {
             case "voxel:dune_crawler" -> new Vector3f(0.82f, 0.62f, 0.28f);
             case "voxel:forest_grazer", "voxel:meadow_grazer" -> new Vector3f(0.46f, 0.58f, 0.34f);
             case "voxel:player" -> new Vector3f(0.74f, 0.84f, 0.72f);
+            case "voxel:arrow_projectile" -> new Vector3f(0.76f, 0.62f, 0.38f);
             default -> new Vector3f(0.62f, 0.72f, 0.44f);
         };
     }
@@ -229,6 +243,7 @@ public final class EntityModelRegistry {
             case "voxel:little_boar" -> new Vector3f(0.82f, 0.68f, 0.50f);
             case "voxel:mire_wisp" -> new Vector3f(0.18f, 0.80f, 0.66f);
             case "voxel:forest_grazer", "voxel:meadow_grazer" -> new Vector3f(0.64f, 0.72f, 0.46f);
+            case "voxel:arrow_projectile" -> new Vector3f(0.90f, 0.86f, 0.70f);
             default -> new Vector3f(0.66f, 0.72f, 0.50f);
         };
     }

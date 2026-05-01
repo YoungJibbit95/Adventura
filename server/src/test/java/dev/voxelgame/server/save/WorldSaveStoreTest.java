@@ -10,9 +10,11 @@ import dev.voxelgame.server.world.ServerWorld;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -49,6 +51,19 @@ class WorldSaveStoreTest {
         assertEquals(Blocks.AIR, loaded.blockAt(5, 80, 2).orElseThrow().id());
         assertEquals(new ItemStack(dirt, 11), loaded.openStorageCrate(2, 80, 2).orElseThrow().getFirst());
         assertEquals(20.0, loaded.campfireFuelSecondsRemaining(3, 80, 2, 100.0).orElseThrow(), 0.001);
+    }
+
+    @Test
+    void worldSaveUsesAtomicRenameAndCleansTemporaryFile() throws Exception {
+        ServerWorld source = new ServerWorld(4321L);
+        source.setBlock(7, 80, 7, Blocks.DIRT);
+        Path savePath = tempDir.resolve("nested").resolve("world.properties");
+
+        WorldSaveStore.saveWorld(savePath, source, 0.0);
+
+        assertTrue(Files.exists(savePath));
+        assertFalse(hasTempSaveFile(savePath.getParent()));
+        assertEquals(4321L, WorldSaveStore.loadWorld(savePath, 0.0).seed());
     }
 
     @Test
@@ -95,5 +110,46 @@ class WorldSaveStoreTest {
         WorldSave decoded = WorldSaveCodec.decode(properties, items);
 
         assertFalse(decoded.blockEntities().blockEntities().unknownEntries().isEmpty());
+    }
+
+    @Test
+    void saveWorldCreatesBackupBeforeOverwritingOlderSaveVersion() throws Exception {
+        Path savePath = tempDir.resolve("world.properties");
+        Properties oldSave = new Properties();
+        oldSave.setProperty("kind", "adventura-world");
+        oldSave.setProperty("save.version", "0");
+        oldSave.setProperty("world.seed", "987");
+        oldSave.setProperty("createdAtEpochMillis", "1234");
+        oldSave.setProperty("block.count", "0");
+        writeProperties(savePath, oldSave);
+
+        WorldSaveStore.saveWorld(savePath, new ServerWorld(987L), 1.0);
+
+        Path backupPath = SaveBackup.migrationBackupPath(savePath, 0);
+        assertTrue(Files.exists(backupPath));
+        assertEquals("0", readProperties(backupPath).getProperty("save.version"));
+        Properties saved = readProperties(savePath);
+        assertEquals(Integer.toString(SaveMetadata.CURRENT_SAVE_VERSION), saved.getProperty("save.version"));
+        assertEquals("1234", saved.getProperty("createdAtEpochMillis"));
+    }
+
+    private static void writeProperties(Path path, Properties properties) throws Exception {
+        try (var output = Files.newOutputStream(path)) {
+            properties.store(output, "test save");
+        }
+    }
+
+    private static Properties readProperties(Path path) throws Exception {
+        Properties properties = new Properties();
+        try (var input = Files.newInputStream(path)) {
+            properties.load(input);
+        }
+        return properties;
+    }
+
+    private static boolean hasTempSaveFile(Path directory) throws Exception {
+        try (Stream<Path> files = Files.list(directory)) {
+            return files.anyMatch(path -> path.getFileName().toString().endsWith(".tmp"));
+        }
     }
 }

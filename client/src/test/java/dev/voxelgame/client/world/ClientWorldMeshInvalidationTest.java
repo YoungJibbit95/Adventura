@@ -3,6 +3,7 @@ package dev.voxelgame.client.world;
 import dev.voxelgame.client.render.ChunkMesher;
 import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.block.BlockRenderLayer;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.world.ChunkPos;
@@ -86,6 +87,18 @@ class ClientWorldMeshInvalidationTest {
     }
 
     @Test
+    void visibleBuildRequestsBeatPreviewAndBackgroundJobs() {
+        ChunkBuildQueue queue = new ChunkBuildQueue();
+        queue.enqueue(new ChunkPos(6, 0));
+        queue.enqueue(new ChunkPos(2, 0));
+        queue.enqueue(new ChunkPos(12, 0));
+
+        ChunkBuildQueue.BuildRequest request = queue.poll(new Vector3f(8.0f, 80.0f, 8.0f), 3, 8);
+
+        assertEquals(new ChunkPos(2, 0), request.pos());
+    }
+
+    @Test
     void previewGenerationCanBeBudgetedAcrossFrames() {
         ClientWorld world = new ClientWorld(123L);
 
@@ -128,6 +141,26 @@ class ClientWorldMeshInvalidationTest {
         assertEquals(10, world.loadedChunkCount());
         assertEquals(Blocks.STONE, world.blockIdAt(40, 80, 8));
         assertTrue(world.dirtyChunkCount() > 0);
+    }
+
+    @Test
+    void unloadOutsideRespectsPerFrameBudgetAndUnloadsFarthestChunksFirst() {
+        ClientWorld world = new ClientWorld(123L);
+        world.generatePreview(2);
+        world.buildDirtyLayeredMeshes(new ChunkMesher(), true, false, Integer.MAX_VALUE);
+
+        List<ChunkPos> firstBudget = world.unloadOutside(new Vector3f(8.0f, 80.0f, 8.0f), 1, 4);
+
+        assertEquals(4, firstBudget.size());
+        assertEquals(21, world.loadedChunkCount());
+        assertEquals(4, world.lastUnloadedChunkCount());
+        assertTrue(firstBudget.stream().allMatch(pos -> Math.max(Math.abs(pos.x()), Math.abs(pos.z())) == 2));
+
+        List<ChunkPos> remaining = world.unloadOutside(new Vector3f(8.0f, 80.0f, 8.0f), 1, 99);
+
+        assertEquals(12, remaining.size());
+        assertEquals(9, world.loadedChunkCount());
+        assertEquals(16L, world.totalUnloadedChunkCount());
     }
 
     @Test
@@ -192,6 +225,29 @@ class ClientWorldMeshInvalidationTest {
     }
 
     @Test
+    void terrainCacheExposesSurfaceFluidCaveMemoryAndInvalidatesOnBlockUpdate() {
+        ClientWorld world = new ClientWorld(123L);
+        world.generatePreview(0);
+
+        int height = world.terrainHeightAt(8, 8);
+        short surfaceBlock = world.terrainSurfaceBlockAt(8, 8);
+        boolean hasFluid = world.terrainHasFluidAt(8, 8);
+        boolean hasCave = world.terrainHasCaveAt(8, 8);
+
+        assertEquals(1, world.terrainCacheChunkCount());
+        assertTrue(world.terrainCacheBytes() > 0L);
+        assertEquals(world.blockIdAt(8, height, 8), surfaceBlock);
+        assertEquals(height < 63, hasFluid);
+
+        world.applyBlock(new GamePacket.BlockUpdate(8, height, 8, Blocks.STONE));
+
+        assertEquals(0, world.terrainCacheChunkCount());
+        assertEquals(0L, world.terrainCacheBytes());
+        assertEquals(height, world.terrainHeightAt(8, 8));
+        assertEquals(hasCave, world.terrainHasCaveAt(8, 8));
+    }
+
+    @Test
     void buildQueueTracksReplacementCancellationWaitAndTimings() {
         ClientWorld world = loadedCleanWorld();
 
@@ -202,6 +258,8 @@ class ClientWorldMeshInvalidationTest {
         assertEquals(5, queued.queuedBuilds());
         assertTrue(queued.replacedBuilds() >= 5);
         long completedBefore = queued.completedBuilds();
+        long generatedBefore = queued.completedGenerationJobs();
+        long lightingBefore = queued.completedLightingJobs();
 
         List<ClientWorld.LayeredMeshBuild> builds = world.buildDirtyLayeredMeshes(
                 new ChunkMesher(),
@@ -218,6 +276,10 @@ class ClientWorldMeshInvalidationTest {
         ChunkBuildQueue.Snapshot built = world.buildQueueStats();
         assertEquals(5, builds.size());
         assertEquals(completedBefore + 5L, built.completedBuilds());
+        assertEquals(generatedBefore, built.completedGenerationJobs());
+        assertEquals(lightingBefore, built.completedLightingJobs());
+        assertTrue(built.completedGenerationJobs() > 0L);
+        assertTrue(built.completedLightingJobs() > 0L);
         assertTrue(built.averageWaitMilliseconds() >= 0.0);
         assertTrue(built.lastMeshingMilliseconds() >= 0.0);
         assertEquals(1.25, built.lastGpuUploadMilliseconds(), 0.001);
@@ -251,6 +313,58 @@ class ClientWorldMeshInvalidationTest {
         assertTrue(nearBounds.stream().anyMatch(bounds -> bounds.minY() == 32.0f && bounds.maxY() == 48.0f));
         assertTrue(nearBounds.stream().anyMatch(bounds -> bounds.minY() == 240.0f && bounds.maxY() == 256.0f));
         assertEquals(3, world.sectionBoundsAround(new Vector3f(8.0f, 80.0f, 8.0f), 8).size());
+    }
+
+    @Test
+    void sectionLayerBoundsSeparateNegativeHighAndDisconnectedSections() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(-8, -20, 8, Blocks.STONE));
+        world.applyBlock(new GamePacket.BlockUpdate(-8, 250, 8, Blocks.WILD_GRASS));
+        world.applyBlock(new GamePacket.BlockUpdate(-8, 260, 8, Blocks.WATER));
+
+        List<ClientWorld.SectionLayerBounds> bounds = world.sectionLayerBoundsAround(new Vector3f(-8.0f, 80.0f, 8.0f), 0);
+
+        assertTrue(bounds.stream().anyMatch(bound ->
+                bound.sectionY() == -2 && bound.layer() == BlockRenderLayer.SOLID
+                        && bound.bounds().minY() == -32.0f && bound.bounds().maxY() == -16.0f
+        ));
+        assertTrue(bounds.stream().anyMatch(bound ->
+                bound.sectionY() == 15 && bound.layer() == BlockRenderLayer.CUTOUT
+                        && bound.bounds().minY() == 240.0f && bound.bounds().maxY() == 256.0f
+        ));
+        assertTrue(bounds.stream().anyMatch(bound ->
+                bound.sectionY() == 16 && bound.layer() == BlockRenderLayer.TRANSLUCENT
+                        && bound.bounds().minY() == 256.0f && bound.bounds().maxY() == 272.0f
+        ));
+    }
+
+    @Test
+    void sectionDirtyStatsTrackAspectsAndClearAfterMeshBuild() {
+        ClientWorld world = loadedCleanWorld();
+
+        world.applyBlock(new GamePacket.BlockUpdate(8, 250, 8, Blocks.WATER));
+
+        ClientWorld.SectionStats dirty = world.sectionStats();
+        assertEquals(1, dirty.dirtyGeometrySections());
+        assertTrue(dirty.dirtyLightSections() >= 1);
+        assertEquals(1, dirty.dirtyFluidSections());
+
+        world.buildDirtyLayeredMeshes(new ChunkMesher(), true, true, 5);
+
+        ClientWorld.SectionStats clean = world.sectionStats();
+        assertEquals(0, clean.dirtyGeometrySections());
+        assertEquals(0, clean.dirtyFluidSections());
+    }
+
+    @Test
+    void boundaryBlockUpdatesMarkNeighborSectionsForFuturePartialRebuilds() {
+        ClientWorld world = loadedCleanWorld();
+
+        world.applyBlock(new GamePacket.BlockUpdate(15, 31, 8, Blocks.WILD_GRASS));
+
+        ClientWorld.SectionStats dirty = world.sectionStats();
+
+        assertEquals(3, dirty.dirtyGeometrySections());
     }
 
     @Test

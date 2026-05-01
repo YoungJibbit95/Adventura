@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FeedbackLogTest {
@@ -40,6 +41,49 @@ class FeedbackLogTest {
         assertEquals(List.of("Inventory Full x2"), log.visible(10.8));
         assertEquals(List.of("Inventory Full x2"), log.visible(12.0));
         assertEquals(List.of(), log.visible(12.5));
+    }
+
+    @Test
+    void repeatedMessagesInsideCooldownAreSuppressed() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Need a pickaxe", 10.0, 3.0);
+        log.add("Need a pickaxe", 10.1, 3.0);
+        log.add("Need a pickaxe", 10.2, 3.0);
+
+        assertEquals(List.of("Need a pickaxe"), log.visible(10.25));
+
+        log.add("Need a pickaxe", 10.4, 3.0);
+
+        assertEquals(List.of("Need a pickaxe x2"), log.visible(10.5));
+    }
+
+    @Test
+    void importantMessagesHavePriorityWhenLogIsFull() {
+        FeedbackLog log = new FeedbackLog();
+
+        for (int i = 0; i < 6; i++) {
+            log.add("Message " + i, i * 0.01, 10.0);
+        }
+        log.add("Recipe unlocked: Campfire", 1.0, 10.0);
+
+        List<String> visible = log.visible(1.1);
+        assertFalse(visible.contains("Message 0"));
+        assertTrue(visible.contains("Recipe unlocked: Campfire"));
+    }
+
+    @Test
+    void visibleEntriesExposeFeedbackKindForHudStyling() {
+        FeedbackLog log = new FeedbackLog();
+
+        log.add("Recipe unlocked: Campfire", 4.0);
+        log.add("Lore found: Old note", 4.5);
+        log.add("You feel cozy", 5.0);
+
+        List<FeedbackLog.VisibleEntry> visible = log.visibleEntries(5.1);
+        assertEquals(FeedbackLog.Kind.UNLOCK, visible.get(0).kind());
+        assertEquals(FeedbackLog.Kind.DISCOVERY, visible.get(1).kind());
+        assertEquals(FeedbackLog.Kind.COMFORT, visible.get(2).kind());
     }
 
     @Test

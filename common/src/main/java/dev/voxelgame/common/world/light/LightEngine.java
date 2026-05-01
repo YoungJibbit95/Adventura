@@ -33,6 +33,44 @@ public final class LightEngine {
         rebuildSkyLight(world, chunks);
     }
 
+    public LightUpdateResult updateBlockLight(InMemoryWorld world, int x, int y, int z) {
+        if (!world.dimension().containsY(y)) {
+            return LightUpdateResult.fullRebuildFallback(Set.of());
+        }
+        Chunk currentChunk = world.findChunk(ChunkPos.fromBlock(x, z)).orElse(null);
+        if (currentChunk == null) {
+            return LightUpdateResult.fullRebuildFallback(Set.of());
+        }
+        LightSourceRegistry sources = LightSourceRegistry.fromBlocks(world.blocks());
+        Queue<LightNode> addQueue = new ArrayDeque<>();
+        Queue<LightNode> removeQueue = new ArrayDeque<>();
+        Set<ChunkPos> affected = new HashSet<>();
+        short blockId = currentChunk.blockId(x, y, z);
+        int sourceLight = sources.lightValue(blockId);
+        int previousLight = currentChunk.blockLight(x, y, z);
+
+        if (sourceLight < previousLight) {
+            setBlockLight(currentChunk, x, y, z, sourceLight, affected);
+            removeQueue.add(new LightNode(x, y, z, previousLight));
+        } else if (sourceLight > previousLight) {
+            setBlockLight(currentChunk, x, y, z, sourceLight, affected);
+            addQueue.add(new LightNode(x, y, z, sourceLight));
+        } else if (sourceLight > 0) {
+            addQueue.add(new LightNode(x, y, z, sourceLight));
+        }
+
+        processBlockLightRemoval(world, removeQueue, addQueue, affected);
+        if (sourceLight > 0) {
+            Chunk sourceChunk = world.findChunk(ChunkPos.fromBlock(x, z)).orElse(null);
+            if (sourceChunk != null && sourceChunk.blockLight(x, y, z) < sourceLight) {
+                setBlockLight(sourceChunk, x, y, z, sourceLight, affected);
+                addQueue.add(new LightNode(x, y, z, sourceLight));
+            }
+        }
+        propagateBlockLight(world, addQueue, affected);
+        return LightUpdateResult.incremental(affected);
+    }
+
     private void rebuildSkyLight(InMemoryWorld world, List<Chunk> chunks) {
         Queue<LightNode> queue = new ArrayDeque<>();
         Set<ChunkPos> affectedPositions = new HashSet<>();
@@ -54,12 +92,11 @@ public final class LightEngine {
                 for (int y = chunk.dimension().maxYExclusive() - 1; y >= chunk.dimension().minY(); y--) {
                     BlockType block = world.blockType(chunk.blockId(x, y, z));
                     chunk.setSkyLight(x, y, z, light);
-                    if (light > 0 && !block.opaque()) {
-                        queue.add(new LightNode(x, y, z, light));
+                    int outgoingLight = LightRules.outgoingSkyLight(block, light);
+                    if (outgoingLight > 0) {
+                        queue.add(new LightNode(x, y, z, outgoingLight));
                     }
-                    if (block.opaque()) {
-                        light = 0;
-                    }
+                    light = outgoingLight;
                 }
             }
         }
@@ -91,19 +128,67 @@ public final class LightEngine {
                     continue;
                 }
                 targetChunk.setSkyLight(nx, ny, nz, nextLight);
-                queue.add(new LightNode(nx, ny, nz, nextLight));
+                int outgoingLight = LightRules.outgoingSkyLight(block, nextLight);
+                if (outgoingLight > 0) {
+                    queue.add(new LightNode(nx, ny, nz, outgoingLight));
+                }
             }
         }
     }
 
     public void rebuildBlockLight(InMemoryWorld world, ChunkPos center) {
         Queue<LightNode> queue = new ArrayDeque<>();
+        Set<ChunkPos> affectedPositions = new HashSet<>();
         List<Chunk> affected = affectedChunks(world, center);
         for (Chunk chunk : affected) {
             chunk.clearBlockLight();
-            enqueueEmitters(world, chunk, queue);
+            enqueueEmitters(world, LightSourceRegistry.fromBlocks(world.blocks()), chunk, queue, affectedPositions);
         }
+        propagateBlockLight(world, queue, affectedPositions, center);
+    }
 
+    private void processBlockLightRemoval(
+            InMemoryWorld world,
+            Queue<LightNode> removeQueue,
+            Queue<LightNode> addQueue,
+            Set<ChunkPos> affected
+    ) {
+        while (!removeQueue.isEmpty()) {
+            LightNode node = removeQueue.remove();
+            for (int[] direction : DIRECTIONS) {
+                int nx = node.x + direction[0];
+                int ny = node.y + direction[1];
+                int nz = node.z + direction[2];
+                if (!world.dimension().containsY(ny)) {
+                    continue;
+                }
+                Chunk targetChunk = world.findChunk(ChunkPos.fromBlock(nx, nz)).orElse(null);
+                if (targetChunk == null) {
+                    continue;
+                }
+                BlockType block = world.blockType(targetChunk.blockId(nx, ny, nz));
+                if (!LightRules.passesBlockLight(block)) {
+                    continue;
+                }
+                int neighborLight = targetChunk.blockLight(nx, ny, nz);
+                if (neighborLight == 0) {
+                    continue;
+                }
+                if (neighborLight < node.light) {
+                    setBlockLight(targetChunk, nx, ny, nz, 0, affected);
+                    removeQueue.add(new LightNode(nx, ny, nz, neighborLight));
+                } else {
+                    addQueue.add(new LightNode(nx, ny, nz, neighborLight));
+                }
+            }
+        }
+    }
+
+    private void propagateBlockLight(InMemoryWorld world, Queue<LightNode> queue, Set<ChunkPos> affected) {
+        propagateBlockLight(world, queue, affected, null);
+    }
+
+    private void propagateBlockLight(InMemoryWorld world, Queue<LightNode> queue, Set<ChunkPos> affected, ChunkPos centerLimit) {
         while (!queue.isEmpty()) {
             LightNode node = queue.remove();
             int nextLight = node.light - 1;
@@ -118,17 +203,17 @@ public final class LightEngine {
                     continue;
                 }
                 Chunk targetChunk = world.findChunk(ChunkPos.fromBlock(nx, nz)).orElse(null);
-                if (targetChunk == null || !isAffected(targetChunk.pos(), center)) {
+                if (targetChunk == null || centerLimit != null && !isAffected(targetChunk.pos(), centerLimit)) {
                     continue;
                 }
                 BlockType block = world.blockType(targetChunk.blockId(nx, ny, nz));
-                if (block.opaque()) {
+                if (!LightRules.passesBlockLight(block)) {
                     continue;
                 }
                 if (targetChunk.blockLight(nx, ny, nz) >= nextLight) {
                     continue;
                 }
-                targetChunk.setBlockLight(nx, ny, nz, nextLight);
+                setBlockLight(targetChunk, nx, ny, nz, nextLight, affected);
                 queue.add(new LightNode(nx, ny, nz, nextLight));
             }
         }
@@ -148,19 +233,48 @@ public final class LightEngine {
         return Math.abs(pos.x() - center.x()) <= 1 && Math.abs(pos.z() - center.z()) <= 1;
     }
 
-    private void enqueueEmitters(InMemoryWorld world, Chunk chunk, Queue<LightNode> queue) {
+    private void enqueueEmitters(
+            InMemoryWorld world,
+            LightSourceRegistry sources,
+            Chunk chunk,
+            Queue<LightNode> queue,
+            Set<ChunkPos> affected
+    ) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
         for (int z = baseZ; z < baseZ + ChunkPos.SIZE; z++) {
             for (int x = baseX; x < baseX + ChunkPos.SIZE; x++) {
                 for (int y = world.dimension().minY(); y < world.dimension().maxYExclusive(); y++) {
-                    BlockType block = world.blockType(chunk.blockId(x, y, z));
-                    if (block.emitsLight()) {
-                        chunk.setBlockLight(x, y, z, block.lightEmission());
-                        queue.add(new LightNode(x, y, z, block.lightEmission()));
+                    short blockId = chunk.blockId(x, y, z);
+                    int light = sources.lightValue(blockId);
+                    if (light > 0) {
+                        setBlockLight(chunk, x, y, z, light, affected);
+                        queue.add(new LightNode(x, y, z, light));
                     }
                 }
             }
+        }
+    }
+
+    private void setBlockLight(Chunk chunk, int x, int y, int z, int light, Set<ChunkPos> affected) {
+        if (chunk.blockLight(x, y, z) == light) {
+            return;
+        }
+        chunk.setBlockLight(x, y, z, light);
+        affected.add(chunk.pos());
+    }
+
+    public record LightUpdateResult(boolean fullRebuildFallback, Set<ChunkPos> affectedChunks) {
+        public LightUpdateResult {
+            affectedChunks = Set.copyOf(affectedChunks);
+        }
+
+        public static LightUpdateResult incremental(Set<ChunkPos> affectedChunks) {
+            return new LightUpdateResult(false, affectedChunks);
+        }
+
+        public static LightUpdateResult fullRebuildFallback(Set<ChunkPos> affectedChunks) {
+            return new LightUpdateResult(true, affectedChunks);
         }
     }
 

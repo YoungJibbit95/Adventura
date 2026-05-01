@@ -48,9 +48,13 @@ class OverworldContentTest {
     void biomeSpecificResourcesAppearDeterministically() {
         long seed = 1337L;
 
+        assertBiomeResourceAppears(seed, "voxel:cozy_meadow", Set.of(Blocks.TWIG_PILE, Blocks.SMALL_STONE, Blocks.BERRY_BUSH, Blocks.HERB_PLANTER));
         assertBiomeResourceAppears(seed, "voxel:pine_forest", Set.of(Blocks.PINE_LOG, Blocks.PINE_LEAVES));
         assertBiomeResourceAppears(seed, "voxel:lakeside", Set.of(Blocks.CLAY, Blocks.CLAY_DEPOSIT));
-        assertBiomeResourceAppears(seed, "voxel:mushroom_grove", Set.of(Blocks.MUSHROOM_CLUSTER, Blocks.RED_MUSHROOM));
+        assertBiomeResourceAppears(seed, "voxel:mushroom_grove", Set.of(Blocks.MUSHROOM_CLUSTER, Blocks.RED_MUSHROOM, Blocks.GLOW_MUSHROOM));
+        assertBiomeResourceAppearsNear(seed, "voxel:old_ruins", Set.of(Blocks.MOSSY_STONE, Blocks.GLOW_CRYSTAL_NODE), ReproducibleWorldSeeds.OLD_RUINS.focusX(), ReproducibleWorldSeeds.OLD_RUINS.focusZ(), 4);
+        assertBiomeResourceAppearsNear(seed, "voxel:highlands", Set.of(Blocks.SMALL_STONE, Blocks.GLOW_CRYSTAL_NODE, Blocks.STONE), ReproducibleWorldSeeds.HIGHLANDS_ORES.focusX(), ReproducibleWorldSeeds.HIGHLANDS_ORES.focusZ(), 4);
+        assertBiomeResourceAppearsNear(seed, "voxel:frost_peaks", Set.of(Blocks.SNOW, Blocks.ICE, Blocks.GLOW_CRYSTAL_NODE), ReproducibleWorldSeeds.FROST_PEAKS.focusX(), ReproducibleWorldSeeds.FROST_PEAKS.focusZ(), 4);
     }
 
     @Test
@@ -107,15 +111,20 @@ class OverworldContentTest {
     }
 
     private static void assertBiomeResourceAppears(long seed, String biomeKey, Set<Short> resourceBlocks) {
+        assertBiomeResourceAppearsNear(seed, biomeKey, resourceBlocks, 0, 0, 36);
+    }
+
+    private static void assertBiomeResourceAppearsNear(long seed, String biomeKey, Set<Short> resourceBlocks, int focusX, int focusZ, int radiusChunks) {
         OverworldGenerator generator = new OverworldGenerator(seed);
         int matchingColumns = 0;
-        int radiusChunks = 36;
-        for (int chunkZ = -radiusChunks; chunkZ <= radiusChunks; chunkZ++) {
-            for (int chunkX = -radiusChunks; chunkX <= radiusChunks; chunkX++) {
+        ChunkPos focus = ChunkPos.fromBlock(focusX, focusZ);
+        for (int chunkZ = focus.z() - radiusChunks; chunkZ <= focus.z() + radiusChunks; chunkZ++) {
+            for (int chunkX = focus.x() - radiusChunks; chunkX <= focus.x() + radiusChunks; chunkX++) {
                 ChunkPos pos = new ChunkPos(chunkX, chunkZ);
                 int centerX = chunkX * ChunkPos.SIZE + ChunkPos.SIZE / 2;
                 int centerZ = chunkZ * ChunkPos.SIZE + ChunkPos.SIZE / 2;
-                if (!generator.biomeAt(centerX, centerZ).key().equals(biomeKey)) {
+                boolean broadScan = radiusChunks > 8;
+                if (broadScan && !generator.biomeAt(centerX, centerZ).key().equals(biomeKey)) {
                     continue;
                 }
                 Chunk chunk = new Chunk(pos, DimensionSettings.OVERWORLD);
