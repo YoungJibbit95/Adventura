@@ -56,7 +56,7 @@ public final class WorldSaveCodec {
 
     public static WorldSave decode(Properties properties, Registry<ItemType> items) {
         Properties migrated = migrate(properties);
-        if (!KIND.equals(migrated.getProperty("kind", KIND))) {
+        if (!KIND.equals(migrated.getProperty("kind"))) {
             throw new IllegalArgumentException("Not an Adventura world save");
         }
         SaveMetadata metadata = new SaveMetadata(

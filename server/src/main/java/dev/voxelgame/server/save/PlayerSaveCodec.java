@@ -67,7 +67,7 @@ public final class PlayerSaveCodec {
     }
 
     public static PlayerSave decode(Properties properties, Registry<ItemType> items) {
-        if (!KIND.equals(properties.getProperty("kind", KIND))) {
+        if (!KIND.equals(properties.getProperty("kind"))) {
             throw new IllegalArgumentException("Not an Adventura player save");
         }
         UUID playerId = uuidValue(properties.getProperty("player.id", ""), new UUID(0L, 0L));

@@ -16,6 +16,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlayerSaveCodecTest {
@@ -110,5 +111,15 @@ class PlayerSaveCodecTest {
         try (Stream<Path> files = Files.list(directory)) {
             return files.anyMatch(path -> path.getFileName().toString().endsWith(".tmp"));
         }
+    }
+
+    @Test
+    void playerSaveDecodeRejectsMissingKindMarker() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Properties properties = new Properties();
+        properties.setProperty("save.version", "1");
+
+        assertThrows(IllegalArgumentException.class, () -> PlayerSaveCodec.decode(properties, items));
+    }
     }
 }
