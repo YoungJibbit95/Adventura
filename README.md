@@ -461,6 +461,8 @@ Focused module checks also work:
 | [`docs/UI_TODO_LIST.md`](docs/UI_TODO_LIST.md) | UI quality, inventory, crafting, cooking, storage and settings plan. |
 | [`docs/HUD_TODO_LIST.md`](docs/HUD_TODO_LIST.md) | Survival HUD, comfort display, feedback and debug overlay plan. |
 | [`docs/ENGINE_TODO_LIST.md`](docs/ENGINE_TODO_LIST.md) | Engine-level follow-up work. |
+| [`docs/NETWORKING_AND_PERSITENCE_TODO_LIST.md`](docs/NETWORKING_AND_PERSITENCE_TODO_LIST.md) | Protocol, server runtime, persistence, reconnect and multiplayer safety plan. |
+| [`docs/AGENT_PROMPTS.md`](docs/AGENT_PROMPTS.md) | Copy-paste prompts for the planned Adventura agent roles. |
 | [`docs/WORLD_SMOKE_TESTS.md`](docs/WORLD_SMOKE_TESTS.md) | Manual smoke checks for world features. |
 | [`RENDERING_FILES_REFERENCE.md`](RENDERING_FILES_REFERENCE.md) | Rendering-related file reference. |
 

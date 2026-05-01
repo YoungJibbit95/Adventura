@@ -587,3 +587,221 @@ Combat soll nicht der Kern sein, aber leichte Gefahren können Ruinen/Exploratio
 - Late Game führt zu Iron, Crystal, Ruins und Lore.
 - Basebuilding hat spürbaren Nutzen durch Comfort.
 - Exploration wird belohnt, ohne Hardcore-Grind zu werden.
+
+---
+
+# P9 – Alpha Game Design Systems
+
+Owner: Lead Game Design Engineer.
+
+Dieser Block ergänzt die reine Feature-Liste um die Systeme, die Adventura als echtes Alpha-Spiel zusammenhalten sollen.
+
+## P9.1 Core Loop als messbare Stufen
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Alpha-Milestone-Kette von Spawn bis erster Ruin als Common/Gameplay-Contract ausarbeiten.~~
+  Erledigt: `AlphaMilestones` Common-Contract plus `docs/ALPHA_GAMEPLAY_CONTRACTS.md`.
+  Verifikation: `./gradlew :common:test --tests 'dev.voxelgame.common.content.*' --tests 'dev.voxelgame.common.gameplay.AlphaMilestonesTest'` gruen.
+
+### Offen
+
+- ~~Spielerreise in Milestones schneiden:~~
+  - ~~Spawn sichern.~~
+  - ~~erste Nahrung.~~
+  - ~~erstes Werkzeug.~~
+  - ~~Campfire.~~
+  - ~~Storage.~~
+  - ~~Workbench.~~
+  - ~~Cooking Pot.~~
+  - ~~Forge.~~
+  - ~~erster Ruin.~~
+  - ~~erster Comfort-Level.~~
+  - ~~erster Rare-Fund.~~
+- ~~Pro Milestone definieren:~~
+  - ~~Ausloeser.~~
+  - ~~notwendige Items/Blocks.~~
+  - ~~UI/HUD Feedback.~~
+  - ~~Save-State.~~
+  - ~~Servervalidierung.~~
+  - ~~Smoke-Test.~~
+- ~~EarlyGameMilestones aus UI-Hints zu einem Common/Gameplay-Konzept entwickeln.~~
+  Erledigt: Common-Milestones bilden die bisherigen Early-Game-Hints als persistierbare Keys/Contracts ab; Client-Migration kann danach klein erfolgen.
+  Verifikation: `AlphaMilestonesTest` prueft Reihenfolge, eindeutige Save-Keys und registrierte Item-/Block-/Biome-/Structure-Referenzen.
+
+### Akzeptanz
+
+- ~~Alpha-Spieler wissen natuerlich, was sie als Naechstes tun koennen.~~
+- ~~Progression ist test- und speicherbar.~~
+- ~~Features zahlen auf den Loop ein, statt nur Content zu sein.~~
+
+## P9.2 Datengetriebene Items und Tags
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: ContentTagRegistry-Anforderungen fuer Items, Blocks und Entities mit Item-Design-Daten vorbereiten.~~
+  Erledigt: `ContentTagRegistry` Read-Contract, `AlphaItemDesigns` fuer den kritischen Pfad und Doku-Anforderungen angelegt.
+  Verifikation: `ContentTagRegistryTest` und `AlphaItemDesignsTest` gruen im fokussierten Common-Testlauf.
+
+### Offen
+
+- ~~Item-Ideen nicht nur in `Items.java` registrieren, sondern als Design-Daten beschreiben:~~
+  - ~~Rolle.~~
+  - ~~Biome-Quelle.~~
+  - ~~Tier/Structure-Quelle.~~
+  - ~~Stackgroesse.~~
+  - ~~Nahrung/Heilung.~~
+  - ~~Tool-Tier.~~
+  - ~~Durability.~~
+  - ~~Tags.~~
+  - ~~Unlock.~~
+  - ~~UI-Icon.~~
+  - ~~Drop-/Loot-Tabelle.~~
+- ~~ContentTagRegistry mit Engine/Networking abstimmen.~~
+  Erledigt: Common-API fuer `ITEM`, `BLOCK`, `ENTITY`, Alias-Aufloesung, `keysWithTag(...)`, `entries(...)` und Coverage-Report vorhanden.
+  Verifikation: Tests pruefen Alias-Tags, kritische Alpha-Tags und registrierte Item-/Block-Keys.
+- ~~Item-Balancing-Tabelle in Docs oder Datenfile vorbereiten.~~
+  Erledigt: `AlphaItemDesigns` spiegelt Stacksize, Food/Heal, Tool-Tier und Durability aus der Registry.
+  Verifikation: `AlphaItemDesignsTest.designRowsMirrorRegistryBalancingFieldsAndTags`.
+- ~~Doppelte Items mit gleicher Funktion vermeiden.~~
+  Erledigt: Alpha-kritische Items haben eindeutige Rollen/Uses in `AlphaItemDesigns`; weitere Content-Erweiterungen muessen dort sichtbar werden.
+  Verifikation: Design-Map weist doppelte Keys ab und Milestone-Pflichtitems muessen eine Design-Zeile haben.
+
+### Akzeptanz
+
+- ~~Neue Items haben einen Gameplay-Grund.~~
+- ~~UI, Loot, Crafting, Physics und Networking nutzen dieselben Tags.~~
+- ~~Balancing-Aenderungen sind nachvollziehbar.~~
+
+## P9.3 Station Progression
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Station-Progression als Common-Contract fuer Inventory, Campfire, Workbench, Cooking Pot, Forge und spaetere Ancient Station ausarbeiten.~~
+  Erledigt: `StationProgression`/`StationDefinition` Common-Contract plus Station-Tabelle in `docs/ALPHA_GAMEPLAY_CONTRACTS.md`.
+  Verifikation: `./gradlew :common:test --tests 'dev.voxelgame.common.content.*' --tests 'dev.voxelgame.common.gameplay.AlphaMilestonesTest' --tests 'dev.voxelgame.common.gameplay.StationProgressionTest'` gruen.
+
+### Offen
+
+- ~~Stations als klare Progressionskette definieren:~~
+  - ~~Inventory.~~
+  - ~~Workbench.~~
+  - ~~Campfire.~~
+  - ~~Cooking Pot.~~
+  - ~~Forge.~~
+  - ~~Ancient Workbench/Altar spaeter.~~
+- ~~Jede Station braucht:~~
+  - ~~Crafting-Rolle.~~
+  - ~~BlockEntity-State.~~
+  - ~~UI-Screen.~~
+  - ~~Save-State.~~
+  - ~~Server-Transaction.~~
+  - ~~Audio/Particle Feedback.~~
+  - ~~Loot/Unlock-Quellen.~~
+- ~~Cooking Pot und Forge nicht nur als Rezeptfilter, sondern als Spielobjekte ausarbeiten.~~
+  Erledigt: Pot/Forge haben explizite Slot-/Progress-/Save-/Transaction-Anforderungen im Station-Contract.
+  Verifikation: `StationProgressionTest` prueft Recipe-Station-Abdeckung, registrierte Unlock-Keys und nutzbare Station-Blocks.
+
+### Akzeptanz
+
+- ~~Spieler versteht, warum eine neue Station wichtig ist.~~
+- ~~Stationen erzeugen keine Dupes.~~
+- ~~Progression bleibt cozy, aber zielgerichtet.~~
+
+## P9.4 Quest-, Journal- und Lore-Struktur
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Journal-/Lore-/Goal-Progression als Common-Contract fuer Discovery Events, Ruinenprogression und persistierbare UI/Server-Keys definieren.~~
+  Erledigt: `JournalProgression`, `JournalEntryDefinition`, `GoalDefinition` und `JournalEntryKind` definieren persistierbare Discovery-/Lore-/Goal-Contracts von Spawn bis erster Ruin.
+  Verifikation: `JournalProgressionTest` prueft Entry-Typen, Ruinenprogression, registrierte Content-Referenzen, persistierbare Keys und kleine milestone-basierte Goals.
+
+### Offen
+
+- ~~Journal nicht nur UI, sondern Gameplay-System:~~
+  - ~~Discovery Events.~~
+  - ~~Lore Pages.~~
+  - ~~Biome Notes.~~
+  - ~~Creature Notes.~~
+  - ~~Structure Notes.~~
+  - ~~Recipe Unlock History.~~
+  - ~~Map Fragments.~~
+  Erledigt: Journal Entries enthalten Discovery-Events, referenzierte Content-Keys, UI-Feedback, Server-Event-Contract und PlayerSave-Key.
+  Verifikation: `JournalProgressionTest.defaultEntriesCoverP94JournalShapesAndRuinProgression`.
+- ~~Ruinen-Progression definieren:~~
+  - ~~Ancient Fragment.~~
+  - ~~Ruin Key.~~
+  - ~~Ruin Seal.~~
+  - ~~Lost Charm.~~
+  - ~~Ancient Lantern.~~
+  Erledigt: Rare-Find/Lore-Eintraege und `ruinProgressionItemKeys()` decken die komplette erste Ruinenkette ab.
+  Verifikation: `JournalProgressionTest.ruinProgressionItemsHaveDedicatedLoreEntries`.
+- ~~Kleine Quest-/Goal-Struktur ohne MMO-Overhead planen.~~
+  Erledigt: `GoalDefinition` gruppiert Milestones und Journal Entries in fuenf kleine Goals ohne eigene clientseitige Questautoritaet.
+  Verifikation: `JournalProgressionTest.goalsAreSmallMilestoneBackedAndReferenceJournalEntries`.
+
+### Akzeptanz
+
+- ~~Exploration hat Erinnerung und Belohnung.~~
+- ~~Lore erklärt die Welt, ohne Survival-Loop zu blockieren.~~
+- ~~Journal-Fortschritt ist persistierbar.~~
+
+## P9.5 Cozy-Life und Entities als Systeme
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Cozy-Creature-Designs als Common-Contract fuer Rollen, Feeding/Friendship, Drops, Comfort, Animation, Netzwerk und Save definieren.~~
+  Erledigt: `CozyLifeProgression`, `CreatureDesign`, `CreatureRole`, `CreatureDisposition` und `CreatureFriendshipRules` definieren Creature-Rollen, Feeding/Friendship-Limits, Comfort, Hint-/Resource-Hooks und Server/Save/Network/Animation-Contracts.
+  Verifikation: `CozyLifeProgressionTest`, `CreatureFriendshipRulesTest`, `EntityDropsTest` und `ContentTagRegistryTest` pruefen Rollenabdeckung, registrierte Entity-/Item-/Biome-Referenzen, kleine Friendship-Schritte, Danger-Verhaeltnis, Feed-Caps und Snail-Drop-Contract.
+
+### Offen
+
+- ~~Tiere bekommen Design-Rollen:~~
+  - ~~Atmosphäre.~~
+  - ~~Hinweisgeber.~~
+  - ~~Ressource.~~
+  - ~~Base-Comfort.~~
+  - ~~Gefahr nur selten.~~
+  Erledigt: `CreatureRole` deckt Atmosphere, Hint Giver, Resource, Base Comfort, Friendship und Rare Danger ab.
+  Verifikation: `CozyLifeProgressionTest.defaultCreaturesCoverP95RolesAndCoreAlphaCreatures`.
+- ~~Feeding/Friendship-Regeln planen.~~
+  Erledigt: Feedable Creatures haben Lieblingsitems, serverseitige Cooldown-Vertraege, 4 Block Reach, maximal drei akzeptierte Feedings pro Tag und maximal drei Trust-Schritte.
+  Verifikation: `CreatureFriendshipRulesTest.feedableCreaturesAcceptOnlyFavoriteFoodAndStayDailyCapped` und `CozyLifeProgressionTest.cozyIdentityOutweighsDangerAndFeedableCreaturesStaySmall`.
+- ~~EntityDrops und friedliche Interaktionen balancen.~~
+  Erledigt: Resource-Rollen sind explizit, Moss-Snail-Drops bleiben im Resource-Contract, friedliche Tiere bekommen No-Kill/Observe/Pet/Hint-Vertraege.
+  Verifikation: `CozyLifeProgressionTest.mossSnailDropsStayInsideItsPeacefulResourceContract`.
+- ~~Keine Tiermechanik darf zum unangenehmen Grind werden.~~
+  Erledigt: Friendship bleibt klein, Save speichert nur beruehrte Trust/Cooldown-Fakten, keine Zucht-/Farm-Pflicht im Alpha-Contract.
+  Verifikation: `CozyLifeProgressionTest.creatureDesignsAreUniqueOrderedAndBoundedForAlpha`.
+
+### Akzeptanz
+
+- ~~Kreaturen wirken lebendig und nützlich.~~
+- ~~Cozy-Identität bleibt stärker als Combat.~~
+- ~~Entity-Design ist mit Animation/Networking/Save abgestimmt.~~
+
+## P9.6 Status Effects und Biome-/Comfort-Modifier
+
+### Status 2026-05-01
+
+- ~~🔴 In Arbeit: Status Effects als Common-Gameplay-Contract fuer Hazards, Biome, Rested/Cozy-Boni und spaetere HUD/Save-Anbindung definieren.~~
+  Erledigt: `common.gameplay.status` definiert `StatusEffectSystem`, `StatusEffectType`, `StatusEffectDefinition`, `StatusEffectState`, `StatusEffectModifiers`, Tick-Pulses und Save-State fuer burning, chilled, wet, rested, cozy und poison.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.status.StatusEffectSystemTest -PadventuraTestRunId=status_effect_common_2 --no-daemon --max-workers=1`.
+
+### Offen
+
+- Serverautoritative Anwendung anbinden:
+  - Hot/Hazard-Blocks -> burning.
+  - Cold/Frost-Biome -> chilled.
+  - Water/Weather -> wet.
+  - Sleep/Comfort -> rested/cozy.
+  - Poison spaeter fuer Adventure-Danger.
+- StatusEffects in PlayerSave/WorldSave persistieren.
+- `GameplayEvent`/HUD/Audio Feedback fuer applied/refreshed/expired definieren.
+- Balancing der Modifier gegen Hunger/Stamina/Health im echten Server-Tick pruefen.
+
+### Akzeptanz
+
+- Biome/Hazards fuehlen sich lebendig an, ohne clientseitige Autoritaet.
+- Cozy/Rested belohnt Basebuilding, ohne Pflicht-Grind zu werden.
+- Status Effects sind speicherbar, testbar und fuer HUD erklaerbar.

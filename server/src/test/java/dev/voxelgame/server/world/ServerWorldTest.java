@@ -9,7 +9,9 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.PartialShapeImpactResolver;
 import dev.voxelgame.common.physics.ProjectileBounds;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.gen.OverworldGenerator;
@@ -127,6 +129,18 @@ class ServerWorldTest {
     }
 
     @Test
+    void blockUpdatesInvalidateServerCollisionCache() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(24, 250, 24, Blocks.STONE);
+
+        assertTrue(world.collidesPlayer(24.5, 250.0, 24.5, PlayerBounds.DEFAULT));
+
+        world.setBlock(24, 250, 24, Blocks.AIR);
+
+        assertFalse(world.collidesPlayer(24.5, 250.0, 24.5, PlayerBounds.DEFAULT));
+    }
+
+    @Test
     void playerWaterStateSeparatesFeetBodyAndHead() {
         ServerWorld world = new ServerWorld(123L);
         world.setBlock(8, 64, 8, Blocks.WATER);
@@ -221,10 +235,60 @@ class ServerWorldTest {
         ServerWorld world = new ServerWorld(123L);
         world.setBlock(60, 250, 60, Blocks.STONE);
         world.setBlock(61, 250, 60, Blocks.WATER);
+        world.setBlock(62, 250, 60, Blocks.CAMPFIRE);
 
         assertTrue(world.collidesProjectile(60.5, 250.5, 60.5, ProjectileBounds.ARROW));
         assertFalse(world.collidesProjectile(61.5, 250.5, 60.5, ProjectileBounds.ARROW));
+        assertTrue(world.collidesProjectile(62.5, 250.25, 60.5, ProjectileBounds.ARROW));
         assertTrue(world.projectileInWater(61.5, 250.5, 60.5));
+    }
+
+    @Test
+    void projectileImpactReportsNearestPartialShapeHit() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(60, 250, 60, Blocks.GARDEN_FENCE);
+
+        PartialShapeImpactResolver.ImpactResult hit = world.projectileImpact(
+                59.0,
+                250.5,
+                60.5,
+                61.0,
+                250.5,
+                60.5,
+                ProjectileBounds.ARROW
+        ).orElseThrow();
+
+        assertEquals(60, hit.blockX());
+        assertEquals(250, hit.blockY());
+        assertEquals(60, hit.blockZ());
+        assertEquals(ProjectileHit.BlockFace.WEST, hit.face());
+        assertEquals(60.36, hit.impactX(), 0.0001);
+    }
+
+    @Test
+    void projectileImpactIgnoresWaterAndEmptyPartialShapeSpace() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(60, 250, 60, Blocks.GARDEN_FENCE);
+        world.setBlock(61, 250, 60, Blocks.WATER);
+
+        assertTrue(world.projectileImpact(
+                59.0,
+                250.5,
+                60.1,
+                61.0,
+                250.5,
+                60.1,
+                ProjectileBounds.ARROW
+        ).isEmpty());
+        assertTrue(world.projectileImpact(
+                62.5,
+                250.5,
+                59.0,
+                62.5,
+                250.5,
+                61.0,
+                ProjectileBounds.ARROW
+        ).isEmpty());
     }
 
     @Test

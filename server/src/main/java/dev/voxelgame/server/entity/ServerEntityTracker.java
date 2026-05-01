@@ -11,6 +11,8 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.physics.EntityPhysics;
 import dev.voxelgame.common.physics.EntityPhysicsProfile;
 import dev.voxelgame.common.physics.FluidPhysics;
+import dev.voxelgame.common.physics.PartialShapeImpactResolver;
+import dev.voxelgame.common.physics.ProjectileBounds;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.physics.ProjectilePhysics;
 import dev.voxelgame.common.physics.ProjectilePhysicsConfig;
@@ -224,11 +226,44 @@ public final class ServerEntityTracker {
 
     public List<ProjectileHit> tickProjectiles(
             double deltaSeconds,
+            ProjectilePhysics.BlockImpactQuery blockImpact,
+            FluidPhysics.FluidQuery fluidQuery,
+            double nowSeconds
+    ) {
+        Objects.requireNonNull(blockImpact, "blockImpact");
+        return tickProjectilesInternal(deltaSeconds, blockImpact, fluidQuery, nowSeconds);
+    }
+
+    public List<ProjectileHit> tickProjectiles(
+            double deltaSeconds,
             ProjectilePhysics.BlockCollisionQuery blockCollision,
             FluidPhysics.FluidQuery fluidQuery,
             double nowSeconds
     ) {
         Objects.requireNonNull(blockCollision, "blockCollision");
+        return tickProjectilesInternal(deltaSeconds, blockCollision, fluidQuery, nowSeconds);
+    }
+
+    private List<ProjectileHit> tickProjectilesInternal(
+            double deltaSeconds,
+            ProjectilePhysics.BlockCollisionQuery blockCollision,
+            FluidPhysics.FluidQuery fluidQuery,
+            double nowSeconds
+    ) {
+        return tickProjectilesInternal(
+                deltaSeconds,
+                (fromX, fromY, fromZ, toX, toY, toZ, bounds) -> blockingImpactFromCollision(blockCollision, fromX, fromY, fromZ, toX, toY, toZ, bounds),
+                fluidQuery,
+                nowSeconds
+        );
+    }
+
+    private List<ProjectileHit> tickProjectilesInternal(
+            double deltaSeconds,
+            ProjectilePhysics.BlockImpactQuery blockImpact,
+            FluidPhysics.FluidQuery fluidQuery,
+            double nowSeconds
+    ) {
         Objects.requireNonNull(fluidQuery, "fluidQuery");
         long startNanos = System.nanoTime();
         if (projectiles.isEmpty()) {
@@ -243,7 +278,7 @@ public final class ServerEntityTracker {
         for (Map.Entry<Long, ProjectileState> entry : projectiles.entrySet()) {
             ProjectileState current = entry.getValue();
             ProjectilePhysicsConfig config = projectileConfig(current.typeKey());
-            ProjectileHit hit = ProjectilePhysics.step(current, deltaSeconds, config, blockCollision, fluidQuery, targets);
+            ProjectileHit hit = ProjectilePhysics.step(current, deltaSeconds, config, blockImpact, fluidQuery, targets);
             hits.add(hit);
             if (hit.type() == ProjectileHit.Type.MISS) {
                 projectiles.put(entry.getKey(), hit.state());
@@ -275,6 +310,63 @@ public final class ServerEntityTracker {
                 System.nanoTime() - startNanos
         );
         return hits;
+    }
+
+    private static Optional<PartialShapeImpactResolver.ImpactResult> blockingImpactFromCollision(
+            ProjectilePhysics.BlockCollisionQuery blockCollision,
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            ProjectileBounds bounds
+    ) {
+        if (!blockCollision.collides(toX, toY, toZ, bounds)) {
+            return Optional.empty();
+        }
+        double dx = toX - fromX;
+        double dy = toY - fromY;
+        double dz = toZ - fromZ;
+        double radius = bounds.radius();
+        ProjectileHit.BlockFace face = blockFaceForDelta(dx, dy, dz);
+        return Optional.of(PartialShapeImpactResolver.blocking(
+                floor(toX + travelOffset(dx, radius)),
+                floor(toY + travelOffset(dy, radius)),
+                floor(toZ + travelOffset(dz, radius)),
+                toX,
+                toY,
+                toZ,
+                face,
+                1.0
+        ));
+    }
+
+    private static int floor(double value) {
+        return (int) Math.floor(value);
+    }
+
+    private static double travelOffset(double delta, double radius) {
+        if (Math.abs(delta) < 0.0000001) {
+            return 0.0;
+        }
+        return Math.copySign(radius, delta);
+    }
+
+    private static ProjectileHit.BlockFace blockFaceForDelta(double dx, double dy, double dz) {
+        double absX = Math.abs(dx);
+        double absY = Math.abs(dy);
+        double absZ = Math.abs(dz);
+        if (absX >= absY && absX >= absZ && absX > 0.0000001) {
+            return dx > 0.0 ? ProjectileHit.BlockFace.WEST : ProjectileHit.BlockFace.EAST;
+        }
+        if (absY >= absZ && absY > 0.0000001) {
+            return dy > 0.0 ? ProjectileHit.BlockFace.DOWN : ProjectileHit.BlockFace.UP;
+        }
+        if (absZ > 0.0000001) {
+            return dz > 0.0 ? ProjectileHit.BlockFace.NORTH : ProjectileHit.BlockFace.SOUTH;
+        }
+        return ProjectileHit.BlockFace.NONE;
     }
 
     public Optional<EntitySnapshot> feedAmbient(long entityId, int healAmount) {

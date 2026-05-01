@@ -29,7 +29,8 @@ public enum PacketType {
     SERVER_STATS_SNAPSHOT(23),
     PROJECTILE_SHOOT(24),
     PROJECTILE_IMPACT(25),
-    STORAGE_CLOSE(26);
+    STORAGE_CLOSE(26),
+    GAMEPLAY_EVENTS(27);
 
     private static final Map<Integer, PacketType> BY_ID = new HashMap<>();
 

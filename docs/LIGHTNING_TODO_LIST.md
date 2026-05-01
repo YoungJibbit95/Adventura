@@ -343,3 +343,84 @@ Weather-Lightning bleibt bewusst getrennt vom normalen Lighting-System: keine Bl
 - Höhlen sind dunkler.
 - Light Updates erzeugen keine großen Spikes.
 - keine hardcoded Block-ID-Lichtlogik im Shader.
+
+---
+
+# P7 – Dynamic Lighting, Shadows und Atmosphere V2
+
+Owner: Lead Engine Developer.
+
+## P7.1 Light Jobs und Dirty Regions
+
+### Offen
+
+- Light-Updates in echte Engine-Jobs überführen.
+- Dirty-Regionen statt ganzer Chunk-Rebuilds priorisieren:
+  - source add.
+  - source remove.
+  - opacity change.
+  - sky column change.
+  - chunk boundary propagation.
+- Light-Job-Budget im Debug-HUD zeigen.
+- Fallback-Rebuild als klar markierten Slow Path behalten.
+- Light-Seam-Smoke für Chunkgrenzen und Höhen-Sections erweitern.
+
+### Akzeptanz
+
+- Campfire/Lantern/Blockänderungen erzeugen keine großen Spikes.
+- Light-Updates sind nach Ursache debugbar.
+- Chunkgrenzen bleiben ohne sichtbare Light-Seams.
+
+## P7.2 Dynamic Entity Lights
+
+### Offen
+
+- Kurzlebige dynamische Lichtquellen definieren:
+  - Firefly swarms.
+  - projectile glow.
+  - held torch/lantern.
+  - magic particles später.
+- Entscheiden, ob sie voxel light, shader-only lights oder particle glow sind.
+- Max active dynamic lights pro Preset.
+- Interest-/Netzwerkregel: welche dynamischen Lichter sind serverrelevant?
+
+### Akzeptanz
+
+- Dynamische Lichter wirken atmosphärisch, ohne Light-Engine zu überlasten.
+- Low-Preset kann sie reduzieren oder abschalten.
+- Serverautorität bleibt nur dort nötig, wo Gameplay betroffen ist.
+
+## P7.3 Shadow Strategy
+
+### Offen
+
+- Shadow-Map vs height/ambient shadow evaluieren.
+- Sonnenrichtung, Tageszeit und Fog zusammenführen.
+- Entity-Shadows als Blob/ground contact shadow prüfen.
+- Wasser und Cutout-Vegetation mit Schatten-Fallback behandeln.
+
+### Akzeptanz
+
+- Schatten erhöhen Tiefenlesbarkeit.
+- Keine unruhigen Pixel-Art-Artefakte.
+- Shader-Komplexität bleibt unter Budget.
+
+## P7.4 Atmosphere State
+
+### Offen
+
+- Day/Night, Weather, Biome-Fog, Cave-Darkness und Underwater-Tint in einem Atmosphere-State bündeln.
+- Clientseitige visuelle Interpolation, aber serverseitig persistierbare World-Time/Weather-Basis.
+- Debug-Ausgabe:
+  - day phase.
+  - global brightness.
+  - fog color.
+  - weather flash.
+  - cave factor.
+  - underwater factor.
+
+### Akzeptanz
+
+- Atmosphärische Effekte widersprechen sich nicht.
+- Weather und Time können gespeichert und später multiplayer-synchronisiert werden.
+- Rendering- und Lighting-Docs nutzen dieselben Begriffe.

@@ -23,8 +23,52 @@ public record PlayerSave(
         List<String> discoveredRecipes,
         List<String> discoveredBiomes,
         List<String> journalEntries,
+        List<String> achievedMilestones,
+        List<String> completedGoals,
         String lastWorldKey
 ) {
+    public PlayerSave(
+            int saveVersion,
+            UUID playerId,
+            String playerName,
+            double x,
+            double y,
+            double z,
+            float yaw,
+            float pitch,
+            List<ItemStack> inventory,
+            int hotbarSelection,
+            SurvivalStats survival,
+            SpawnPoint spawnPoint,
+            String gameMode,
+            List<String> discoveredRecipes,
+            List<String> discoveredBiomes,
+            List<String> journalEntries,
+            String lastWorldKey
+    ) {
+        this(
+                saveVersion,
+                playerId,
+                playerName,
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+                inventory,
+                hotbarSelection,
+                survival,
+                spawnPoint,
+                gameMode,
+                discoveredRecipes,
+                discoveredBiomes,
+                journalEntries,
+                List.of(),
+                List.of(),
+                lastWorldKey
+        );
+    }
+
     public PlayerSave {
         if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)
                 || !Float.isFinite(yaw) || !Float.isFinite(pitch)) {
@@ -39,7 +83,20 @@ public record PlayerSave(
         discoveredRecipes = discoveredRecipes == null ? List.of() : List.copyOf(discoveredRecipes);
         discoveredBiomes = discoveredBiomes == null ? List.of() : List.copyOf(discoveredBiomes);
         journalEntries = journalEntries == null ? List.of() : List.copyOf(journalEntries);
+        achievedMilestones = copyProgressKeys(achievedMilestones);
+        completedGoals = copyProgressKeys(completedGoals);
         lastWorldKey = lastWorldKey == null ? "" : lastWorldKey;
+    }
+
+    private static List<String> copyProgressKeys(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::strip)
+                .distinct()
+                .toList();
     }
 
     public record SurvivalStats(int health, int hunger, int stamina, int breath) {

@@ -13,20 +13,11 @@ import org.joml.Vector3f;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import static org.lwjgl.opengl.GL11.GL_BLEND;
-import static org.lwjgl.opengl.GL11.GL_ONE_MINUS_SRC_ALPHA;
-import static org.lwjgl.opengl.GL11.GL_SRC_ALPHA;
-import static org.lwjgl.opengl.GL11.glBlendFunc;
-import static org.lwjgl.opengl.GL11.glDepthMask;
-import static org.lwjgl.opengl.GL11.glDisable;
-import static org.lwjgl.opengl.GL11.glEnable;
 import static org.lwjgl.opengl.GL20.glUseProgram;
 
 public final class WorldRenderer implements AutoCloseable {
@@ -34,10 +25,10 @@ public final class WorldRenderer implements AutoCloseable {
     private final BlockTextureAtlas blockTextureAtlas;
     private final TerrainMaterialLut materialLut;
     private final ChunkMesher mesher = new ChunkMesher();
+    private final TerrainRenderer terrainRenderer = new TerrainRenderer(new RenderPassExecutor());
     private final Map<ChunkPos, GpuChunkMesh> opaqueMeshes = new HashMap<>();
     private final Map<ChunkPos, GpuChunkMesh> cutoutMeshes = new HashMap<>();
     private final Map<ChunkPos, GpuChunkMesh> transparentMeshes = new HashMap<>();
-    private final Map<ChunkPos, Boolean> visibilityCache = new HashMap<>();
     private final ArrayDeque<ClientWorld.LayeredMeshBuild> pendingGpuUploads = new ArrayDeque<>();
     private long lastGpuUploadBytes;
 
@@ -227,11 +218,10 @@ public final class WorldRenderer implements AutoCloseable {
         shader.setFloat("uGlobalBrightness", settings.globalBrightness());
         blockTextureAtlas.bindAndApply(shader, 0);
         materialLut.bindAndApply(shader, 1);
-        Set<ChunkPos> culledPositions = new HashSet<>();
-        Map<ChunkPos, Boolean> visibilityCache = new HashMap<>();
-        RenderPassStats opaquePass = renderTerrainPass(context, TerrainPass.OPAQUE, opaqueMeshes, visibilityCache, culledPositions);
-        RenderPassStats cutoutPass = renderTerrainPass(context, TerrainPass.CUTOUT, cutoutMeshes, visibilityCache, culledPositions);
-        RenderPassStats transparentPass = renderTerrainPass(context, TerrainPass.TRANSLUCENT, transparentMeshes, visibilityCache, culledPositions);
+        TerrainRenderer.Result terrain = terrainRenderer.render(context, opaqueMeshes, cutoutMeshes, transparentMeshes);
+        RenderPassStats opaquePass = terrain.opaquePass();
+        RenderPassStats cutoutPass = terrain.cutoutPass();
+        RenderPassStats transparentPass = terrain.transparentPass();
         glUseProgram(0);
         int culledMeshes = opaquePass.culledMeshes() + cutoutPass.culledMeshes() + transparentPass.culledMeshes();
         int culledByDistance = opaquePass.culledByDistance() + cutoutPass.culledByDistance() + transparentPass.culledByDistance();
@@ -241,7 +231,7 @@ public final class WorldRenderer implements AutoCloseable {
         return new RenderStats(
                 opaquePass.renderedMeshes() + cutoutPass.renderedMeshes() + transparentPass.renderedMeshes(),
                 culledMeshes,
-                culledPositions.size(),
+                terrain.culledChunkPositions(),
                 opaquePass.renderedMeshes(),
                 cutoutPass.renderedMeshes(),
                 transparentPass.renderedMeshes(),
@@ -281,122 +271,6 @@ public final class WorldRenderer implements AutoCloseable {
         addMeshBounds(bounds, cutoutMeshes.values());
         addMeshBounds(bounds, transparentMeshes.values());
         return bounds;
-    }
-
-    private static RenderPassStats renderTerrainPass(
-            RenderContext context,
-            TerrainPass pass,
-            Map<ChunkPos, GpuChunkMesh> meshes,
-            Map<ChunkPos, Boolean> visibilityCache,
-            Set<ChunkPos> culledPositions
-    ) {
-        pass.begin(context);
-        int renderedMeshes = 0;
-        int culledMeshes = 0;
-        int drawCalls = 0;
-        int triangles = 0;
-        int culledByDistance = 0;
-        int culledByBounds = 0;
-        Set<ChunkPos> passCulledPositions = new HashSet<>();
-        Iterable<ChunkPos> positions = pass == TerrainPass.TRANSLUCENT
-                ? transparentRenderOrder(meshes, context.cameraPosition())
-                : meshes.keySet();
-        try {
-            for (ChunkPos pos : positions) {
-                GpuChunkMesh mesh = meshes.get(pos);
-                if (mesh == null) {
-                    continue;
-                }
-                VisibilityCulling culling = meshCulling(pos, mesh, context);
-                if (culling != VisibilityCulling.VISIBLE) {
-                    culledMeshes++;
-                    if (culling == VisibilityCulling.DISTANCE) {
-                        culledByDistance++;
-                    } else {
-                        culledByBounds++;
-                    }
-                    culledPositions.add(pos);
-                    passCulledPositions.add(pos);
-                    continue;
-                }
-                mesh.draw();
-                renderedMeshes++;
-                drawCalls++;
-                triangles += mesh.triangleCount();
-            }
-        } finally {
-            pass.end(context);
-        }
-        return new RenderPassStats(pass.passName(), renderedMeshes, culledMeshes, passCulledPositions.size(), drawCalls, triangles, culledByDistance, culledByBounds);
-    }
-
-    private static VisibilityCulling meshCulling(ChunkPos pos, GpuChunkMesh mesh, RenderContext context) {
-        if (!withinRenderDistance(pos, context.cameraPosition(), context.settings().renderDistanceChunks())) {
-            return VisibilityCulling.DISTANCE;
-        }
-        ChunkMesh.Bounds bounds = mesh.bounds();
-        if (bounds == null || bounds.isEmpty()) {
-            return VisibilityCulling.BOUNDS;
-        }
-        return context.frustum().testAab(bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ())
-                ? VisibilityCulling.VISIBLE
-                : VisibilityCulling.BOUNDS;
-    }
-
-    private enum VisibilityCulling {
-        VISIBLE,
-        DISTANCE,
-        BOUNDS
-    }
-
-    private enum TerrainPass implements RenderPass {
-        OPAQUE(RenderPassPlan.TERRAIN_OPAQUE) {
-            @Override
-            public void begin(RenderContext context) {
-                glDisable(GL_BLEND);
-                glDepthMask(true);
-            }
-        },
-        CUTOUT(RenderPassPlan.TERRAIN_CUTOUT) {
-            @Override
-            public void begin(RenderContext context) {
-                glDisable(GL_BLEND);
-                glDepthMask(true);
-            }
-        },
-        TRANSLUCENT(RenderPassPlan.TERRAIN_TRANSLUCENT) {
-            @Override
-            public void begin(RenderContext context) {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glDepthMask(false);
-            }
-
-            @Override
-            public void end(RenderContext context) {
-                glDepthMask(true);
-                glDisable(GL_BLEND);
-            }
-        };
-
-        private final String passName;
-
-        TerrainPass(String passName) {
-            this.passName = passName;
-        }
-
-        @Override
-        public String passName() {
-            return passName;
-        }
-
-        @Override
-        public void begin(RenderContext context) {
-        }
-
-        @Override
-        public void end(RenderContext context) {
-        }
     }
 
     private static void replaceMesh(Map<ChunkPos, GpuChunkMesh> target, ChunkPos pos, ChunkMesh mesh) {
@@ -440,20 +314,6 @@ public final class WorldRenderer implements AutoCloseable {
         target.clear();
     }
 
-    private static boolean isVisibleChunk(
-            ChunkPos pos,
-            Vector3f cameraPosition,
-            int renderDistanceChunks,
-            FrustumIntersection frustum,
-            ClientWorld world,
-            Map<ChunkPos, Boolean> visibilityCache
-    ) {
-        return visibilityCache.computeIfAbsent(
-                pos,
-                key -> withinRenderDistance(key, cameraPosition, renderDistanceChunks) && insideFrustum(frustum, world, key)
-        );
-    }
-
     private long meshBytes() {
         return meshBytes(opaqueMeshes) + meshBytes(cutoutMeshes) + meshBytes(transparentMeshes);
     }
@@ -483,81 +343,20 @@ public final class WorldRenderer implements AutoCloseable {
     }
 
     public static boolean withinRenderDistance(ChunkPos pos, Vector3f cameraPosition, int renderDistanceChunks) {
-        float centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5f;
-        float centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5f;
-        float dx = centerX - cameraPosition.x;
-        float dz = centerZ - cameraPosition.z;
-        float maxDistance = (renderDistanceChunks + 1.0f) * ChunkPos.SIZE;
-        return dx * dx + dz * dz <= maxDistance * maxDistance;
+        return VisibilityCollector.withinRenderDistance(pos, cameraPosition, renderDistanceChunks);
     }
 
     public static List<ChunkPos> transparentRenderOrder(Collection<ChunkPos> positions, Vector3f cameraPosition) {
-        List<ChunkPos> ordered = new ArrayList<>(positions);
-        ordered.sort(Comparator
-                .comparingDouble((ChunkPos pos) -> -distanceSquaredToChunkCenter(pos, cameraPosition))
-                .thenComparingInt(ChunkPos::x)
-                .thenComparingInt(ChunkPos::z));
-        return ordered;
+        return VisibilityCollector.transparentRenderOrder(positions, cameraPosition);
     }
 
     public static List<ChunkPos> transparentRenderOrderByBounds(Map<ChunkPos, ChunkMesh.Bounds> boundsByPosition, Vector3f cameraPosition) {
-        List<ChunkPos> ordered = new ArrayList<>(boundsByPosition.keySet());
-        ordered.sort(Comparator
-                .comparingDouble((ChunkPos pos) -> -distanceSquaredToBoundsCenter(pos, boundsByPosition.get(pos), cameraPosition))
-                .thenComparingInt(ChunkPos::x)
-                .thenComparingInt(ChunkPos::z));
-        return ordered;
-    }
-
-    private static List<ChunkPos> transparentRenderOrder(Map<ChunkPos, GpuChunkMesh> meshes, Vector3f cameraPosition) {
-        List<ChunkPos> ordered = new ArrayList<>(meshes.keySet());
-        ordered.sort(Comparator
-                .comparingDouble((ChunkPos pos) -> -distanceSquaredToMeshBoundsCenter(pos, meshes.get(pos), cameraPosition))
-                .thenComparingInt(ChunkPos::x)
-                .thenComparingInt(ChunkPos::z));
-        return ordered;
-    }
-
-    private static double distanceSquaredToMeshBoundsCenter(ChunkPos pos, GpuChunkMesh mesh, Vector3f cameraPosition) {
-        return distanceSquaredToBoundsCenter(pos, mesh == null ? null : mesh.bounds(), cameraPosition);
-    }
-
-    private static double distanceSquaredToBoundsCenter(ChunkPos pos, ChunkMesh.Bounds bounds, Vector3f cameraPosition) {
-        if (bounds == null || bounds.isEmpty()) {
-            return distanceSquaredToChunkCenter(pos, cameraPosition);
-        }
-        double centerX = (bounds.minX() + bounds.maxX()) * 0.5;
-        double centerY = (bounds.minY() + bounds.maxY()) * 0.5;
-        double centerZ = (bounds.minZ() + bounds.maxZ()) * 0.5;
-        double dx = centerX - cameraPosition.x;
-        double dy = centerY - cameraPosition.y;
-        double dz = centerZ - cameraPosition.z;
-        return dx * dx + dy * dy + dz * dz;
-    }
-
-    private static double distanceSquaredToChunkCenter(ChunkPos pos, Vector3f cameraPosition) {
-        double centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
-        double centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5;
-        double dx = centerX - cameraPosition.x;
-        double dz = centerZ - cameraPosition.z;
-        return dx * dx + dz * dz;
-    }
-
-    private static boolean insideFrustum(FrustumIntersection frustum, ClientWorld world, ChunkPos pos) {
-        ChunkAabb bounds = chunkAabb(world, pos);
-        return frustum.testAab(bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ());
+        return VisibilityCollector.transparentRenderOrderByBounds(boundsByPosition, cameraPosition);
     }
 
     static ChunkAabb chunkAabb(ClientWorld world, ChunkPos pos) {
-        float minX = pos.x() * ChunkPos.SIZE;
-        ClientWorld.ChunkVerticalBounds verticalBounds = world.verticalBounds(pos)
-                .orElse(new ClientWorld.ChunkVerticalBounds(world.dimension().minY(), world.dimension().maxYExclusive()));
-        float minY = verticalBounds.minY();
-        float minZ = pos.z() * ChunkPos.SIZE;
-        float maxX = minX + ChunkPos.SIZE;
-        float maxY = verticalBounds.maxYExclusive();
-        float maxZ = minZ + ChunkPos.SIZE;
-        return new ChunkAabb(minX, minY, minZ, maxX, maxY, maxZ);
+        VisibilityCollector.ChunkAabb bounds = VisibilityCollector.chunkAabb(world, pos);
+        return new ChunkAabb(bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ());
     }
 
     @Override
@@ -691,6 +490,10 @@ public final class WorldRenderer implements AutoCloseable {
 
         public int transparentDrawCalls() {
             return transparentPass.drawCalls();
+        }
+
+        public int renderStateChanges() {
+            return opaquePass.stateChanges() + cutoutPass.stateChanges() + transparentPass.stateChanges();
         }
     }
 

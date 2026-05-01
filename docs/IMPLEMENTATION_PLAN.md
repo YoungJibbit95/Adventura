@@ -1,501 +1,310 @@
-# Adventura – Implementation Sprint Plan
+# Adventura - Global Implementation Plan
 
-Stand: 2026-04-30
-
-Diese Datei schlägt eine Reihenfolge für die nächsten Arbeitsblöcke vor. Ziel ist, zuerst technische Grundlagen zu stabilisieren, damit spätere Gameplay-Features sauber und schön wirken.
-
----
-
-# Sprint 1 – Tooling, Tests und Messbarkeit
+Stand: 2026-05-01
 
 ## Ziel
 
-Ohne stabile Tests und Messpunkte ist jeder Engine-Fix schwer beweisbar.
+Adventura soll von einem starken Prototype in eine belastbare Alpha wachsen: serverautoritativ, testbar, performant, visuell eigenstaendig und mit einem klaren cozy Survival-Adventure-Loop. Dieser Plan ist die globale Arbeitsanweisung fuer alle Agenten. Jede Rolle arbeitet nach diesem Plan plus ihren zugewiesenen TODO-Listen.
 
-## PRs
+## Projektbild
 
-### PR 1: JDK/Test Gate Cleanup
+Adventura ist ein Java-21/Gradle-Projekt mit:
+
+- `common`: Blocks, Items, Crafting, World Data, Worldgen, Physics, Gameplay Rules, Packets.
+- `client`: LWJGL/OpenGL-Client, Renderer, Input, UI/HUD, Audio-Hooks, Client Networking.
+- `server`: autoritativer Netty-Server, ServerWorld, Persistence, Entity Tracker, Player State.
+- `tools`: Asset-/Atlas-Reports.
+- `launcher-electron`: React/Electron-Launcher.
+
+Der Server bleibt die Gameplay-Autoritaet. Clients senden Intents. Common enthaelt die Regeln, die auf Client und Server gleich sein muessen. Rendering, UI und lokale Preview gehoeren in den Client.
+
+## Wichtigste Schwachstellen
+
+- `GameClient` ist mit ueber 5700 Zeilen zu monolithisch: Loop, Input, Screens, HUD, Chat, Commands, lokale Gameplay-Aktionen und Session-Management sind vermischt.
+- `ServerConnectionHandler` ist mit ueber 2000 Zeilen zu breit: Protocol Routing, Auth, Movement, Actions, Inventory, Storage, Cooking, Saves, Interest und Stats muessen schrittweise getrennt werden.
+- `OverworldGenerator`, `CraftingRecipes` und mehrere Content-Registries sind noch stark codegetrieben und werden mit mehr Content schwer wartbar.
+- Rendering hat eine solide Basis, braucht aber fuer Shadows, Sprite Rendering, Pass-Ausbau, Post/Framebuffer und Draw-Ranges klarere Module.
+- Networking/Persistence hatte bisher keinen echten V2-Plan; Protocol Contracts, ActionPipeline, GameplayEventStream, Region Storage, Save Queue und BlockEntity Transactions sind jetzt Pflichtthemen.
+- UI/HUD wachsen noch im GameClient und brauchen Screen-/Component-Architektur.
+- Physics ist gut getestet, braucht aber Collision Cache, Partial-Shape Impact, Replay Recorder und StatusEffect-Schnittstellen.
+
+## Gemeinsame Arbeitsregeln
+
+- Arbeite so, als waere Adventura eine echte Alpha-Engine, die Geld und Zeit nicht verschwenden darf.
+- Lies vor jeder Aufgabe `docs/IMPLEMENTATION_PLAN.md`, `docs/ARCHITECTURE.md` und deine zugewiesenen TODO-Listen.
+- Baue keine minimalen Placebo-Fixes, wenn ein stabiler kleiner Architektur-Schnitt noetig ist.
+- Vermeide neue Monolithen. Wenn eine Datei stark waechst, extrahiere erst klare Services, Controller, ViewModels oder Contracts.
+- Neue serverkritische Logik gehoert nicht nur in den Client.
+- Neue Gameplay-Regeln gehoeren nach `common`, Server-Autoritaet nach `server`, Rendering/UI nach `client`.
+- Neue Shader-Faelle laufen ueber Material-/Renderdaten, nicht ueber harte Block-IDs.
+- Jede relevante Aenderung braucht Test, Smoke-Check, Profiling-Messung oder eine kurze dokumentierte Begruendung.
+- Dokumentiere offene Risiken in der passenden TODO-Liste, statt sie im Code zu verstecken.
+- Cross-Owner-Aenderungen zuerst ueber kleine Contracts abstimmen: Packet, Action, ViewModel, Tag, RenderMaterial, Event oder Save-Schema.
+
+## Rollen und Ownership
+
+| Rolle | Primaere Listen | Referenzen | Fokus |
+| --- | --- | --- | --- |
+| Lead Engine Developer | `docs/RENDERING_TODO_LIST.md`, `docs/LIGHTNING_TODO_LIST.md` | `docs/ENGINE_TODO_LIST.md`, `docs/RENDERING_SHADER_UNIFORMS.md` | Shader, Lighting, Shadows, Sprite Rendering, Render Pipeline, GPU/GL, Profiling |
+| Lead Game Design Engineer | `docs/GAMEPLAY_TODO_LIST.md`, `docs/WORLDGEN_TODO_LIST.md` | `docs/ASSET_REQUESTS.md`, `docs/WORLD_SMOKE_TESTS.md` | Core Loop, Items, Stations, Biome-Gameplay, Lore, Creature Design |
+| Lead UI/UX Frontend Developer | `docs/UI_TODO_LIST.md`, `docs/HUD_TODO_LIST.md` | `docs/ANIMATIONS_TODO_LIST.md`, launcher docs | Screens, Components, HUD, Menus, Journal, UX, Launcher/Game Stil |
+| Physics und Engine Worker | `docs/PHYSICS_TODO_LIST.md`, `docs/ENGINE_TODO_LIST.md` | `docs/ANIMATIONS_TODO_LIST.md` | Physics, Collision, Fluids, Replay, Engine-Oberflaechen, Debug |
+| Project Manager | `docs/ENGINE_TODO_LIST.md`, `docs/IMPLEMENTATION_PLAN.md` | alle TODO-Listen | Refactor-Plan, Architektur, Bug-Triage, DoD, Test-Gates, Konfliktvermeidung |
+| Main Networking Dev | `docs/NETWORKING_AND_PERSITENCE_TODO_LIST.md`, `docs/ENGINE_TODO_LIST.md` | `docs/GAMEPLAY_TODO_LIST.md`, `docs/UI_TODO_LIST.md` | Protocol, Server Actions, Interest, Reconnect, Persistence, BlockEntity Sync |
+
+## Arbeitsreihenfolge
+
+# Phase 0 - Stabilisieren und Arbeitsgrenzen sichern
+
+Owner: Project Manager.
 
 Aufgaben:
 
-- JDK 21 Setup dokumentieren.
-- `./gradlew test` lokal prüfen.
-- `./gradlew buildGame` lokal prüfen.
-- README Troubleshooting ergänzen.
+- ~~Refactor-Map fuer `GameClient`, `ServerConnectionHandler`, `OverworldGenerator`, `WorldRenderer` und Content-Registries erstellen.~~
+  Erledigt: 2026-05-01, siehe `docs/ENGINE_TODO_LIST.md` P13.1/P13.2.
+- ~~Pro Monolith Zielpakete und Extraktionsreihenfolge definieren.~~
+  Erledigt: 2026-05-01, Zielpakete und Reihenfolge stehen in `docs/ENGINE_TODO_LIST.md` P13.1.
+- ~~DoD fuer Agentenarbeit durchsetzen:~~
+  - Tests oder Smoke.
+  - keine neuen monolithischen Methoden.
+  - klare Owner-Schnittstellen.
+  - TODO-Status aktualisiert.
+  Erledigt: 2026-05-01, Monolith-Extraktions-DoD steht in `docs/ENGINE_TODO_LIST.md` P13.1.
+- Bestehende Test-/Build-Gates pruefen und bekannte Runner-Probleme dokumentieren.
+
+Status 2026-05-01:
+
+- 🔴 `ServerConnectionHandler`: Main Networking Dev startet mit `server.protocol`/duennem Packet-Dispatch und Common-`ActionRequest`/`ActionValidationResult` Skeleton, bevor weitere serverkritische Aktionen in den Handler wachsen.
+  Fortschritt: 2026-05-01, `common.actions` Skeleton mit `ActionPipeline` ist umgesetzt und getestet; `ServerProjectileShootAction` ist erster Server-Slice, weitere Aktionen/Event-Ergebnisse bleiben offen.
+- 🔴 `GameClient`: Lead UI/UX und Physics/Engine Worker schneiden zuerst `ScreenContext`, `ClientInputState`, `HudPresenter` und spaeter `DebugCommandRegistry`, waehrend bestehende Methoden zunaechst delegiert bleiben.
+- ~~🔴 Content-Registries: Lead Game Design Engineer plant `common.content`/`ContentTagRegistry` V1 codebasiert; Networking, Physics und Rendering nutzen Tags erst ueber stabile Common-Queries.~~
+  Erledigt: 2026-05-01, `ContentTagRegistry` V1 ist als Common-Read-Contract vorhanden und getestet; Folgearbeit ist die Migration von ActionPipeline, Physics, Rendering und Save-Diagnose auf diese Queries.
+  Verifikation: `ContentTagRegistryTest` XML/HTML meldet 8 Tests, 0 Failures; Gradle-Task-Race ist in `docs/ENGINE_TODO_LIST.md` P0.1 dokumentiert.
+- 🟠 `WorldRenderer`: Lead Engine Developer fuehrt P10.1a mit `RenderPassExecutor`, `RenderStateGuard`, `TerrainRenderer`, `TerrainUploadQueue` und `VisibilityCollector` fort, bevor Shadows/Draw-Ranges/Water-Ausbau groesser werden.
+- 🟠 `OverworldGenerator`: Lead Game Design Engineer und Project Manager schneiden P7.1 in `ClimateSampler`, `BiomeResolver`, `HeightmapSampler`, `TerrainFiller`, `FeaturePlanner`, `StructurePlanner`, `SpawnPlanner` und Metrics, mit Seed-/Spawn-Tests vor jedem Move.
 
 Akzeptanz:
 
-- Tests laufen lokal.
-- Build läuft lokal.
-
-### PR 2: EngineFrameStats V1
-
-Aufgaben:
-
-- `EngineFrameStats` Record.
-- Werte aus `GameClient` ziehen.
-- Debug-HUD liest zentrale Stats.
-- FPS, Frame, Update, Render, Chunks, Draw Calls, Entities, Particles.
-
-Akzeptanz:
-
-- Debug-HUD zeigt zentrale Stats.
-- keine große Overhead-Regression.
-
-### PR 3: Smoke Test Seeds Documentation
-
-Aufgaben:
-
-- Seed-Tabelle übernehmen.
-- Testorte dokumentieren.
-- Smoke-Checklisten in Repo aufnehmen.
-
-Akzeptanz:
-
-- jeder Entwickler kann dieselben Orte prüfen.
+- Jeder Agent weiss, welche Dateien er primaer anfassen darf.
+- Cross-Owner-Arbeit hat Contract-Schnittstellen.
+- Refactors werden nicht als riesige unreviewbare Umbauten gestartet.
 
 ---
 
-# Sprint 2 – Rendering-Kern
+# Phase 1 - Monolithen in sichere Schnittstellen schneiden
 
-## Ziel
-
-Rendering sauber, datengetrieben und erweiterbar machen.
-
-## PRs
-
-### PR 4: Render Material LUT V1
+Owner: Project Manager mit allen Leads.
 
 Aufgaben:
 
-- `RenderMaterial` definieren.
-- Materialdaten aus Block/Atlas ableiten.
-- Shader liest Materialindex.
-- harte Block-ID-Sonderfälle weiter entfernen.
+- `GameClient` schrittweise entlasten:
+  - Screen Controller.
+  - HUD Presenter.
+  - Command Handler.
+  - Input State.
+  - Interaction Targeting.
+  - Session Lifecycle.
+- `ServerConnectionHandler` schrittweise entlasten:
+  - protocol routing.
+  - action validation.
+  - movement validation.
+  - interest management.
+  - persistence hooks.
+  - storage/station transactions.
+- `OverworldGenerator` in Pass-Services vorbereiten.
+- `WorldRenderer` weiter in Pass-/Upload-/Visibility-Verantwortungen schneiden.
 
 Akzeptanz:
 
-- neuer Glow/Water/Cutout-Block braucht keine Shader-ID-Liste.
-
-### PR 5: Texture Atlas Validation
-
-Aufgaben:
-
-- missing textures melden.
-- duplicate mappings melden.
-- atlas report erzeugen.
-- UV Rects debugbar machen.
-- seam/padding rules dokumentieren.
-
-Akzeptanz:
-
-- Assetfehler fallen früh auf.
-
-### PR 6: Render Pass Cleanup V1
-
-Aufgaben:
-
-- Terrain, Entity, Particle, UI/Debug logisch trennen.
-- `RenderContext` einführen.
-- OpenGL-State pro Pass klar setzen.
-
-Akzeptanz:
-
-- `WorldRenderer` wird übersichtlicher.
-- neue Renderfeatures haben klaren Ort.
+- Verhalten bleibt gleich oder besser.
+- Tests sichern die Extraktionen.
+- Neue Featurearbeit kann parallel konfliktarmer laufen.
 
 ---
 
-# Sprint 3 – ChunkBuildQueue und Mesh Performance
+# Phase 2 - Rendering, Shader, Lighting und Shadows
 
-## Ziel
-
-Chunk Loading soll weniger stuttern und langfristig skalieren.
-
-## PRs
-
-### PR 7: ChunkBuildQueue V1
+Owner: Lead Engine Developer.
 
 Aufgaben:
 
-- Queue mit Kamera-Priorität.
-- ms-Budget.
-- Dirty chunks deduplizieren.
-- GPU upload im Render Thread.
-- Debug stats.
+- Render Pipeline V3 aus `RENDERING_TODO_LIST.md` umsetzen.
+- `WorldRenderer` weiter modularisieren:
+  - Terrain.
+  - Water.
+  - Selection.
+  - Sprite/Billboard.
+  - Upload Queue.
+  - Render State.
+- Sprite Rendering fuer UI/Items/Particles/Entity-Fallbacks planen und als Atlas-Vertrag bauen.
+- Light Jobs und Dirty Regions aus `LIGHTNING_TODO_LIST.md` vorbereiten.
+- Shadow-Strategie fuer Alpha entscheiden und prototypisieren, nur mit Preset-Fallback und Debug View.
+- Uniform-Doku aktuell halten.
 
 Akzeptanz:
 
-- sichtbare Chunks werden priorisiert.
-- weniger Frame-Spikes.
-
-### PR 8: Greedy Meshing AO-Compatible Rules
-
-Aufgaben:
-
-- Merge-Regeln für Material/Light/AO.
-- Toggle simple vs greedy.
-- Tests für Merge-Korrektheit.
-
-Akzeptanz:
-
-- weniger Triangles ohne kaputte Kanten.
-
-### PR 9: GL Resource Tracking V1
-
-Aufgaben:
-
-- VAO/VBO/Texture zählen.
-- Mesh dispose prüfen.
-- Debug-HUD zeigt GPU resource counts.
-- Shutdown leak warning optional.
-
-Akzeptanz:
-
-- langes Erkunden zeigt keine Mesh-Leaks.
+- Neue Shader-/Render-Features sind datengetrieben.
+- Low/Medium/High Presets kontrollieren Kosten.
+- Render-Stats zeigen Pass-, Mesh-, Upload- und Shader-Kosten.
 
 ---
 
-# Sprint 4 – Worldgen und Streaming
+# Phase 3 - Networking, Server Actions und Persistence V2
 
-## Ziel
+Owner: Main Networking Dev.
 
-Worldgen soll reproduzierbarer, schöner und chunk-border-sicherer werden.
+Status 2026-05-01:
 
-## PRs
-
-### PR 10: Heightmap/Biome Cache
-
-Aufgaben:
-
-- Cache pro Chunk.
-- Spawn/Structures/Entities nutzen Cache.
-- Tests für deterministische Werte.
-
-Akzeptanz:
-
-- weniger doppelte Noise-Samples.
-
-### PR 11: Spawn Safety V2
+- Protocol Contract/Golden-Codec-Basis steht.
+- ActionPipeline ist als Common-Contract vorhanden; Projectile-Shoot nutzt den ersten Server-Action-Slice.
+- GameplayEventStream hat Common-Modell, Packet/Codec-Contract, ersten Client-Feedback-Hook und erste Server-Emission fuer ProjectileImpact; Interest-Filter und vollstaendige HUD-/Journal-Consumer bleiben offen.
 
 Aufgaben:
 
-- Spawn-Kandidaten scannen.
-- freier Headroom.
-- kein Wasser/Cave.
-- nahe Starter-Ressourcen.
+- Protocol Contracts und Golden-Codec-Tests fuer Packet-Aenderungen.
+- ActionPipeline als Common/Server-Schnitt definieren.
+- GameplayEventStream fuer serverbestaetigte UI/Audio/Particle Events bauen.
+- Interest Management V2:
+  - chunks.
+  - entities.
+  - block updates.
+  - events.
+  - open block entities.
+- Region Storage und Async Save Queue planen und inkrementell einfuehren.
+- BlockEntity Transactions fuer Storage, Campfire, CookingPot und Forge.
+- Reconnect/Auth/Session-Grundlage vorbereiten.
 
 Akzeptanz:
 
-- Smoke-Test-Seeds spawnen sicher.
-
-### PR 12: Chunk-Border Feature Placement
-
-Aufgaben:
-
-- region-basierte Feature Seeds oder deferred placements.
-- Trees/Structures an Chunkrändern erlauben.
-- Tests gegen Grid-Lücken.
-
-Akzeptanz:
-
-- keine sichtbaren chunk-gridartigen Baumverbotskanten.
+- ServerConnectionHandler wird kleiner und klarer.
+- Saves skalieren ueber Properties-V1 hinaus.
+- Multiplayer-UI kann Pending/Accepted/Rejected sauber darstellen.
 
 ---
 
-# Sprint 5 – Lighting
+# Phase 4 - Physics, Collision und Replay
 
-## Ziel
+Owner: Physics und Engine Worker.
 
-Lichtquellen, Höhlen und Nacht sollen gameplay-relevant und performant sein.
+Status 2026-05-01:
 
-## PRs
-
-### PR 13: Light Debug View V2
+- StatusEffectSystem hat einen Common-Contract fuer burning/chilled/wet/rested/cozy/poison, Modifier, Tick-Pulses und Save-State; Server-Anwendung, Save-Felder und Client-Events bleiben offen.
 
 Aufgaben:
 
-- Sky/Block/Combined/Emissive debug.
-- Light visualization mode.
-- looked-at block light info.
+- Collision Cache und Shape Query API planen.
+- PartialShapeImpactResolver fuer Projectile/Interaction-Hits vorbereiten.
+- EntityFluidForceStep und Lava/Hazard-Schnittstellen ausarbeiten.
+- PhysicsReplayRecorder planen und erste Golden-Replay-Erweiterung bauen.
+- Physics-Debug-Overlays in HUD/Diagnostics integrieren.
+- Kleine Engine-Oberflaechen-Extraktionen unterstuetzen, ohne in Shader/Render-Pipeline des Lead Engine Developers zu greifen.
 
 Akzeptanz:
 
-- Light-Seams sind schnell prüfbar.
-
-### PR 14: Incremental Block Light Updates
-
-Aufgaben:
-
-- Add/Remove queues.
-- boundary propagation.
-- fallback rebuild.
-- performance stats.
-
-Akzeptanz:
-
-- Campfire/Lantern updates ohne große Spikes.
-
-### PR 15: Day/Night/Fog Color Curves
-
-Aufgaben:
-
-- morning/noon/evening/night colors.
-- fog color transitions.
-- night minimum brightness.
-
-Akzeptanz:
-
-- Tageswechsel wirkt cozy und lesbar.
+- Player, Entity und Projectile nutzen dieselbe Collision-Wahrheit.
+- Physics-Bugs werden reproduzierbar.
+- Engine-Arbeit verteilt sich auf mehr als eine Person.
 
 ---
 
-# Sprint 6 – Save/Load und BlockEntities
+# Phase 5 - Core Gameplay und Content-Systeme
 
-## Ziel
-
-Spielerfortschritt und Weltänderungen dauerhaft machen.
-
-## PRs
-
-### PR 16: Save Format V1
+Owner: Lead Game Design Engineer.
 
 Aufgaben:
 
-- save version.
-- metadata.
-- safe write.
-- unknown item/block fallback.
+- Core Loop in messbare Milestones schneiden.
+- ContentTagRegistry mit Engine/Networking/Physics abstimmen.
+- Station Progression fuer Workbench, Campfire, Cooking Pot, Forge und spaetere Ancient Stations definieren.
+- Item-/Recipe-/Loot-Balancing als Design-Daten pflegen.
+- Cozy-Life, Tiere, Lore, Journal und Ruinenprogression systematisch ausbauen.
+- Worldgen-Biome-Progression mit Ressourcen und Structures synchronisieren.
 
 Akzeptanz:
 
-- Save/Load crasht nicht bei unbekannten Keys.
-
-### PR 17: World Diff Save
-
-Aufgaben:
-
-- placed/removed/modified blocks speichern.
-- dirty chunks persistieren.
-- load overlay auf generated world.
-
-Akzeptanz:
-
-- abgebaute und platzierte Blöcke bleiben nach Neustart.
-
-### PR 18: BlockEntityStore Persistence
-
-Aufgaben:
-
-- StorageCrate.
-- Campfire.
-- CookingPot.
-- Forge.
-- LootCrate.
-
-Akzeptanz:
-
-- Kisten/Fuel/Loot bleiben erhalten.
+- Jede neue Ressource hat einen Gameplay-Grund.
+- Early/Mid/Late Game fuehren logisch ineinander.
+- Design-Systeme sind speicher- und netzwerkfaehig.
 
 ---
 
-# Sprint 7 – Multiplayer Interest und Async Server
+# Phase 6 - UI/UX, HUD und Launcher/Game Flow
 
-## Ziel
-
-Multiplayer soll skalieren und sicher bleiben.
-
-## PRs
-
-### PR 19: Chunk Subscriptions V1
+Owner: Lead UI/UX Frontend Developer.
 
 Aufgaben:
 
-- pro Client aktive Chunks.
-- Block updates filtern.
-- chunk resend nach unload.
+- Screen Architecture V1 bauen.
+- Component Library V1 bauen:
+  - Button.
+  - Slot.
+  - Tab.
+  - Tooltip.
+  - ProgressBar.
+  - ScrollList.
+  - Modal.
+  - TextInput.
+- HUD Presenter aus `GameClient` extrahieren.
+- Transaction-aware UI fuer Storage/Crafting/Cooking/Forge vorbereiten.
+- Journal und Settings als echte Screens mit ViewModels.
+- Launcher und Ingame-UI stilistisch angleichen.
 
 Akzeptanz:
 
-- Clients bekommen nur relevante Chunkupdates.
-
-### PR 20: Entity Interest V1
-
-Aufgaben:
-
-- Entity snapshots nach Radius/Chunk filtern.
-- Snapshot counts messen.
-- culling serverseitig.
-
-Akzeptanz:
-
-- entfernte Entities werden nicht unnötig gesendet.
-
-### PR 21: Async Server Chunk Generation
-
-Aufgaben:
-
-- Worker queue.
-- dedupe requests.
-- priority by player.
-- backpressure.
-
-Akzeptanz:
-
-- Netty wird nicht durch Chunkgen blockiert.
+- UI Scale funktioniert.
+- Neue Screens wachsen nicht in GameClient.
+- Online-Rejects und Pending-Aktionen sind verstaendlich.
 
 ---
 
-# Sprint 8 – Gameplay auf stabiler Basis
+# Phase 7 - Worldgen und Alpha Content Production
 
-## Ziel
-
-Jetzt Content/Features ausbauen, wenn Engine/Save/Networking stabiler sind.
-
-## PRs
-
-### PR 22: Cooking Pot V1
+Owner: Lead Game Design Engineer mit Project Manager.
 
 Aufgaben:
 
-- BlockEntity.
-- UI.
-- recipes.
-- server validation.
+- Worldgen-Services aus `WORLDGEN_TODO_LIST.md` schneiden.
+- Feature- und Structure-Tables datengetriebener machen.
+- Biome Design Cards pflegen.
+- Debug-/QA-Teleports fuer Biome und Structures planen.
+- Smoke-Seeds fuer Core-Progression und Rendering-/Networking-Risiken aktuell halten.
 
 Akzeptanz:
 
-- bessere Foods brauchen Cooking Pot.
-
-### PR 23: Forge V1
-
-Aufgaben:
-
-- BlockEntity.
-- smelting recipes.
-- iron ingot.
-- forge UI.
-
-Akzeptanz:
-
-- Iron Progression funktioniert.
-
-### PR 24: Journal Persistence V1
-
-Aufgaben:
-
-- notes.
-- discovered biomes.
-- discovered recipes.
-- save/load.
-
-Akzeptanz:
-
-- Exploration-Fortschritt bleibt erhalten.
+- Neue Biome/Structures koennen ohne Generator-Monolith wachsen.
+- Spawn und Progression bleiben seed-robust.
+- QA kann neue Inhalte gezielt finden.
 
 ---
 
-# Sprint 9 – Entity Life und Animation
+# Phase 8 - Alpha Gate und Integration
 
-## Ziel
+Owner: Project Manager, alle Leads liefern Nachweise.
 
-Die Welt wirkt lebendiger, ohne Server-Tick oder Renderloop zu sprengen.
+Pflicht-Gates:
 
-## PRs
-
-### PR 25: Entity Lifecycle V1
-
-Aufgaben:
-
-- spawn/tick/despawn/park.
-- bounds debug.
-- snapshot filtering.
+- `./gradlew test` oder fokussierte Modul-Tests.
+- `./gradlew buildGame`, wenn Build-/Packaging-/Cross-Modul-Code betroffen ist.
+- Manual Smoke aus `docs/WORLD_SMOKE_TESTS.md`, wenn GL/Rendering/Gameplay-Flow betroffen ist.
+- Networking-Smoke bei Packet-, Server- oder Persistence-Aenderungen.
+- Save-/Load-Smoke bei World/Player/BlockEntity-Aenderungen.
+- Profiling-Szenario bei Engine-/Render-/Chunk-/Entity-Performance-Aenderungen.
 
 Akzeptanz:
 
-- Entities verschwinden nicht falsch und werden nicht endlos getickt.
+- Alpha-Build startet lokal.
+- Singleplayer und Join Local bleiben nutzbar.
+- Kein neues Feature erzeugt bekannte Dupes, Save-Verlust, Shader-Sonderfaelle oder unbudgetierte Runtime-Arbeit.
 
-### PR 26: Pose System V1
+## Sofort empfohlene erste Arbeitspakete
 
-Aufgaben:
+1. Project Manager: ~~Refactor-Map und DoD-Checkliste fuer Monolithen anlegen.~~ Erledigt am 2026-05-01 in `docs/ENGINE_TODO_LIST.md` P13.1/P13.2; naechster PM-Schritt ist Gate-/Runner-Risiken aus P0.1/P0.2 nachhalten.
+2. Main Networking Dev: `docs/NETWORKING_AND_PERSITENCE_TODO_LIST.md` P0/P1 starten, Protocol Contract und ActionPipeline-Skeleton.
+3. Lead UI/UX Frontend Developer: ScreenContext und ersten Screen aus `GameClient` extrahieren.
+4. Lead Engine Developer: Render Pipeline V3-Schnitt fuer Terrain/Water/Sprite/State vorbereiten.
+5. Physics und Engine Worker: PartialShapeImpactResolver-Design und Collision-Cache-Tests vorbereiten.
+6. Lead Game Design Engineer: Alpha-Milestone-Tabelle und ContentTagRegistry-Anforderungen definieren.
 
-- named model parts.
-- idle/walk/flee/follow/graze.
-- state transitions.
+## Agent Prompts
 
-Akzeptanz:
-
-- Tiere wirken lebendig.
-
-### PR 27: Particle Quality Presets
-
-Aufgaben:
-
-- Low/Medium/High budgets.
-- fireflies/spores/campfire budgets.
-- debug stats.
-
-Akzeptanz:
-
-- Partikel bleiben performant.
-
----
-
-# Sprint 10 – Polish und Combat Foundation
-
-## Ziel
-
-Adventure-Features vorbereiten, ohne Cozy-Fokus zu verlieren.
-
-## PRs
-
-### PR 28: Damage System V1
-
-Aufgaben:
-
-- DamageSource.
-- DamageResult.
-- entity health.
-- server validation.
-
-Akzeptanz:
-
-- Schaden ist serverseitig sicher.
-
-### PR 29: Bow/Projectile V1
-
-Aufgaben:
-
-- Shoot intent.
-- Arrow projectile.
-- server hit/collision.
-- client interpolation.
-
-Akzeptanz:
-
-- Pfeile sind serverautoritativ.
-
-### PR 30: Ruin Loot/Lore Expansion
-
-Aufgaben:
-
-- rare loot tables.
-- old notes.
-- map fragments.
-- ruin key/seal setup.
-
-Akzeptanz:
-
-- Ruinen lohnen sich spielerisch.
-
----
-
-# Sprint-Regel
-
-Jeder Sprint sollte mindestens enthalten:
-
-- 1 technischer Test oder Smoke-Test.
-- 1 Debug-/Messverbesserung, wenn Engine betroffen ist.
-- 1 klare Akzeptanzprüfung.
-- keine stillen Shader-Sonderfälle.
-- keine neuen clientseitigen Trust-Lücken.
+Die copy-paste-faehigen Prompts fuer alle sechs Rollen stehen in `docs/AGENT_PROMPTS.md`. Jeder Prompt enthaelt dieselbe Grundarbeitsanweisung und eine andere konkrete Aufgabe.

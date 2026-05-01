@@ -20,6 +20,11 @@ public final class EntityDrops {
 
     public static List<Drop> dropsFor(String typeKey, long entityId) {
         Objects.requireNonNull(typeKey, "typeKey");
+        if (CozyLifeProgression.findCreature(typeKey)
+                .filter(design -> design.roles().contains(CreatureRole.RESOURCE))
+                .isEmpty()) {
+            return List.of();
+        }
         return switch (typeKey) {
             case "voxel:moss_snail" -> mossSnailDrops(entityId);
             default -> List.of();

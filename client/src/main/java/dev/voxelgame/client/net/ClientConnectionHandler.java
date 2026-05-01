@@ -19,6 +19,7 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
     private final ClientNetworkStats stats;
     private final Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler;
     private final Consumer<GamePacket.ProjectileImpact> projectileImpactHandler;
+    private final Consumer<GamePacket.GameplayEvents> gameplayEventsHandler;
 
     public ClientConnectionHandler(String username, ClientWorld world, Hotbar hotbar, ChatLog chatLog) {
         this(username, world, hotbar, new PlayerStats(), chatLog, new ClientNetworkStats());
@@ -52,6 +53,21 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
             Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler,
             Consumer<GamePacket.ProjectileImpact> projectileImpactHandler
     ) {
+        this(username, world, hotbar, playerStats, chatLog, stats, playerPositionHandler, projectileImpactHandler, events -> {
+        });
+    }
+
+    public ClientConnectionHandler(
+            String username,
+            ClientWorld world,
+            Hotbar hotbar,
+            PlayerStats playerStats,
+            ChatLog chatLog,
+            ClientNetworkStats stats,
+            Consumer<GamePacket.PlayerPositionSnapshot> playerPositionHandler,
+            Consumer<GamePacket.ProjectileImpact> projectileImpactHandler,
+            Consumer<GamePacket.GameplayEvents> gameplayEventsHandler
+    ) {
         this.username = username;
         this.world = world;
         this.hotbar = hotbar;
@@ -62,6 +78,8 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
         } : playerPositionHandler;
         this.projectileImpactHandler = projectileImpactHandler == null ? impact -> {
         } : projectileImpactHandler;
+        this.gameplayEventsHandler = gameplayEventsHandler == null ? events -> {
+        } : gameplayEventsHandler;
     }
 
     @Override
@@ -102,6 +120,7 @@ public final class ClientConnectionHandler extends SimpleChannelInboundHandler<G
             case GamePacket.EntitySnapshots snapshots -> world.applyEntitySnapshots(snapshots.snapshots());
             case GamePacket.PlayerPositionSnapshot snapshot -> playerPositionHandler.accept(snapshot);
             case GamePacket.ProjectileImpact impact -> projectileImpactHandler.accept(impact);
+            case GamePacket.GameplayEvents events -> gameplayEventsHandler.accept(events);
             case GamePacket.InventorySnapshot inventory -> hotbar.applySnapshot(inventory.slots());
             case GamePacket.PlayerStatsSnapshot snapshot -> playerStats.applySnapshot(
                     snapshot.health(),

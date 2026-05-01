@@ -4,6 +4,7 @@ import dev.voxelgame.common.entity.EntityBounds;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public record BlockCollisionShape(List<Box> boxes) {
     public static final BlockCollisionShape NONE = new BlockCollisionShape(List.of());
@@ -65,6 +66,33 @@ public record BlockCollisionShape(List<Box> boxes) {
                 x + radius,
                 y + radius,
                 z + radius,
+                blockX,
+                blockY,
+                blockZ
+        );
+    }
+
+    public Optional<PartialShapeImpactResolver.ImpactResult> raycastProjectile(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            ProjectileBounds bounds,
+            int blockX,
+            int blockY,
+            int blockZ
+    ) {
+        return PartialShapeImpactResolver.raycastProjectile(
+                this,
+                fromX,
+                fromY,
+                fromZ,
+                toX,
+                toY,
+                toZ,
+                bounds,
                 blockX,
                 blockY,
                 blockZ

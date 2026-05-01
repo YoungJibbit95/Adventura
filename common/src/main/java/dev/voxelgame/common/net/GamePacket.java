@@ -1,6 +1,8 @@
 package dev.voxelgame.common.net;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.gameplay.GameplayEvent;
+import dev.voxelgame.common.gameplay.GameplayEventBatch;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.ProjectileHit;
@@ -25,6 +27,7 @@ public sealed interface GamePacket permits
         GamePacket.EntityInteract,
         GamePacket.ProjectileShoot,
         GamePacket.ProjectileImpact,
+        GamePacket.GameplayEvents,
         GamePacket.InventorySnapshot,
         GamePacket.PlayerStatsSnapshot,
         GamePacket.ServerStatsSnapshot,
@@ -38,7 +41,7 @@ public sealed interface GamePacket permits
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 23;
+    int PROTOCOL_VERSION = 24;
     int MAX_CLIENT_NAME_LENGTH = 64;
     int MAX_USERNAME_LENGTH = 32;
     int MAX_AUTH_TOKEN_LENGTH = 128;
@@ -425,6 +428,29 @@ public sealed interface GamePacket permits
         @Override
         public PacketType type() {
             return PacketType.PROJECTILE_IMPACT;
+        }
+    }
+
+    record GameplayEvents(GameplayEventBatch batch) implements GamePacket {
+        public GameplayEvents(List<GameplayEvent> events) {
+            this(GameplayEventBatch.of(events));
+        }
+
+        public GameplayEvents {
+            Objects.requireNonNull(batch, "batch");
+        }
+
+        public int schemaVersion() {
+            return batch.schemaVersion();
+        }
+
+        public List<GameplayEvent> events() {
+            return batch.events();
+        }
+
+        @Override
+        public PacketType type() {
+            return PacketType.GAMEPLAY_EVENTS;
         }
     }
 

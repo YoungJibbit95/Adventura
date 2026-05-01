@@ -16,13 +16,15 @@ import dev.voxelgame.common.loot.LootTable;
 import dev.voxelgame.common.loot.LootTableRegistry;
 import dev.voxelgame.common.loot.LootTables;
 import dev.voxelgame.common.net.GamePacket;
-import dev.voxelgame.common.physics.BlockCollisionShapes;
+import dev.voxelgame.common.physics.CollisionShapeCache;
 import dev.voxelgame.common.physics.EnvironmentHazardRules;
 import dev.voxelgame.common.physics.EntityPhysicsProfile;
 import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
+import dev.voxelgame.common.physics.PartialShapeImpactResolver;
 import dev.voxelgame.common.physics.ProjectileBounds;
+import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkDataCodec;
@@ -57,6 +59,7 @@ public final class ServerWorld {
 
     private final long seed;
     private final InMemoryWorld world;
+    private final CollisionShapeCache collisionShapeCache;
     private final OverworldGenerator generator;
     private final OverworldGenerator.SpawnPoint spawnPoint;
     private final LightEngine lightEngine = new LightEngine();
@@ -73,6 +76,28 @@ public final class ServerWorld {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
         this.seed = seed;
         this.world = new InMemoryWorld(DimensionSettings.OVERWORLD, blocks);
+        this.collisionShapeCache = new CollisionShapeCache(new CollisionShapeCache.Source() {
+            @Override
+            public DimensionSettings dimension() {
+                return world.dimension();
+            }
+
+            @Override
+            public boolean ensureChunkAvailable(ChunkPos pos) {
+                getOrGenerateChunk(pos);
+                return true;
+            }
+
+            @Override
+            public short blockIdAt(int x, int y, int z) {
+                return ServerWorld.this.blockIdAt(x, y, z);
+            }
+
+            @Override
+            public BlockType blockType(short blockId) {
+                return world.blockType(blockId);
+            }
+        });
         this.generator = new OverworldGenerator(seed);
         this.spawnPoint = generator.safeSpawnPoint();
     }
@@ -162,6 +187,7 @@ public final class ServerWorld {
         short previousBlock = world.blockId(x, y, z);
         world.setBlockId(x, y, z, blockId);
         world.findChunk(ChunkPos.fromBlock(x, z)).ifPresent(Chunk::invalidateTerrainCache);
+        collisionShapeCache.invalidateBlock(x, y, z);
         BlockPos pos = new BlockPos(x, y, z);
         syncBlockEntityForBlock(pos, blockId);
         if (previousBlock != blockId && recordDiff) {
@@ -220,35 +246,7 @@ public final class ServerWorld {
         if (bounds == null) {
             throw new IllegalArgumentException("Player bounds are required");
         }
-        double minX = bounds.minX(eyeX);
-        double maxX = bounds.maxX(eyeX);
-        double minY = bounds.minY(eyeY);
-        double maxY = bounds.maxY(eyeY);
-        double minZ = bounds.minZ(eyeZ);
-        double maxZ = bounds.maxZ(eyeZ);
-
-        for (int y = floor(minY); y <= floor(maxY); y++) {
-            if (!world.dimension().containsY(y)) {
-                return true;
-            }
-            for (int z = floor(minZ); z <= floor(maxZ); z++) {
-                for (int x = floor(minX); x <= floor(maxX); x++) {
-                    if (!bounds.intersectsBlock(eyeX, eyeY, eyeZ, x, y, z)) {
-                        continue;
-                    }
-                    short blockId = blockIdAt(x, y, z);
-                    Optional<BlockType> block = world.dimension().containsY(y)
-                            ? Optional.of(world.blockType(blockId))
-                            : Optional.empty();
-                    if (block.isEmpty()
-                            || (block.get().collidable()
-                            && BlockCollisionShapes.collisionShape(blockId).intersectsPlayer(bounds, eyeX, eyeY, eyeZ, x, y, z))) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+        return collisionShapeCache.collidesPlayer(eyeX, eyeY, eyeZ, bounds).collides();
     }
 
     public synchronized boolean playerPathClear(
@@ -355,31 +353,25 @@ public final class ServerWorld {
     }
 
     public synchronized boolean collidesProjectile(double x, double y, double z, ProjectileBounds bounds) {
-        if (bounds == null || !Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+        if (bounds == null) {
             return true;
         }
-        for (int yy = floor(y - bounds.radius()); yy <= floor(y + bounds.radius()); yy++) {
-            if (!world.dimension().containsY(yy)) {
-                return true;
-            }
-            for (int zz = floor(z - bounds.radius()); zz <= floor(z + bounds.radius()); zz++) {
-                for (int xx = floor(x - bounds.radius()); xx <= floor(x + bounds.radius()); xx++) {
-                    if (!bounds.intersectsBlock(x, y, z, xx, yy, zz)) {
-                        continue;
-                    }
-                    short blockId = blockIdAt(xx, yy, zz);
-                    Optional<BlockType> block = world.dimension().containsY(yy)
-                            ? Optional.of(world.blockType(blockId))
-                            : Optional.empty();
-                    if (block.isEmpty()
-                            || (block.get().collidable()
-                            && BlockCollisionShapes.collisionShape(blockId).intersectsProjectile(bounds, x, y, z, xx, yy, zz))) {
-                        return true;
-                    }
-                }
-            }
+        return collisionShapeCache.collidesProjectile(x, y, z, bounds).collides();
+    }
+
+    public synchronized Optional<PartialShapeImpactResolver.ImpactResult> projectileImpact(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            ProjectileBounds bounds
+    ) {
+        if (bounds == null) {
+            return Optional.of(PartialShapeImpactResolver.blocking(0, 0, 0, 0.0, 0.0, 0.0, ProjectileHit.BlockFace.NONE, 0.0));
         }
-        return false;
+        return collisionShapeCache.projectileImpact(fromX, fromY, fromZ, toX, toY, toZ, bounds);
     }
 
     public synchronized boolean projectileInWater(double x, double y, double z) {
@@ -428,35 +420,7 @@ public final class ServerWorld {
     private boolean collidesEntity(EntitySnapshot snapshot) {
         EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
         double baseY = EntityBounds.baseY(snapshot);
-        double minX = bounds.minX(snapshot.x());
-        double maxX = bounds.maxX(snapshot.x());
-        double minY = bounds.minY(baseY);
-        double maxY = bounds.maxY(baseY);
-        double minZ = bounds.minZ(snapshot.z());
-        double maxZ = bounds.maxZ(snapshot.z());
-
-        for (int y = floor(minY); y <= floor(maxY); y++) {
-            if (!world.dimension().containsY(y)) {
-                return true;
-            }
-            for (int z = floor(minZ); z <= floor(maxZ); z++) {
-                for (int x = floor(minX); x <= floor(maxX); x++) {
-                    if (!bounds.intersectsBlock(snapshot.x(), baseY, snapshot.z(), x, y, z)) {
-                        continue;
-                    }
-                    short blockId = blockIdAt(x, y, z);
-                    Optional<BlockType> block = world.dimension().containsY(y)
-                            ? Optional.of(world.blockType(blockId))
-                            : Optional.empty();
-                    if (block.isEmpty()
-                            || (block.get().collidable()
-                            && BlockCollisionShapes.collisionShape(blockId).intersectsEntity(bounds, snapshot.x(), baseY, snapshot.z(), x, y, z))) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+        return collisionShapeCache.collidesEntity(bounds, snapshot.x(), baseY, snapshot.z()).collides();
     }
 
     private boolean touchesWater(EntitySnapshot snapshot) {

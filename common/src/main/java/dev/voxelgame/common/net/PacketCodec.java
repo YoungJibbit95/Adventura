@@ -1,6 +1,9 @@
 package dev.voxelgame.common.net;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.gameplay.GameplayEvent;
+import dev.voxelgame.common.gameplay.GameplayEventBatch;
+import dev.voxelgame.common.gameplay.GameplayEventType;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.world.ChunkPos;
@@ -18,9 +21,11 @@ public final class PacketCodec {
     public static final int MAX_PACKET_SIZE = PacketLimits.MAX_PACKET_SIZE;
     private static final int MAX_CHUNK_ARRAY_LENGTH = 128 * 1024;
     private static final int MAX_ENTITY_SNAPSHOTS = 2_048;
+    private static final int MAX_GAMEPLAY_EVENTS = GameplayEventBatch.MAX_EVENTS;
     private static final int MAX_ITEM_STACKS = 128;
     private static final int MAX_COOK_INPUT_SLOTS = 64;
     private static final int ITEM_STACK_BYTES = Short.BYTES + Integer.BYTES + Integer.BYTES;
+    private static final int MIN_GAMEPLAY_EVENT_BYTES = Short.BYTES + Long.BYTES;
     private static final int MIN_ENTITY_SNAPSHOT_BYTES = Long.BYTES
             + Short.BYTES
             + 1
@@ -155,6 +160,7 @@ public final class PacketCodec {
                     out.writeBoolean(impact.stuck());
                     out.writeLong(impact.serverTick());
                 }
+                case GamePacket.GameplayEvents events -> writeGameplayEventBatch(out, events.batch());
                 case GamePacket.InventorySnapshot inventory -> writeItemStacks(out, inventory.slots());
                 case GamePacket.PlayerStatsSnapshot stats -> {
                     out.writeInt(stats.health());
@@ -356,6 +362,7 @@ public final class PacketCodec {
                         in.readBoolean(),
                         in.readLong()
                 );
+                case GAMEPLAY_EVENTS -> readGameplayEventBatch(in);
                 case INVENTORY_SNAPSHOT -> new GamePacket.InventorySnapshot(readItemStacks(in));
                 case PLAYER_STATS_SNAPSHOT -> new GamePacket.PlayerStatsSnapshot(
                         in.readInt(),
@@ -446,6 +453,114 @@ public final class PacketCodec {
 
     private static GamePacket.MovementCorrection readMovementCorrection(DataInputStream in) throws IOException {
         return GamePacket.MovementCorrection.valueOf(in.readUTF());
+    }
+
+    private static void writeGameplayEventBatch(DataOutputStream out, GameplayEventBatch batch) throws IOException {
+        out.writeInt(batch.schemaVersion());
+        out.writeInt(batch.events().size());
+        for (GameplayEvent event : batch.events()) {
+            writeGameplayEvent(out, event);
+        }
+    }
+
+    private static GamePacket.GameplayEvents readGameplayEventBatch(DataInputStream in) throws IOException {
+        int schemaVersion = in.readInt();
+        int count = checkedLength(in.readInt(), MAX_GAMEPLAY_EVENTS, in.available(), MIN_GAMEPLAY_EVENT_BYTES, "gameplay event count");
+        List<GameplayEvent> events = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            events.add(readGameplayEvent(in));
+        }
+        return new GamePacket.GameplayEvents(new GameplayEventBatch(schemaVersion, events));
+    }
+
+    private static void writeGameplayEvent(DataOutputStream out, GameplayEvent event) throws IOException {
+        out.writeUTF(event.type().name());
+        out.writeLong(event.sequence());
+        switch (event) {
+            case GameplayEvent.Damage damage -> {
+                out.writeLong(damage.entityId());
+                out.writeInt(damage.amount());
+                out.writeUTF(damage.sourceKey());
+            }
+            case GameplayEvent.Heal heal -> {
+                out.writeLong(heal.entityId());
+                out.writeInt(heal.amount());
+            }
+            case GameplayEvent.StatCritical critical -> {
+                out.writeUTF(critical.statKey());
+                out.writeInt(critical.value());
+            }
+            case GameplayEvent.Pickup pickup -> {
+                out.writeUTF(pickup.itemKey());
+                out.writeInt(pickup.count());
+            }
+            case GameplayEvent.Craft craft -> {
+                out.writeUTF(craft.recipeKey());
+                out.writeBoolean(craft.success());
+                out.writeUTF(craft.reasonKey());
+            }
+            case GameplayEvent.CookComplete cook -> {
+                out.writeUTF(cook.recipeKey());
+                out.writeUTF(cook.itemKey());
+                out.writeInt(cook.count());
+            }
+            case GameplayEvent.ProjectileImpact impact -> {
+                out.writeLong(impact.projectileId());
+                out.writeUTF(impact.projectileTypeKey());
+                out.writeDouble(impact.x());
+                out.writeDouble(impact.y());
+                out.writeDouble(impact.z());
+                out.writeLong(impact.targetEntityId());
+            }
+            case GameplayEvent.Sleep sleep -> {
+                writeUuid(out, sleep.playerId());
+                out.writeBoolean(sleep.started());
+            }
+            case GameplayEvent.WeatherThunder thunder -> {
+                out.writeDouble(thunder.x());
+                out.writeDouble(thunder.y());
+                out.writeDouble(thunder.z());
+            }
+            case GameplayEvent.JournalEntryDiscovered journal -> {
+                writeUuid(out, journal.playerId());
+                out.writeUTF(journal.entryKey());
+            }
+            case GameplayEvent.RecipeUnlocked recipe -> {
+                writeUuid(out, recipe.playerId());
+                out.writeUTF(recipe.recipeKey());
+            }
+            case GameplayEvent.StructureDiscovered structure -> {
+                writeUuid(out, structure.playerId());
+                out.writeUTF(structure.structureKey());
+            }
+        }
+    }
+
+    private static GameplayEvent readGameplayEvent(DataInputStream in) throws IOException {
+        GameplayEventType type = GameplayEventType.valueOf(in.readUTF());
+        long sequence = in.readLong();
+        return switch (type) {
+            case DAMAGE -> new GameplayEvent.Damage(sequence, in.readLong(), in.readInt(), in.readUTF());
+            case HEAL -> new GameplayEvent.Heal(sequence, in.readLong(), in.readInt());
+            case STAT_CRITICAL -> new GameplayEvent.StatCritical(sequence, in.readUTF(), in.readInt());
+            case PICKUP -> new GameplayEvent.Pickup(sequence, in.readUTF(), in.readInt());
+            case CRAFT -> new GameplayEvent.Craft(sequence, in.readUTF(), in.readBoolean(), in.readUTF());
+            case COOK_COMPLETE -> new GameplayEvent.CookComplete(sequence, in.readUTF(), in.readUTF(), in.readInt());
+            case PROJECTILE_IMPACT -> new GameplayEvent.ProjectileImpact(
+                    sequence,
+                    in.readLong(),
+                    in.readUTF(),
+                    in.readDouble(),
+                    in.readDouble(),
+                    in.readDouble(),
+                    in.readLong()
+            );
+            case SLEEP -> new GameplayEvent.Sleep(sequence, readUuid(in), in.readBoolean());
+            case WEATHER_THUNDER -> new GameplayEvent.WeatherThunder(sequence, in.readDouble(), in.readDouble(), in.readDouble());
+            case JOURNAL_ENTRY_DISCOVERED -> new GameplayEvent.JournalEntryDiscovered(sequence, readUuid(in), in.readUTF());
+            case RECIPE_UNLOCKED -> new GameplayEvent.RecipeUnlocked(sequence, readUuid(in), in.readUTF());
+            case STRUCTURE_DISCOVERED -> new GameplayEvent.StructureDiscovered(sequence, readUuid(in), in.readUTF());
+        };
     }
 
     private static void writeShortArray(DataOutputStream out, short[] values) throws IOException {

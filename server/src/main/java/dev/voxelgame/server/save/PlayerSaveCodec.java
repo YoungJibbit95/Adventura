@@ -63,6 +63,8 @@ public final class PlayerSaveCodec {
         writeStrings(properties, "discovered.recipe", save.discoveredRecipes());
         writeStrings(properties, "discovered.biome", save.discoveredBiomes());
         writeStrings(properties, "journal", save.journalEntries());
+        writeStrings(properties, "progress.milestone", save.achievedMilestones());
+        writeStrings(properties, "progress.goal", save.completedGoals());
         return properties;
     }
 
@@ -100,6 +102,8 @@ public final class PlayerSaveCodec {
                 readStrings(properties, "discovered.recipe"),
                 readStrings(properties, "discovered.biome"),
                 readStrings(properties, "journal"),
+                readStrings(properties, "progress.milestone"),
+                readStrings(properties, "progress.goal"),
                 properties.getProperty("lastWorldKey", "")
         );
     }

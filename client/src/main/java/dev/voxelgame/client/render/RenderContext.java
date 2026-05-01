@@ -17,10 +17,10 @@ public record RenderContext(
         FrustumIntersection frustum
 ) {
     public RenderContext {
-        Objects.requireNonNull(projection, "projection");
-        Objects.requireNonNull(view, "view");
+        projection = new Matrix4f(Objects.requireNonNull(projection, "projection"));
+        view = new Matrix4f(Objects.requireNonNull(view, "view"));
         Objects.requireNonNull(world, "world");
-        Objects.requireNonNull(cameraPosition, "cameraPosition");
+        cameraPosition = new Vector3f(Objects.requireNonNull(cameraPosition, "cameraPosition"));
         Objects.requireNonNull(settings, "settings");
         Objects.requireNonNull(frustum, "frustum");
     }

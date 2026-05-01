@@ -154,6 +154,7 @@ class WorldSaveStoreTest {
         }
     }
 
+    @Test
     void worldSaveDecodeRejectsMissingKindMarker() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         Properties properties = new Properties();
@@ -161,6 +162,5 @@ class WorldSaveStoreTest {
         properties.setProperty("world.seed", "42");
 
         assertThrows(IllegalArgumentException.class, () -> WorldSaveCodec.decode(properties, items));
-    }
     }
 }

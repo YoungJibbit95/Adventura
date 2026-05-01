@@ -42,6 +42,15 @@ public final class RenderPassPlan {
         return -1;
     }
 
+    public static Entry require(String passName) {
+        for (Entry entry : ALPHA_PLAN) {
+            if (entry.passName().equals(passName)) {
+                return entry;
+            }
+        }
+        throw new IllegalArgumentException("Unknown render pass: " + passName);
+    }
+
     public enum Category {
         CLEAR,
         TERRAIN,

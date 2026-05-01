@@ -18,6 +18,19 @@ public final class ProjectilePhysics {
     }
 
     @FunctionalInterface
+    public interface BlockImpactQuery {
+        Optional<PartialShapeImpactResolver.ImpactResult> firstImpact(
+                double fromX,
+                double fromY,
+                double fromZ,
+                double toX,
+                double toY,
+                double toZ,
+                ProjectileBounds bounds
+        );
+    }
+
+    @FunctionalInterface
     public interface WaterQuery {
         boolean inWater(double x, double y, double z);
     }
@@ -38,12 +51,36 @@ public final class ProjectilePhysics {
             ProjectileState state,
             PhysicsStepContext context,
             ProjectilePhysicsConfig config,
+            BlockImpactQuery blockImpact,
+            WaterQuery waterQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(context, "context");
+        return step(state, context.deltaSeconds(), config, blockImpact, waterQuery, targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            PhysicsStepContext context,
+            ProjectilePhysicsConfig config,
             BlockCollisionQuery blockCollision,
             FluidPhysics.FluidQuery fluidQuery,
             Collection<EntitySnapshot> targets
     ) {
         Objects.requireNonNull(context, "context");
         return step(state, context.deltaSeconds(), config, blockCollision, fluidQuery, targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            PhysicsStepContext context,
+            ProjectilePhysicsConfig config,
+            BlockImpactQuery blockImpact,
+            FluidPhysics.FluidQuery fluidQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(context, "context");
+        return step(state, context.deltaSeconds(), config, blockImpact, fluidQuery, targets);
     }
 
     public static ProjectileHit step(
@@ -58,7 +95,22 @@ public final class ProjectilePhysics {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(blockCollision, "blockCollision");
         Objects.requireNonNull(waterQuery, "waterQuery");
-        return step(state, deltaSeconds, config, blockCollision, waterAsFluid(waterQuery), targets);
+        return stepWithImpact(state, deltaSeconds, config, impactQueryFromCollision(blockCollision), waterAsFluid(waterQuery), targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            double deltaSeconds,
+            ProjectilePhysicsConfig config,
+            BlockImpactQuery blockImpact,
+            WaterQuery waterQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(blockImpact, "blockImpact");
+        Objects.requireNonNull(waterQuery, "waterQuery");
+        return stepWithImpact(state, deltaSeconds, config, blockImpact, waterAsFluid(waterQuery), targets);
     }
 
     public static ProjectileHit step(
@@ -73,6 +125,32 @@ public final class ProjectilePhysics {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(blockCollision, "blockCollision");
         Objects.requireNonNull(fluidQuery, "fluidQuery");
+        return stepWithImpact(state, deltaSeconds, config, impactQueryFromCollision(blockCollision), fluidQuery, targets);
+    }
+
+    public static ProjectileHit step(
+            ProjectileState state,
+            double deltaSeconds,
+            ProjectilePhysicsConfig config,
+            BlockImpactQuery blockImpact,
+            FluidPhysics.FluidQuery fluidQuery,
+            Collection<EntitySnapshot> targets
+    ) {
+        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(blockImpact, "blockImpact");
+        Objects.requireNonNull(fluidQuery, "fluidQuery");
+        return stepWithImpact(state, deltaSeconds, config, blockImpact, fluidQuery, targets);
+    }
+
+    private static ProjectileHit stepWithImpact(
+            ProjectileState state,
+            double deltaSeconds,
+            ProjectilePhysicsConfig config,
+            BlockImpactQuery blockImpact,
+            FluidPhysics.FluidQuery fluidQuery,
+            Collection<EntitySnapshot> targets
+    ) {
         Objects.requireNonNull(targets, "targets");
         deltaSeconds = PhysicsNumericGuard.requireFiniteNonNegative("Projectile delta", deltaSeconds);
         if (state.ageTicks() >= config.maxLifetimeTicks()) {
@@ -107,7 +185,7 @@ public final class ProjectilePhysics {
             double nextX = x + velocityX * stepSeconds;
             double nextY = y + velocityY * stepSeconds;
             double nextZ = z + velocityZ * stepSeconds;
-            Optional<EntitySnapshot> hitEntity = firstEntityHit(
+            Optional<EntityImpact> hitEntity = firstEntityImpact(
                     state,
                     x,
                     y,
@@ -118,33 +196,25 @@ public final class ProjectilePhysics {
                     config.bounds().radius(),
                     targets
             );
-            ProjectileState sample = new ProjectileState(
-                    state.projectileId(),
-                    state.ownerPlayerId(),
-                    state.typeKey(),
-                    nextX,
-                    nextY,
-                    nextZ,
-                    velocityX,
-                    velocityY,
-                    velocityZ,
-                    state.ageTicks() + 1
-            );
-            if (hitEntity.isPresent()) {
-                return ProjectileHit.entity(sample, hitEntity.get().entityId());
-            }
-            if (blockCollision.collides(nextX, nextY, nextZ, config.bounds())) {
-                ProjectileHit.BlockFace face = blockFaceForVelocity(velocityX, velocityY, velocityZ);
+            Optional<PartialShapeImpactResolver.ImpactResult> blockHit = blockImpact.firstImpact(x, y, z, nextX, nextY, nextZ, config.bounds());
+            if (blockHit.isPresent() && (hitEntity.isEmpty() || blockHit.get().fraction() <= hitEntity.get().fraction())) {
+                PartialShapeImpactResolver.ImpactResult impact = blockHit.get();
+                ProjectileState sample = stateAtFraction(state, x, y, z, nextX, nextY, nextZ, velocityX, velocityY, velocityZ, impact.fraction());
                 return ProjectileHit.block(
                         sample,
-                        floor(nextX + travelOffset(velocityX, config.bounds().radius())),
-                        floor(nextY + travelOffset(velocityY, config.bounds().radius())),
-                        floor(nextZ + travelOffset(velocityZ, config.bounds().radius())),
-                        nextX,
-                        nextY,
-                        nextZ,
-                        face
+                        impact.blockX(),
+                        impact.blockY(),
+                        impact.blockZ(),
+                        impact.impactX(),
+                        impact.impactY(),
+                        impact.impactZ(),
+                        impact.face()
                 );
+            }
+            if (hitEntity.isPresent()) {
+                EntityImpact impact = hitEntity.get();
+                ProjectileState sample = stateAtFraction(state, x, y, z, nextX, nextY, nextZ, velocityX, velocityY, velocityZ, impact.fraction());
+                return ProjectileHit.entity(sample, impact.target().entityId());
             }
             x = nextX;
             y = nextY;
@@ -180,8 +250,22 @@ public final class ProjectilePhysics {
             Collection<EntitySnapshot> targets
     ) {
         Objects.requireNonNull(projectile, "projectile");
-        EntitySnapshot best = null;
-        double bestT = Double.POSITIVE_INFINITY;
+        return firstEntityImpact(projectile, fromX, fromY, fromZ, toX, toY, toZ, radius, targets)
+                .map(EntityImpact::target);
+    }
+
+    private static Optional<EntityImpact> firstEntityImpact(
+            ProjectileState projectile,
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double radius,
+            Collection<EntitySnapshot> targets
+    ) {
+        EntityImpact best = null;
         for (EntitySnapshot target : targets) {
             if (!ProjectileDamageRules.canHit(projectile, target).accepted()) {
                 continue;
@@ -202,9 +286,8 @@ public final class ProjectilePhysics {
                     bounds.maxY(baseY) + radius,
                     bounds.maxZ(target.z()) + radius
             );
-            if (t >= 0.0 && t < bestT) {
-                bestT = t;
-                best = target;
+            if (t >= 0.0 && (best == null || t < best.fraction())) {
+                best = new EntityImpact(target, t);
             }
         }
         return Optional.ofNullable(best);
@@ -239,6 +322,55 @@ public final class ProjectilePhysics {
 
     private static FluidPhysics.FluidQuery waterAsFluid(WaterQuery waterQuery) {
         return (x, y, z) -> waterQuery.inWater(x, y, z) ? FluidPhysics.stillWater() : FluidPhysics.air();
+    }
+
+    private static BlockImpactQuery impactQueryFromCollision(BlockCollisionQuery blockCollision) {
+        return (fromX, fromY, fromZ, toX, toY, toZ, bounds) -> {
+            if (!blockCollision.collides(toX, toY, toZ, bounds)) {
+                return Optional.empty();
+            }
+            double dx = toX - fromX;
+            double dy = toY - fromY;
+            double dz = toZ - fromZ;
+            ProjectileHit.BlockFace face = blockFaceForVelocity(dx, dy, dz);
+            return Optional.of(PartialShapeImpactResolver.blocking(
+                    floor(toX + travelOffset(dx, bounds.radius())),
+                    floor(toY + travelOffset(dy, bounds.radius())),
+                    floor(toZ + travelOffset(dz, bounds.radius())),
+                    toX,
+                    toY,
+                    toZ,
+                    face,
+                    1.0
+            ));
+        };
+    }
+
+    private static ProjectileState stateAtFraction(
+            ProjectileState state,
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double velocityX,
+            double velocityY,
+            double velocityZ,
+            double fraction
+    ) {
+        return new ProjectileState(
+                state.projectileId(),
+                state.ownerPlayerId(),
+                state.typeKey(),
+                fromX + (toX - fromX) * fraction,
+                fromY + (toY - fromY) * fraction,
+                fromZ + (toZ - fromZ) * fraction,
+                velocityX,
+                velocityY,
+                velocityZ,
+                state.ageTicks() + 1
+        );
     }
 
     private static double segmentAabbIntersection(
@@ -318,5 +450,8 @@ public final class ProjectilePhysics {
             return velocityZ > 0.0 ? ProjectileHit.BlockFace.NORTH : ProjectileHit.BlockFace.SOUTH;
         }
         return ProjectileHit.BlockFace.NONE;
+    }
+
+    private record EntityImpact(EntitySnapshot target, double fraction) {
     }
 }

@@ -181,6 +181,13 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - Iron/Copper smelting klar anzeigen.
 - insufficient heat/fuel feedback.
 - output blocked feedback.
+- ~~🔴 Braucht Lead UI/UX: Station-Screens sollen `StationProgression` konsumieren.~~
+  Kontext: Gameplay P9.3 definiert fuer Inventory, Campfire, Workbench, Cooking Pot, Forge und Ancient Altar die UI-/Feedback-Rollen.
+  Erwarteter Contract: Station-Screen/ViewModel-Mapping von `StationDefinition.key()` auf Screen-Titel, Slotgruppen, Progressbars und Fehlertexte.
+  Akzeptanz: Campfire, Cooking Pot und Forge zeigen ihre Rolle/Requirements aus demselben Common-Contract und koennen pending/accepted/rejected Transaktionen darstellen.
+  Erledigt: 2026-05-01, `StationScreenViewModel` mapped `StationProgression` auf Titel, Slotgruppen, Progressbars, Recipe-Keys und Feedback-Keys.
+  Offen: Bestehende Crafting-/Station-Renderer muessen das ViewModel noch konsumieren und echte pending/accepted/rejected Transaktionen anzeigen.
+  Verifikation: `StationScreenViewModelTest`.
 
 ### Akzeptanz
 
@@ -237,6 +244,13 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - Map Fragment Hinweise.
 - Search/Filter optional.
 - Journal Progress persistent speichern.
+- ~~🔴 Braucht Lead UI/UX: Milestone-/Tag-/Journal-/Creature-ViewModels fuer `AlphaMilestones`, `JournalProgression`, `CozyLifeProgression`, `CreatureFriendshipRules`, `ContentTagRegistry` und `AlphaItemDesigns`.~~
+  Kontext: Gameplay P9.1/P9.2/P9.4/P9.5 definiert Common-Keys fuer Progress, Journal Entries, Goals, Creature-Rollen, Friendship-Limits, Itemquellen, Tags und UI-Feedback; Journal/Crafting/HUD sollen nicht eigene Key-Switches pflegen.
+  Erwarteter Contract: `MilestoneProgressViewModel`, `JournalEntryViewModel`, `GoalProgressViewModel`, `CreatureInfoViewModel`, `CreatureInteractionViewModel`, `ItemSourceTooltipViewModel` oder gleichwertige Screen-Daten, die Common-Keys konsumieren.
+  Akzeptanz: Journal zeigt Milestone-/Goal-Fortschritt, Lore, Map Fragments, Creature-Rollen/Friendship und Recipe Unlock Sources; Item-Tooltips zeigen Quellen/Tags, und fehlende Station/Fuel/Container-Hinweise nutzen dieselben Common-Tags.
+  Erledigt: 2026-05-01, `ProgressionViewModels` liefert Milestone-, Journal-, Goal-, Creature- und ItemSource-Tooltip-ViewModels aus Common-Contracts.
+  Offen: Journal-/Tooltip-Renderer muessen auf diese ViewModels umgestellt werden; CreatureInteractionViewModel fuer echte Entity-Targets bleibt naechster Slice.
+  Verifikation: `ProgressionViewModelsTest`.
 
 ## Seiten
 
@@ -318,6 +332,13 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - last world shortcut optional.
 - seed field klar.
 - connection error state.
+- ~~🔴 Braucht Lead UI/UX: Loading Screen mit Ladeanimation vor dem Hauptmenü und beim Betreten von Singleplayer/Server.~~
+  Kontext: Game-Bootstrap, Singleplayer-World-Load und Server-Join brauchen einen lesbaren Übergang statt leerer/frierender Frames.
+  Erwarteter Contract: `LoadingScreen`/`LoadingScreenViewModel` mit Phasen `boot`, `loading_world`, `joining_server`, `streaming_spawn`, optionalem Progress, animiertem Visual, Cancel- und Error-State.
+  Akzeptanz: Vor dem Hauptmenü und während Singleplayer-/Server-Entry erscheint eine nicht blockierende Ladeanimation; Fehler führen sauber zurück ins Menü.
+  Erledigt: 2026-05-01 fuer den Contract, `LoadingScreenViewModel` deckt `BOOT`, `LOADING_WORLD`, `JOINING_SERVER`, `STREAMING_SPAWN` und `ERROR` inklusive Progress, Cancel und Error-State ab.
+  Offen: Sichtbares Rendering/Animation im `GameClient` und nicht-blockierende Phasenwechsel anbinden.
+  Verifikation: `LoadingScreenViewModelTest`.
 
 ## Pause Menu
 
@@ -398,3 +419,123 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - UI Scale funktioniert überall.
 - Locked Recipes sind verständlich.
 - Cooking/Forge UI verhindert Verwirrung und Dupes.
+
+---
+
+# P9 – UI Shell und Screen Architecture
+
+Owner: Lead UI/UX Frontend Developer.
+
+Dieser Block ergänzt die vorhandenen UI-Featurelisten um die Architektur, die nötig ist, damit die Benutzeroberflächen nicht weiter im `GameClient` monolithisch wachsen.
+
+## P9.1 Screen Controller und State Model
+
+### Offen
+
+- Screens aus `GameClient` herauslösen:
+  - MainMenuScreen.
+  - PauseScreen.
+  - SettingsScreen.
+  - InventoryCraftingScreen.
+  - StorageScreen.
+  - JournalScreen.
+  - DeathScreen.
+  - ChatOverlay.
+- Gemeinsames `ScreenContext` definieren:
+  - framebuffer.
+  - uiScale.
+  - mouse.
+  - input events.
+  - sprites.
+  - audio hooks.
+  - client session.
+- Navigation/Return-State zentralisieren.
+- Modals/Dialoge als eigene UI-Schicht bauen.
+
+### Akzeptanz
+
+- Neue Screens brauchen keine riesigen `GameClient`-Methoden.
+- Pause -> Journal -> zurück und ähnliche Flows sind testbar.
+- UI-Zustand ist klar und nicht über globale Flags verstreut.
+
+## P9.2 Component Library V1
+
+### Offen
+
+- Wiederverwendbare Komponenten bauen:
+  - IconButton.
+  - TextButton.
+  - Panel.
+  - SlotGrid.
+  - TabBar.
+  - Tooltip.
+  - ScrollList.
+  - ProgressBar.
+  - TextInput.
+  - Modal.
+  - Toast/FeedbackLine.
+- Focus, hover, pressed, disabled und selected zentral behandeln.
+- Komponenten sollen Sprite-Skins nutzen können, aber fallback drawing behalten.
+- Kein UI-Text darf aus seinem Container laufen.
+
+### Akzeptanz
+
+- Inventory, Crafting, Storage, Journal und Settings wirken aus einem System.
+- UI Scale 1x/1.5x/2x bleibt stabil.
+- Komponenten sind in Layout-Tests prüfbar.
+
+## P9.3 Transaction-aware UI
+
+### Offen
+
+- UI-Zustände für serverkritische Aktionen definieren:
+  - pending.
+  - accepted.
+  - rejected.
+  - stale.
+  - out of range.
+- Storage, Crafting, Cooking und Forge auf Server-Replies ausrichten.
+- Fehlertexte standardisieren.
+- Optimistic UI nur dort erlauben, wo Rollback sicher ist.
+
+### Akzeptanz
+
+- Online-UI erzeugt keine Dupes und keine falschen Erfolgsmeldungen.
+- Spieler versteht, warum eine Aktion abgelehnt wurde.
+- Main Networking Dev kann UI-Replies stabil anbinden.
+
+## P9.4 Launcher und Game UI Stilabgleich
+
+### Offen
+
+- Launcher-Electron und Ingame-UI stilistisch angleichen:
+  - Farben.
+  - Typografie-Anmutung.
+  - Buttons.
+  - Panels.
+  - Status/Terminal/Preflight.
+- Launcher bleibt Desktop-Frontend, aber kein zweites Design-System ohne Bezug zum Spiel.
+- Packaging-/Update-Status nutzerfreundlicher anzeigen.
+
+### Akzeptanz
+
+- Adventura fühlt sich vom Launcher bis ins Spiel konsistent an.
+- Fehlstarts, Preflight-Probleme und Serververbindung sind verständlich.
+
+## P9.5 UX Research Backlog
+
+### Offen
+
+- First-session UX-Smoke:
+  - findet der Spieler Nahrung?
+  - versteht er Crafting?
+  - erkennt er Station-Gates?
+  - versteht er Storage?
+  - findet er Journal?
+- UI-Friktionen als Bugs behandeln, nicht als Polish-Luxus.
+- Kurze Text-Hints sparsam, aber klar einsetzen.
+
+### Akzeptanz
+
+- Alpha-Spieler können ohne Entwickler-Erklärung starten.
+- UI unterstützt Game Design, statt das Spiel zu erklären müssen.

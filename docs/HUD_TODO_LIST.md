@@ -231,3 +231,86 @@ Comfort soll sichtbar und verständlich sein, ohne wie ein Pflicht-Meter zu wirk
 - Interaction HUD erklärt Aktionen.
 - Debug HUD hilft beim Entwickeln.
 - Feedback-Meldungen spammen nicht.
+
+---
+
+# P7 – HUD Architecture und Telemetry Contracts
+
+Owner: Lead UI/UX Frontend Developer, mit Schnittstellen zu Lead Engine Developer und Main Networking Dev.
+
+## P7.1 HUD aus GameClient herausziehen
+
+### Offen
+
+- 🟠 HUD in eigene Renderer/Presenter aufteilen:
+  - SurvivalHud.
+  - ComfortHud.
+  - InteractionHud.
+  - FeedbackHud.
+  - DebugHud.
+  - ChatHud.
+  - HotbarHud.
+- ~~🟠 `HudLayout` als stabile Layout-API behalten und erweitern.~~
+  Erledigt: 2026-05-01 - `HudLayout` aus `GameClient` nach `client.hud` extrahiert und als testbare API angebunden.
+  Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.hud.HudLayoutTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
+- 🟠 HUD-Daten als ViewModels statt direkte Welt-/Client-Zugriffe übergeben.
+- 🟡 HUD-Animationen über gemeinsame Animation-Presets laufen lassen.
+
+### Akzeptanz
+
+- 🟠 Neue HUD-Elemente vergrößern `GameClient` nicht weiter.
+- ~~🟠 Layout-Tests prüfen kleine Fenster und UI-Scale-Fälle.~~
+  Erledigt: 2026-05-01 - HUD-Layout-Tests liegen in `client/src/test/java/dev/voxelgame/client/hud/HudLayoutTest.java`.
+  Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.hud.HudLayoutTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
+- 🟠 HUD kann ohne WorldRenderer- oder Netty-Abhängigkeit getestet werden.
+
+## P7.2 Debug-HUD als Engine Diagnostics Surface
+
+### Offen
+
+- Debug-HUD in Kategorien gliedern:
+  - Frame.
+  - Render.
+  - Chunks.
+  - Lighting.
+  - Physics.
+  - Networking.
+  - Save.
+  - Entities.
+  - UI.
+- Mehrzeilige Diagnose nicht über Spiel-HUD quetschen; optional eigener Diagnostics Screen.
+- ServerStatsSnapshot und lokale EngineFrameStats klar markieren.
+- Budgets mit Prozentwerten anzeigen.
+
+### Akzeptanz
+
+- Entwickler sehen sofort, welcher Bereich ein Problem verursacht.
+- Normales HUD bleibt ruhig.
+- Project Manager kann Regressionen mit Labels aus `ENGINE_TODO_LIST.md` zuordnen.
+
+## P7.3 Gameplay Feedback Contracts
+
+### Status 2026-05-01
+
+- ~~🟠 Common-Event-Modell vorhanden: `GameplayEvent`, `GameplayEventType` und `GameplayEventBatch`; HUD-Consumer und Packet-Anbindung bleiben offen.~~
+  Erledigt: 2026-05-01, `GamePacket.GameplayEvents` und erster Client-Consumer-Hook sind vorhanden; tiefe HUD-Marker/Journal-Updates bleiben offen.
+  Verifikation: `GameplayEventTest`, `PacketCodecTest`, `GameplayEventFeedbackTest`.
+
+### Offen
+
+- HUD hört langfristig auf `GameplayEventStream`:
+  - ~~pickup.~~
+  - ~~craft.~~
+  - ~~cook.~~
+  - ~~damage.~~
+  - ~~heal.~~
+  - status effect.
+  - ~~recipe unlock.~~
+  - journal entry.
+- Prioritäten definieren, damit Feedback nicht spammt.
+- Accessibility/Low Motion für HUD-Popups berücksichtigen.
+
+### Akzeptanz
+
+- Wichtige Events sind sichtbar und serverbestätigt.
+- HUD-Feedback ist konsistent mit Audio und Partikeln.

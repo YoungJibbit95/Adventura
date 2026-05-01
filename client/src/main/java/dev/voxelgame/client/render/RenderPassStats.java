@@ -10,10 +10,15 @@ public record RenderPassStats(
         int drawCalls,
         int triangles,
         int culledByDistance,
-        int culledByBounds
+        int culledByBounds,
+        int stateChanges
 ) {
+    public RenderPassStats(String passName, int renderedMeshes, int culledMeshes, int culledChunkPositions, int drawCalls, int triangles, int culledByDistance, int culledByBounds) {
+        this(passName, renderedMeshes, culledMeshes, culledChunkPositions, drawCalls, triangles, culledByDistance, culledByBounds, 0);
+    }
+
     public RenderPassStats(String passName, int renderedMeshes, int culledMeshes, int culledChunkPositions, int drawCalls, int triangles) {
-        this(passName, renderedMeshes, culledMeshes, culledChunkPositions, drawCalls, triangles, 0, culledMeshes);
+        this(passName, renderedMeshes, culledMeshes, culledChunkPositions, drawCalls, triangles, 0, culledMeshes, 0);
     }
 
     public RenderPassStats {
@@ -25,9 +30,10 @@ public record RenderPassStats(
         triangles = Math.max(0, triangles);
         culledByDistance = Math.max(0, culledByDistance);
         culledByBounds = Math.max(0, culledByBounds);
+        stateChanges = Math.max(0, stateChanges);
     }
 
     public static RenderPassStats empty(String passName) {
-        return new RenderPassStats(passName, 0, 0, 0, 0, 0, 0, 0);
+        return new RenderPassStats(passName, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 }

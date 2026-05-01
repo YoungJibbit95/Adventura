@@ -9,3 +9,6 @@ saves/
 node_modules/
 launcher-electron/dist/
 launcher-electron/release/
+docs/*
+!docs/NETWORK_PROTOCOL.md
+!docs/ALPHA_GAMEPLAY_CONTRACTS.md

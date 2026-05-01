@@ -911,3 +911,117 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 - Chunk Loading erzeugt keine großen Stutter.
 - Low-End Preset ist wirklich günstiger.
 - Visual Style bleibt cozy und eigenständig.
+
+---
+
+# P10 – Alpha Rendering Pipeline V3
+
+Owner: Lead Engine Developer.
+
+Dieser Block ergänzt die bisherige Rendering-Basis um die Core-Bestandteile, die für eine ernsthafte Alpha-Engine noch fehlen.
+
+## P10.1 Render Pipeline Module
+
+Arbeitsstatus 2026-05-01: 🟠 P10.1a umgesetzt. `RenderPassExecutor`, `RenderStateGuard`, `TerrainRenderer` und `VisibilityCollector` sind als kleiner Runtime-Schnitt aus `WorldRenderer` extrahiert; `WaterRenderer` und `SelectionRenderer` bleiben als naechste P10.1b-Slices offen.
+
+Erledigt: 2026-05-01 P10.1a Runtime-Pass-Schnitt.
+Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.render.RenderPipelineModuleTest --tests dev.voxelgame.client.render.RenderPassPlanTest --tests dev.voxelgame.client.render.WorldRendererTest --tests dev.voxelgame.client.EngineFrameStatsTest`; `./gradlew :client:test --no-daemon`; `./gradlew buildGame --no-daemon`.
+
+### Offen
+
+- `WorldRenderer` weiter in kleinere Verantwortungen schneiden:
+  - ~~`TerrainRenderer`~~
+  - `TerrainUploadQueue`
+  - ~~`RenderPassExecutor`~~
+  - ~~`RenderStateGuard`~~
+  - ~~`VisibilityCollector`~~
+  - `WaterRenderer`
+  - `SelectionRenderer`
+- ~~`RenderPassPlan` von Teststruktur zu Runtime-Vertrag ausbauen.~~
+- Render-State-Änderungen messbar machen:
+  - ~~depth.~~
+  - ~~blend.~~
+  - cull.
+  - shader bind.
+  - texture bind.
+- ~~RenderContext unveränderlich halten und pro Pass keine versteckten Globals verwenden.~~
+
+### Akzeptanz
+
+- Neue Passes können ohne `WorldRenderer`-Explosion ergänzt werden.
+- Render-State-Leaks sind test- oder debugbar.
+- Frame-Stats zeigen Kosten pro Pass.
+
+## P10.2 Sprite Rendering und Billboards
+
+### Offen
+
+- Einheitliche Sprite-Atlas-Strategie für:
+  - UI Icons.
+  - Item Drops.
+  - Held Items.
+  - Entity Billboards/Fallbacks.
+  - Partikel.
+  - Decals/Break Overlay.
+- `ParticleSpriteAtlas` analog zum Block-Atlas planen.
+- Sprite-Pivots, UV-Rects, Tint, Blend-Mode und Pixel-Snap dokumentieren.
+- Item- und Entity-Icons nicht ad hoc aus einzelnen Sheets sampeln.
+- Instancing für viele gleiche Sprites evaluieren.
+
+### Akzeptanz
+
+- Neue Item-/Particle-Sprites brauchen keine Sonderlogik im Renderer.
+- Pixel-Art bleibt scharf.
+- Sprite-Batches sind im Debug-HUD sichtbar.
+
+## P10.3 Shadows und Depth-Grundlage
+
+### Offen
+
+- Entscheiden, welche Shadow-Stufe für Alpha sinnvoll ist:
+  - weiter nur vertex/side soft shading.
+  - einfache screen-/height-basierte Terrain Shadows.
+  - echte Shadow Map für Sonne.
+- Shadow-Map-Prototyp nur mit klaren Budgets:
+  - Auflösung.
+  - Cascades ja/nein.
+  - draw calls.
+  - Low-Preset fallback.
+- Entity- und Terrain-Shadow-Contract definieren.
+- Debug View für shadow casters/receivers.
+
+### Akzeptanz
+
+- Schatten verbessern Lesbarkeit, ohne Low-End-Preset zu zerstören.
+- Shadow-Code ist abschaltbar.
+- Keine Shader-Sonderfälle pro Block-ID.
+
+## P10.4 Post/Framebuffer-Stack
+
+### Offen
+
+- Framebuffer-Abstraktion für spätere Post-Effekte.
+- Bloom aus dem einfachen Shader-Boost perspektivisch in eigenen Pass überführen.
+- Gamma/Exposure/Color-Grading als klarer Schritt statt verstreuter Farbformeln.
+- Screenshot/Debug-Capture-Hook vorbereiten.
+
+### Akzeptanz
+
+- Bloom/Glow lässt sich verbessern, ohne Terrain-Shader aufzublähen.
+- Low/Medium/High Presets kontrollieren Post-Kosten.
+- Render-Smokes können Framebuffer-Probleme erkennen.
+
+## P10.5 Renderer-Verifikation
+
+### Offen
+
+- Headless/GL-fähige Smoke-Strategie für Rendering dokumentieren.
+- Shader-Uniform-Contracts automatisch gegen `docs/RENDERING_SHADER_UNIFORMS.md` prüfen.
+- Performance-Baseline für Spawn, Forest, Mushroom Grove, Water und Ruins.
+- Long-Explore mit Mesh-/GPU-/Texture-Leak-Checks.
+
+### Akzeptanz
+
+- Rendering-PRs nennen mindestens einen Test oder Smoke.
+- Shader-Änderungen brechen Uniform-Verträge nicht still.
+- GPU-Ressourcen bleiben bei Erkundung stabil.

@@ -1,5 +1,45 @@
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.file.StandardOpenOption
+import java.util.UUID
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+import org.gradle.api.tasks.Delete
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+import org.gradle.jvm.application.tasks.CreateStartScripts
+import org.gradle.language.jvm.tasks.ProcessResources
+
 plugins {
     java
+}
+
+abstract class WorkspaceMutationLockService : BuildService<WorkspaceMutationLockService.Parameters>, AutoCloseable {
+    interface Parameters : BuildServiceParameters {
+        val lockFile: RegularFileProperty
+        val enabled: Property<Boolean>
+    }
+
+    private val channel: FileChannel?
+    private val lock: FileLock?
+
+    init {
+        if (parameters.enabled.get()) {
+            val file = parameters.lockFile.get().asFile
+            file.parentFile.mkdirs()
+            channel = FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+            lock = channel.lock()
+        } else {
+            channel = null
+            lock = null
+        }
+    }
+
+    override fun close() {
+        lock?.release()
+        channel?.close()
+    }
 }
 
 tasks.register("buildGame") {
@@ -31,6 +71,21 @@ val launcherNpmPath = localNpmExecutable
     ?.parentFile
     ?.absolutePath
     ?.let { "$it:${System.getenv("PATH").orEmpty()}" }
+val testBinaryRunId = providers.gradleProperty("adventuraTestRunId")
+    .orElse(providers.systemProperty("adventura.testRunId"))
+    .orElse(UUID.randomUUID().toString())
+    .map { it.replace(Regex("[^A-Za-z0-9._-]"), "_") }
+val workspaceMutationLockEnabled = providers.gradleProperty("adventuraWorkspaceLock")
+    .orElse(providers.systemProperty("adventura.workspaceLock"))
+    .map { value -> value.lowercase() !in setOf("0", "false", "no", "off") }
+    .orElse(true)
+val workspaceMutationLock = gradle.sharedServices.registerIfAbsent(
+    "adventuraWorkspaceMutationLock",
+    WorkspaceMutationLockService::class
+) {
+    parameters.lockFile.set(layout.projectDirectory.file(".gradle/adventura-workspace-mutation.lock"))
+    parameters.enabled.set(workspaceMutationLockEnabled)
+}
 
 tasks.register<Exec>("setupLauncher") {
     group = "voxel"
@@ -163,6 +218,30 @@ allprojects {
     repositories {
         mavenCentral()
     }
+
+    tasks.withType<JavaCompile>().configureEach {
+        usesService(workspaceMutationLock)
+    }
+
+    tasks.withType<Test>().configureEach {
+        usesService(workspaceMutationLock)
+    }
+
+    tasks.withType<Delete>().configureEach {
+        usesService(workspaceMutationLock)
+    }
+
+    tasks.withType<ProcessResources>().configureEach {
+        usesService(workspaceMutationLock)
+    }
+
+    tasks.withType<AbstractArchiveTask>().configureEach {
+        usesService(workspaceMutationLock)
+    }
+
+    tasks.withType<CreateStartScripts>().configureEach {
+        usesService(workspaceMutationLock)
+    }
 }
 
 subprojects {
@@ -186,8 +265,14 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
-        binaryResultsDirectory.set(layout.buildDirectory.dir("test-binary-results/$name"))
-        // Stale Gradle binary test results from interrupted runs can break later gates.
+        // Isolate Gradle's binary test-result store per invocation so parallel
+        // workspace runs cannot delete another run's in-progress result file.
+        binaryResultsDirectory.set(layout.buildDirectory.dir("test-binary-results/$name/${testBinaryRunId.get()}"))
+        systemProperty("adventura.testRunId", testBinaryRunId.get())
+        doFirst {
+            binaryResultsDirectory.get().asFile.mkdirs()
+        }
+        // Stale XML/HTML reports from interrupted runs can break later gates.
         if (name == "test") {
             dependsOn("cleanTest")
         }

@@ -87,6 +87,10 @@ Entity Renderer soll nicht pro Entity-Typ komplett eigene Sonderlogik brauchen.
 - Walk-Signal aus Velocity oder State ableiten.
 - State transitions weich blenden.
 - LOD: entfernte Entities weniger animieren.
+- 🔴 Braucht Lead Engine Developer: Entity-Animationen sollen `CozyLifeProgression.animationContract` und serverbestaetigte EntitySnapshot-States konsumieren.
+  Kontext: Gameplay P9.5 definiert pro Creature Rollen und Animation-Contracts fuer idle/graze/eat/flee/follow/glow; neue Sonderfaelle pro Entity-Typ sollen begrenzt bleiben.
+  Erwarteter Contract: Mapping von `CreatureDesign.entityKey()`/`animationContract` auf Pose-Familie, plus Snapshot-State-Namen fuer feed/friendship/flee/graze.
+  Akzeptanz: Sheep/Bunny/Snail/Firefly/Boar lesen gemeinsame Creature-Design-Daten, Feed-/Friendship-Animationen koennen serverbestaetigt getriggert werden.
 
 ### Akzeptanz
 
@@ -287,3 +291,95 @@ Entity Renderer soll nicht pro Entity-Typ komplett eigene Sonderlogik brauchen.
 - Entities wirken lebendig und weich.
 - Block Break ist eindeutig lesbar.
 - UI-Animationen verbessern Feedback ohne zu nerven.
+
+---
+
+# P7 – Animation State Machines und Event Hooks
+
+Owner: Lead UI/UX Frontend Developer für UI-Animationen, Lead Engine Developer für Entity/Render-Anbindung.
+
+## P7.1 Animation aus GameClient lösen
+
+### Offen
+
+- Animation-Orchestrierung aus `GameClient` extrahieren:
+  - UIAnimationController.
+  - InteractionAnimationController.
+  - HeldItemAnimationController.
+  - FeedbackAnimationController.
+- `AnimationClock` pro Pause-/Game-State sauber steuern.
+- Low Motion Setting vorbereiten.
+- Tests für Pause, UI Scale und State-Wechsel.
+
+### Akzeptanz
+
+- Neue Feedback-Animationen brauchen keine neuen `GameClient`-Felder.
+- Pause und Menüs beeinflussen Animationen nachvollziehbar.
+
+## P7.2 Entity Animation State Machine
+
+### Offen
+
+- Server-/Common-State für Entity-Verhalten definieren:
+  - idle.
+  - wander.
+  - flee.
+  - follow.
+  - graze.
+  - eat.
+  - hurt.
+  - sleep.
+  - swim.
+- Client blendet Pose-Zustände, aber erfindet keine Gameplay-Zustände.
+- Snapshot-Deltas mit Animation-State abstimmen.
+- LOD-Regeln:
+  - full animation near.
+  - reduced animation mid.
+  - billboard/frozen far.
+
+### Akzeptanz
+
+- Tiere wirken lebendig und bleiben serverkonsistent.
+- Animationen skalieren mit Entity-Zahl.
+
+## P7.3 GameplayEvent Hooks
+
+### Status 2026-05-01
+
+- 🟠 Event-Packet und erster Client-Hook sind vorhanden: `GamePacket.GameplayEvents` erreicht `GameClient`, und `GameplayEventFeedback` triggert erste Pickup-, Damage-, Craft- und Recipe-Pop/Flash-Animationen.
+  Verifikation: `GameplayEventFeedbackTest`; Packet-/Codec-Verifikation ueber `PacketCodecTest`.
+
+### Offen
+
+- Animationen auf serverbestätigte Events reagieren lassen:
+  - ~~pickup.~~
+  - ~~damage.~~
+  - ~~craft success/fail.~~
+  - ~~recipe unlock.~~
+  - cook complete.
+  - projectile impact.
+  - feed entity.
+- Lokale Preview-Animationen klar von bestätigten Result-Animationen trennen.
+
+### Akzeptanz
+
+- UI/World-Feedback feuert nicht doppelt.
+- Online und Offline fühlen sich konsistent an.
+
+## P7.4 Sprite- und Particle-Animation Pipeline
+
+### Offen
+
+- Particle-Sprites mit Atlas-Frames unterstützen.
+- Animated sprite metadata planen:
+  - frame duration.
+  - loop.
+  - random offset.
+  - pivot.
+  - blend mode.
+- Campfire, firefly, sparkle, water splash und projectile trail als erste Kandidaten.
+
+### Akzeptanz
+
+- Partikel-Animationen sind datengetrieben und budgetierbar.
+- Pixel-Art bleibt klar.

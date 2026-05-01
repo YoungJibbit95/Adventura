@@ -236,7 +236,8 @@ public record EngineFrameStats(
                         safeRenderStats.chunkVertexBytes(),
                         Math.max(0, renderedChunkBorderDebugChunks),
                         Math.max(0, renderedMeshBoundsDebugBoxes),
-                        Math.max(0, renderedSectionBoundsDebugBoxes)
+                        Math.max(0, renderedSectionBoundsDebugBoxes),
+                        safeRenderStats.renderStateChanges()
                 ),
                 new Entities(
                         Math.max(0, visibleEntitySnapshots),
@@ -536,10 +537,11 @@ public record EngineFrameStats(
             int chunkVertexBytes,
             int debugChunkBorders,
             int debugMeshBounds,
-            int debugSectionBounds
+            int debugSectionBounds,
+            int renderStateChanges
     ) {
         static Rendering empty() {
-            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0L, 0, 0L, 0, 0, 0, 0, 0L, 0, 0, 0, 0);
+            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0L, 0, 0L, 0, 0, 0, 0, 0L, 0, 0, 0, 0, 0);
         }
     }
 

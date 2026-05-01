@@ -1,5 +1,6 @@
 package dev.voxelgame.server.net;
 
+import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.server.TickLoop;
@@ -79,14 +80,16 @@ public final class GameServer implements AutoCloseable {
         boolean ambientChanged = !entityTracker.tickAmbient(tick, world::canMoveAmbientEntity, world::fluidSample).isEmpty();
         List<ProjectileHit> projectileHits = entityTracker.tickProjectiles(
                 ENTITY_TICK_SECONDS,
-                world::collidesProjectile,
+                world::projectileImpact,
                 world::fluidSample,
                 System.nanoTime() / 1_000_000_000.0
         );
         boolean projectileChanged = !projectileHits.isEmpty();
         for (ProjectileHit hit : projectileHits) {
             if (hit.terminal()) {
-                ServerConnectionHandler.broadcast(world, GamePacket.ProjectileImpact.fromHit(hit, tick));
+                GamePacket.ProjectileImpact impact = GamePacket.ProjectileImpact.fromHit(hit, tick);
+                ServerConnectionHandler.broadcast(world, impact);
+                ServerConnectionHandler.broadcast(world, gameplayEventsFromProjectileImpact(impact));
             }
         }
         boolean clientStateChanged = ServerConnectionHandler.consumeEntitySnapshotDirty(world);
@@ -95,6 +98,21 @@ public final class GameServer implements AutoCloseable {
             return;
         }
         ServerConnectionHandler.broadcastEntitySnapshots(world, entityTracker);
+    }
+
+    private static GamePacket.GameplayEvents gameplayEventsFromProjectileImpact(GamePacket.ProjectileImpact impact) {
+        long targetEntityId = impact.hitType() == ProjectileHit.Type.ENTITY
+                ? impact.entityId()
+                : GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY;
+        return new GamePacket.GameplayEvents(List.of(new GameplayEvent.ProjectileImpact(
+                impact.serverTick(),
+                impact.projectileId(),
+                impact.projectileTypeKey(),
+                impact.x(),
+                impact.y(),
+                impact.z(),
+                targetEntityId
+        )));
     }
 
     public ServerEntityTracker.AmbientTickStats entityTickStats() {

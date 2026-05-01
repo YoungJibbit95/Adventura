@@ -12,8 +12,7 @@ import dev.voxelgame.common.gameplay.ComfortRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
-import dev.voxelgame.common.physics.BlockCollisionShape;
-import dev.voxelgame.common.physics.BlockCollisionShapes;
+import dev.voxelgame.common.physics.CollisionShapeCache;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.PhysicsTickets;
@@ -49,6 +48,7 @@ public final class ClientWorld {
     private static final double PROJECTILE_SWEEP_PREVIEW_SECONDS = 0.20;
 
     private final InMemoryWorld world;
+    private final CollisionShapeCache collisionShapeCache;
     private final OverworldGenerator generator;
     private final OverworldGenerator.SpawnPoint spawnPoint;
     private final LightEngine lightEngine = new LightEngine();
@@ -68,6 +68,27 @@ public final class ClientWorld {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
         this.seed = seed;
         this.world = new InMemoryWorld(DimensionSettings.OVERWORLD, blocks);
+        this.collisionShapeCache = new CollisionShapeCache(new CollisionShapeCache.Source() {
+            @Override
+            public DimensionSettings dimension() {
+                return world.dimension();
+            }
+
+            @Override
+            public boolean ensureChunkAvailable(ChunkPos pos) {
+                return world.findChunk(pos).isPresent();
+            }
+
+            @Override
+            public short blockIdAt(int x, int y, int z) {
+                return world.blockId(x, y, z);
+            }
+
+            @Override
+            public BlockType blockType(short blockId) {
+                return world.blockType(blockId);
+            }
+        });
         this.generator = new OverworldGenerator(seed);
         this.spawnPoint = generator.safeSpawnPoint();
     }
@@ -99,6 +120,7 @@ public final class ClientWorld {
 
     public synchronized void applyChunk(GamePacket.ChunkData data) {
         ChunkDataCodec.applyToWorld(world, data);
+        collisionShapeCache.invalidateChunk(data.pos());
         markDirtyWithNeighbors(data.pos());
     }
 
@@ -108,6 +130,7 @@ public final class ClientWorld {
         BlockType newBlock = world.blockType(update.blockId());
         world.setBlockId(update.x(), update.y(), update.z(), update.blockId());
         world.findChunk(ChunkPos.fromBlock(update.x(), update.z())).ifPresent(Chunk::invalidateTerrainCache);
+        collisionShapeCache.invalidateBlock(update.x(), update.y(), update.z());
         markBoundarySectionsGeometryDirty(update.x(), update.y(), update.z());
         modifiedChunks.add(ChunkPos.fromBlock(update.x(), update.z()));
         BlockPos pos = new BlockPos(update.x(), update.y(), update.z());
@@ -287,35 +310,9 @@ public final class ClientWorld {
 
     public synchronized boolean collidesPlayer(double eyeX, double eyeY, double eyeZ) {
         lastPhysicsBlockedByLoading = false;
-        double minX = PLAYER_BOUNDS.minX(eyeX);
-        double maxX = PLAYER_BOUNDS.maxX(eyeX);
-        double minY = PLAYER_BOUNDS.minY(eyeY);
-        double maxY = PLAYER_BOUNDS.maxY(eyeY);
-        double minZ = PLAYER_BOUNDS.minZ(eyeZ);
-        double maxZ = PLAYER_BOUNDS.maxZ(eyeZ);
-
-        for (int y = floor(minY); y <= floor(maxY); y++) {
-            if (!world.dimension().containsY(y)) {
-                return true;
-            }
-            for (int z = floor(minZ); z <= floor(maxZ); z++) {
-                for (int x = floor(minX); x <= floor(maxX); x++) {
-                    if (!PLAYER_BOUNDS.intersectsBlock(eyeX, eyeY, eyeZ, x, y, z)) {
-                        continue;
-                    }
-                    if (world.findChunk(ChunkPos.fromBlock(x, z)).isEmpty()) {
-                        lastPhysicsBlockedByLoading = true;
-                        return true;
-                    }
-                    short blockId = world.blockId(x, y, z);
-                    if (world.blockType(blockId).collidable()
-                            && BlockCollisionShapes.collisionShape(blockId).intersectsPlayer(PLAYER_BOUNDS, eyeX, eyeY, eyeZ, x, y, z)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+        CollisionShapeCache.CollisionCheck collision = collisionShapeCache.collidesPlayer(eyeX, eyeY, eyeZ, PLAYER_BOUNDS);
+        lastPhysicsBlockedByLoading = collision.blockedByMissingChunk();
+        return collision.collides();
     }
 
     public synchronized boolean lastPhysicsBlockedByLoading() {
@@ -345,33 +342,16 @@ public final class ClientWorld {
         int centerX = floor(position.x);
         int centerY = floor(position.y);
         int centerZ = floor(position.z);
-        int radius = Math.max(0, radiusBlocks);
         List<ChunkMesh.Bounds> bounds = new ArrayList<>();
-        for (int y = centerY - radius; y <= centerY + radius; y++) {
-            if (!world.dimension().containsY(y)) {
-                continue;
-            }
-            for (int z = centerZ - radius; z <= centerZ + radius; z++) {
-                for (int x = centerX - radius; x <= centerX + radius; x++) {
-                    if (world.findChunk(ChunkPos.fromBlock(x, z)).isEmpty()) {
-                        continue;
-                    }
-                    short blockId = world.blockId(x, y, z);
-                    if (!BlockCollisionShapes.hasPartialShape(blockId)) {
-                        continue;
-                    }
-                    for (BlockCollisionShape.Box box : BlockCollisionShapes.collisionShape(blockId).boxes()) {
-                        bounds.add(new ChunkMesh.Bounds(
-                                (float) (x + box.minX()),
-                                (float) (y + box.minY()),
-                                (float) (z + box.minZ()),
-                                (float) (x + box.maxX()),
-                                (float) (y + box.maxY()),
-                                (float) (z + box.maxZ())
-                        ));
-                    }
-                }
-            }
+        for (CollisionShapeCache.ShapeBounds box : collisionShapeCache.partialMovementShapeBoundsAround(centerX, centerY, centerZ, radiusBlocks)) {
+            bounds.add(new ChunkMesh.Bounds(
+                    (float) box.minX(),
+                    (float) box.minY(),
+                    (float) box.minZ(),
+                    (float) box.maxX(),
+                    (float) box.maxY(),
+                    (float) box.maxZ()
+            ));
         }
         return bounds;
     }
@@ -786,7 +766,10 @@ public final class ClientWorld {
             if (unloaded.size() >= unloadLimit) {
                 break;
             }
-            world.removeChunk(pos).ifPresent(chunk -> unloaded.add(chunk.pos()));
+            world.removeChunk(pos).ifPresent(chunk -> {
+                collisionShapeCache.invalidateChunk(chunk.pos());
+                unloaded.add(chunk.pos());
+            });
         }
 
         if (!unloaded.isEmpty()) {

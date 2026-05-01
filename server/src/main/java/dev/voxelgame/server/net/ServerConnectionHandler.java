@@ -1,5 +1,6 @@
 package dev.voxelgame.server.net;
 
+import dev.voxelgame.common.actions.ActionTarget;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.DamageResult;
@@ -9,7 +10,6 @@ import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.gameplay.EntityDrops;
 import dev.voxelgame.common.gameplay.InteractionRules;
-import dev.voxelgame.common.gameplay.ProjectileItemRules;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.CraftingStationType;
@@ -28,6 +28,7 @@ import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.ChunkStreamingRings;
+import dev.voxelgame.server.action.ServerProjectileShootAction;
 import dev.voxelgame.server.auth.AuthProvider;
 import dev.voxelgame.server.auth.AuthResult;
 import dev.voxelgame.server.entity.DroppedItemEntity;
@@ -76,6 +77,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final ServerWorld world;
     private final AuthProvider authProvider;
     private final ServerEntityTracker entityTracker;
+    private final ServerProjectileShootAction projectileShootAction = new ServerProjectileShootAction();
     private final int streamRadiusChunks;
     private final Path playerSaveDirectory;
     private final ServerChunkStreamer chunkStreamer;
@@ -113,6 +115,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private List<String> discoveredRecipes = List.of();
     private List<String> discoveredBiomes = List.of();
     private List<String> journalEntries = List.of();
+    private List<String> achievedMilestones = List.of();
+    private List<String> completedGoals = List.of();
     private String lastWorldKey = "overworld";
     private double nextBlockActionTime;
     private double nextEntityInteractTime;
@@ -296,36 +300,102 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private void handleProjectileShoot(ChannelHandlerContext ctx, GamePacket.ProjectileShoot shoot) {
-        if (!loggedIn) {
-            ctx.close();
-            return;
-        }
-        double now = System.nanoTime() / 1_000_000_000.0;
-        if (!acceptIntentRate(ClientIntent.PROJECTILE_SHOOT, now)) {
-            return;
-        }
-        if (!InteractionRules.isHotbarSlot(shoot.selectedSlot(), inventory.size())) {
-            sendInventory(ctx);
-            return;
-        }
-        hotbarSelection = shoot.selectedSlot();
-        ItemStack selected = inventory.slot(shoot.selectedSlot());
-        if (now < nextProjectileShootTime || !ProjectileItemRules.canLaunch(selected, items)) {
-            sendInventory(ctx);
-            return;
-        }
-        double[] direction = lookDirection(playerYaw, playerPitch);
-        entityTracker.spawnArrowProjectile(playerId, playerX, playerY - 0.18, playerZ, direction[0], direction[1], direction[2]);
-        inventory.damageSlot(shoot.selectedSlot(), ProjectileItemRules.durabilityDamageOnLaunch(selected, items), items);
-        nextProjectileShootTime = now + ProjectileItemRules.cooldownSeconds(selected, items);
-        markEntitySnapshotsDirty(world);
-        sendInventory(ctx);
-        sendEntitySnapshots(ctx);
+        projectileShootAction.execute(projectileShootContext(ctx), shoot, System.nanoTime() / 1_000_000_000.0);
+    }
+
+    private ServerProjectileShootAction.Context projectileShootContext(ChannelHandlerContext ctx) {
+        return new ServerProjectileShootAction.Context() {
+            @Override
+            public UUID playerId() {
+                return playerId;
+            }
+
+            @Override
+            public boolean loggedIn() {
+                return loggedIn;
+            }
+
+            @Override
+            public void closeConnection() {
+                ctx.close();
+            }
+
+            @Override
+            public boolean acceptProjectileShootRate(double nowSeconds) {
+                return acceptIntentRate(ClientIntent.PROJECTILE_SHOOT, nowSeconds);
+            }
+
+            @Override
+            public int inventorySize() {
+                return inventory.size();
+            }
+
+            @Override
+            public void sendInventory() {
+                ServerConnectionHandler.this.sendInventory(ctx);
+            }
+
+            @Override
+            public void setHotbarSelection(int selectedSlot) {
+                hotbarSelection = selectedSlot;
+            }
+
+            @Override
+            public ItemStack inventorySlot(int slot) {
+                return inventory.slot(slot);
+            }
+
+            @Override
+            public Registry<ItemType> items() {
+                return items;
+            }
+
+            @Override
+            public ActionTarget projectileTarget() {
+                double[] direction = lookDirection(playerYaw, playerPitch);
+                return new ActionTarget.Direction(playerX, playerY - 0.18, playerZ, direction[0], direction[1], direction[2]);
+            }
+
+            @Override
+            public double nextProjectileShootTime() {
+                return nextProjectileShootTime;
+            }
+
+            @Override
+            public void spawnProjectileFromCurrentLook() {
+                double[] direction = lookDirection(playerYaw, playerPitch);
+                entityTracker.spawnArrowProjectile(playerId, playerX, playerY - 0.18, playerZ, direction[0], direction[1], direction[2]);
+            }
+
+            @Override
+            public void damageInventorySlot(int slot, int durabilityDamage) {
+                inventory.damageSlot(slot, durabilityDamage, items);
+            }
+
+            @Override
+            public void setNextProjectileShootTime(double nextProjectileShootTime) {
+                ServerConnectionHandler.this.nextProjectileShootTime = nextProjectileShootTime;
+            }
+
+            @Override
+            public void markEntitySnapshotsDirty() {
+                ServerConnectionHandler.markEntitySnapshotsDirty(world);
+            }
+
+            @Override
+            public void sendEntitySnapshots() {
+                ServerConnectionHandler.this.sendEntitySnapshots(ctx);
+            }
+        };
     }
 
     private void handleHandshake(ChannelHandlerContext ctx, GamePacket.Handshake handshake) {
         if (handshake.protocolVersion() != GamePacket.PROTOCOL_VERSION) {
-            ctx.writeAndFlush(new GamePacket.LoginRejected("Protocol mismatch")).addListener(future -> ctx.close());
+            String reason = "Protocol mismatch: server requires version "
+                    + GamePacket.PROTOCOL_VERSION
+                    + ", client sent "
+                    + handshake.protocolVersion();
+            ctx.writeAndFlush(new GamePacket.LoginRejected(reason)).addListener(future -> ctx.close());
         }
     }
 
@@ -1347,6 +1417,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         discoveredRecipes = List.copyOf(save.discoveredRecipes());
         discoveredBiomes = List.copyOf(save.discoveredBiomes());
         journalEntries = List.copyOf(save.journalEntries());
+        achievedMilestones = List.copyOf(save.achievedMilestones());
+        completedGoals = List.copyOf(save.completedGoals());
         lastWorldKey = save.lastWorldKey();
         inventory.clear();
         for (int i = 0; i < Math.min(inventory.size(), save.inventory().size()); i++) {
@@ -1394,6 +1466,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 discoveredRecipes,
                 discoveredBiomes,
                 journalEntries,
+                achievedMilestones,
+                completedGoals,
                 lastWorldKey
         );
     }

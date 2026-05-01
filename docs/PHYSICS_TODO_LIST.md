@@ -95,7 +95,9 @@ Physics soll stabil, vorhersehbar, cozy und multiplayer-sicher bleiben. Server-A
 
 ## 🔴 Braucht Engine/Tool
 
-- `PartialShapeImpactResolver`: Common-Tool/API fuer exakte Projectile-Impacts gegen Nicht-Wuerfel. Es sollte aus `BlockCollisionShape` eine Methode wie `raycastProjectile(fromX, fromY, fromZ, toX, toY, toZ, ProjectileBounds)` liefern und `ImpactResult(blockX, blockY, blockZ, impactX, impactY, impactZ, normalX, normalY, normalZ, face, fraction)` zurueckgeben. Full-Cubes nutzen Slab-AABB, Furniture/Cutout-Blocks mehrere lokale AABBs. `ServerWorld.collidesProjectile` sollte danach nicht nur `boolean`, sondern den naechsten Hit liefern. Tests: Pfeil gegen Fence/Table/Chair/Campfire, Treffer an Kanten, kein Tunneling bei hohen Geschwindigkeiten.
+- ~~`PartialShapeImpactResolver`: Common-Tool/API fuer exakte Projectile-Impacts gegen Nicht-Wuerfel. Es sollte aus `BlockCollisionShape` eine Methode wie `raycastProjectile(fromX, fromY, fromZ, toX, toY, toZ, ProjectileBounds)` liefern und `ImpactResult(blockX, blockY, blockZ, impactX, impactY, impactZ, normalX, normalY, normalZ, face, fraction)` zurueckgeben. Full-Cubes nutzen Slab-AABB, Furniture/Cutout-Blocks mehrere lokale AABBs. `ServerWorld.collidesProjectile` sollte danach nicht nur `boolean`, sondern den naechsten Hit liefern. Tests: Pfeil gegen Fence/Table/Chair/Campfire, Treffer an Kanten, kein Tunneling bei hohen Geschwindigkeiten.~~
+  Erledigt: 2026-05-01 - `PartialShapeImpactResolver`, `BlockCollisionShape.raycastProjectile(...)`, `BlockCollisionShapes.projectileShape(...)`, `ProjectilePhysics.BlockImpactQuery` und `ServerWorld.projectileImpact(...)` eingefuehrt.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.BlockCollisionShapesTest --tests dev.voxelgame.common.physics.ProjectilePhysicsTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :server:test --tests dev.voxelgame.server.world.ServerWorldTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :server:test --tests dev.voxelgame.server.entity.ServerEntityTrackerTest --tests dev.voxelgame.server.net.ServerConnectionHandlerTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :common:physicsRegression :server:physicsRegression --no-daemon --max-workers=1 --rerun-tasks`.
 - `RangedActionContent`: Wenn echte Boegen/Ammo kommen sollen, braucht das Content-System Item-Tags wie `action=ranged_projectile`, `projectile=voxel:arrow_projectile`, `ammo=voxel:arrow`, `cooldown`, `durabilityDamage`, `chargeTime`. Aktuell ist Tool-Input fuer Messer als server-autorisierter Throw-Intent implementiert; Bow/Ammo sollte datengetrieben werden, nicht hart im Client.
 
 ## Akzeptanz
@@ -145,8 +147,148 @@ Physics soll stabil, vorhersehbar, cozy und multiplayer-sicher bleiben. Server-A
 
 Diese Punkte sind nicht nur Physics, aber sie wuerden die Base deutlich besser fuer ein groesseres Spiel machen.
 
-- 🔴 `ActionPipeline`: Ein gemeinsames Ability-/Use-System fuer Essen, Fuettern, Block-Interact, Projectile-Shoot, Tools, spaeter Spells. Es sollte in Common `ActionDefinition`, `ActionRequest`, `ActionValidationResult` und `ActionExecutionResult` geben. ServerConnectionHandler wuerde nur noch Requests routen; Regeln, Cooldowns, Kosten, Durability und Result-Events waeren datengetrieben testbar.
-- 🔴 `GameplayEventStream`: Server-authoritative Event-Packets fuer Damage, Heal, Pickup, Craft, ProjectileImpact, Sleep, Weather, Quest. Coding-Vorschlag: Common sealed `GameplayEvent`, Packet `GameplayEvents(List<GameplayEvent>)`, Client-Consumer fuer Audio/Particles/UI. Vorteil: weniger ad-hoc Packet-Typen und sauberere Replays.
-- 🔴 `ContentTagRegistry`: JSON- oder Codegen-Tags fuer Items/Blocks/Entities wie `ranged`, `flammable`, `cold`, `floaty`, `heavy`, `comfort_source`, `station`. API: Registry laedt Tags beim Start, Tests pruefen unbekannte Keys und zyklische Aliase. Dann muessen neue Items nicht in zig Java-Switches landen.
-- 🔴 `StatusEffectSystem`: Kleine serverseitige Effects mit Dauer, Stack-Regel, Tick-Rate und Save-State: burning, chilled, wet, rested, cozy, poison. Common-Regeln, Server-State, Client-Event fuer HUD/Audio. Das macht Hazards und Biome spaeter viel lebendiger.
+- 🟠 `ActionPipeline`: Ein gemeinsames Ability-/Use-System fuer Essen, Fuettern, Block-Interact, Projectile-Shoot, Tools, spaeter Spells. Es sollte in Common `ActionDefinition`, `ActionRequest`, `ActionValidationResult` und `ActionExecutionResult` geben. ServerConnectionHandler wuerde nur noch Requests routen; Regeln, Cooldowns, Kosten, Durability und Result-Events waeren datengetrieben testbar.
+  Status: Common-Contract und erster Server-Slice erledigt am 2026-05-01 mit `common.actions`, Pipeline-Tests und `ServerProjectileShootAction`; weitere Aktionen und Result-Events bleiben Anschlussarbeit.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.actions.ActionPipelineTest --tests dev.voxelgame.common.content.ContentTagRegistryTest -PadventuraTestRunId=action_pipeline_1 --no-daemon --max-workers=1`; Server-Slice laut Networking-Liste via `ServerProjectileShootActionTest`/`ServerConnectionHandlerTest`.
+- 🟠 `GameplayEventStream`: Server-authoritative Event-Packets fuer Damage, Heal, Pickup, Craft, ProjectileImpact, Sleep, Weather, Quest. Coding-Vorschlag: Common sealed `GameplayEvent`, Packet `GameplayEvents(List<GameplayEvent>)`, Client-Consumer fuer Audio/Particles/UI. Vorteil: weniger ad-hoc Packet-Typen und sauberere Replays.
+  Status: Common-Event-Modell, Packet/Codec-Contract, erster Client-Feedback-Hook und ProjectileImpact-Server-Emission erledigt am 2026-05-01; Interest-Filter und weitere Gameplay-Producer/HUD-/Journal-/Particle-Consumer bleiben Anschlussarbeit.
+  Verifikation: `./gradlew :common:clean :common:test --tests dev.voxelgame.common.net.PacketCodecTest --tests dev.voxelgame.common.net.PacketCodecGoldenTest --tests dev.voxelgame.common.net.ProtocolContractTest --tests dev.voxelgame.common.gameplay.GameplayEventTest --no-daemon --max-workers=1`; `./gradlew :common:clean :server:cleanTest :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.gameServerBroadcastsProjectileImpactFromAuthoritativeTick --no-daemon --max-workers=1`; zusaetzlich `GameplayEventFeedbackTest`.
+- ~~🔴 `ContentTagRegistry` V1: Tags fuer Items/Blocks/Entities wie `ranged`, `flammable`, `cold`, `floaty`, `heavy`, `comfort_source`, `station`.~~
+  Erledigt: codebasierte V1 in `common.content` mit Alias-Aufloesung, Unknown-Key-Verhalten, Coverage-Report und Common-Tests. Offen fuer Physics: bestehende Projectile-/Hazard-/Entity-Profil-Switches schrittweise auf Read-Queries umstellen; JSON/Codegen und zyklische Aliaspruefung bleiben spaeter.
+  Verifikation: `ContentTagRegistryTest` XML/HTML meldet 8 Tests, 0 Failures.
+- 🟠 `StatusEffectSystem`: Common-Contract fuer Dauer, Stack-Regel, Tick-Rate, Movement-/Stamina-Modifier und Save-State.
+  Status: Common-Regeln erledigt am 2026-05-01 in `common.gameplay.status` mit Definitionen fuer burning, chilled, wet, rested, cozy und poison. Server-State, Save-Felder und Client-Events bleiben Anschlussarbeit.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.status.StatusEffectSystemTest -PadventuraTestRunId=status_effect_common_2 --no-daemon --max-workers=1`.
 - 🔴 `PhysicsReplayRecorder`: Tool zum Mitschneiden echter Server-Steps als Golden-Replay. Format: JSONL pro Tick mit Input, World-Sample-Hashes, Entity-Snapshots, Projectile-Hits und Stats. CLI: `./gradlew recordPhysicsReplay --scenario ...` und `./gradlew physicsRegression`.
+  Status: Common-Format/Recorder erledigt am 2026-05-01 mit `PhysicsReplayFrame`, `PhysicsReplayCodec`, `PhysicsReplayRecorder` und JSONL-Testresource. Offen: echte Server-Szenario-Aufzeichnung und `recordPhysicsReplay`-Gradle-Task.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.PhysicsReplayRecorderTest -PadventuraTestRunId=p42a_replay_5 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+
+---
+
+# P4 - Physics und Engine Surface Worker Track
+
+Owner: Physics und Engine Worker.
+
+Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Developer nicht allein alle Engine-Oberflaechen tragen muss.
+
+## P4.1 Collision Cache und Shape Queries
+
+### Aktueller Schritt
+
+- ~~🟠 In Arbeit 2026-05-01: `P4.1a PartialShapeImpactResolver` fuer exakte Projectile-Impacts gegen Partial-Shapes und gemeinsame Server-Query.~~
+  Erledigt: 2026-05-01 - Projectile-Impacts nutzen gesweepte Shape-Raycasts mit Face/Normal/Fraction; Server-Tick verdrahtet die autoritative Impact-Query.
+  Verifikation: `./gradlew :common:physicsRegression :server:physicsRegression --no-daemon --max-workers=1 --rerun-tasks`.
+- ~~🟠 In Arbeit 2026-05-01: `P4.1b CollisionShapeCache` fuer gemeinsame Player-/Entity-/Projectile-Shape-Queries und BlockUpdate-Invalidierung.~~
+  Erledigt: 2026-05-01 - `CollisionShapeCache` cached Movement- und Projectile-Shapes pro Chunk-Section; Server und Client nutzen ihn fuer Player-/Entity-/Projectile-Kollisionen, Projectile-Impacts und Client-Debug-Bounds.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.CollisionShapeCacheTest --tests dev.voxelgame.common.physics.BlockCollisionShapesTest --tests dev.voxelgame.common.physics.ProjectilePhysicsTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :server:test --tests dev.voxelgame.server.world.ServerWorldTest --tests dev.voxelgame.server.entity.ServerEntityTrackerTest --tests dev.voxelgame.server.net.ServerConnectionHandlerTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldCollisionTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :common:physicsRegression :server:physicsRegression :client:physicsRegression --no-daemon --max-workers=1 --rerun-tasks`.
+
+### Offen
+
+- ~~Collision-Cache pro Chunk/Section planen.~~
+  Erledigt: 2026-05-01 - `CollisionShapeCache` speichert Section-Caches getrennt fuer `MOVEMENT` und `PROJECTILE`.
+  Verifikation: `CollisionShapeCacheTest.cachesSectionShapesAndInvalidatesChangedBlock`.
+- Partial-Shapes zentral raycast- und sweep-faehig machen.
+  - ~~Projectile-Raycasts fuer Full-Cubes, Fence, Table, Chair und Campfire/Decoration-Shape zentralisiert.~~
+    Erledigt: 2026-05-01
+    Verifikation: `BlockCollisionShapesTest`, `ProjectilePhysicsTest`, `ServerWorldTest`.
+- Player-, Entity- und Projectile-Kollision sollen dieselbe Shape-Quelle nutzen.
+  - ~~Projectile nutzt jetzt `BlockCollisionShapes.projectileShape(...)`; Player/Entity bleiben auf `collisionShape(...)`, alle aus derselben Shape-Registry.~~
+    Erledigt: 2026-05-01
+    Verifikation: `BlockCollisionShapesTest.projectileRaycastUsesSamePartialShapeSource`.
+  - ~~Server und Client fragen Player-/Entity-/Projectile-Kollisionen ueber denselben `CollisionShapeCache` ab.~~
+    Erledigt: 2026-05-01
+    Verifikation: `ServerWorldTest`, `ClientWorldCollisionTest`, `CollisionShapeCacheTest`.
+- Debug-Overlay fuer:
+  - player bounds.
+  - entity bounds.
+  - projectile sweep.
+  - block shape.
+  - stuck/separation events.
+- ~~Cache-Invalidierung bei BlockUpdate testen.~~
+  Erledigt: 2026-05-01 - `ServerWorld.setBlock`, `ClientWorld.applyBlock`, `ClientWorld.applyChunk` und Chunk-Unload invalidieren Shape-Caches.
+  Verifikation: `ServerWorldTest.blockUpdatesInvalidateServerCollisionCache`, `ClientWorldCollisionTest.blockUpdatesInvalidateClientCollisionCache`, `CollisionShapeCacheTest.cachesSectionShapesAndInvalidatesChangedBlock`.
+
+### Akzeptanz
+
+- Keine separate Collision-Wahrheit fuer Player, Entity und Projectile.
+- Partial-Shapes liefern genaue Hit-Normalen.
+- Kollisionen bleiben bei Chunkgrenzen stabil.
+
+## P4.2 Deterministic Physics Replay
+
+### Aktueller Schritt
+
+- ~~🟠 In Arbeit 2026-05-01: `P4.2a PhysicsReplayRecorder` mit versioniertem JSONL-Frame-Format, Common-Recorder/Parser und Regression-Testresource.~~
+  Erledigt: 2026-05-01 - JSONL-Schema V1 deckt Tick, Input, Player-State, Entity-State, Projectile-State, Block-Samples, Event-Output und Stats ab; Common-Recorder erzwingt monoton steigende Ticks und liefert `recordStep(...)` als Server-Anschluss.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.PhysicsReplayRecorderTest -PadventuraTestRunId=p42a_replay_5 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+
+### Offen
+
+- ~~Replay-Format festlegen:~~
+  Erledigt: 2026-05-01 - `PhysicsReplayFrame` Schema V1.
+  Verifikation: `PhysicsReplayRecorderTest.jsonlRoundTripKeepsStableOrderingAndAllCoreSections`.
+  - ~~tick.~~
+  - ~~input.~~
+  - ~~player state.~~
+  - ~~entity state.~~
+  - ~~projectile state.~~
+  - ~~relevant block samples.~~
+  - ~~event output.~~
+- ~~Existing `physics-replays/*.properties` zu einem erweiterbaren Format migrieren oder ergaenzen.~~
+  Erledigt: 2026-05-01 - JSONL-Resource `physics-replays/projectile_impact_v1.jsonl` ergaenzt, bestehende Properties bleiben kompatibel.
+  Verifikation: `PhysicsReplayRecorderTest.loadsJsonlGoldenResource`.
+- ~~Server-Step-Recorder vorbereiten.~~
+  Erledigt: 2026-05-01 - `PhysicsReplayRecorder.recordStep(PhysicsStepContext, Consumer<PhysicsReplayFrame.Builder>)` als Common-Anschluss fuer serverautoritatives Mitschneiden.
+  Verifikation: `PhysicsReplayRecorderTest.recordStepCapturesContextAndOutputEvents`.
+- ~~Regression-Task fuer Golden-Replays planen.~~
+  Erledigt: 2026-05-01 - Neue Recorder-Tests tragen `@Tag("physicsRegression")` und laufen mit `:common:physicsRegression`.
+  Verifikation: `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+
+### Akzeptanz
+
+- Physics-Bugs lassen sich mit einem kleinen Replay reproduzieren.
+- Bewegungs- und Projectile-PRs koennen deterministisch verifiziert werden.
+
+## P4.3 Status Effects und Movement Modifiers
+
+### Aktueller Schritt
+
+- ~~🔴 In Arbeit 2026-05-01: `P4.3a StatusEffectSystem` Common-Contract fuer Effect-Definitionen, Stack-Regeln, Tick-Pulses, Movement-/Jump-/Stamina-/Hunger-/Health-Modifier und Save-State.~~
+  Erledigt: 2026-05-01 - `StatusEffectSystem`, `StatusEffectType`, `StatusEffectDefinition`, `StatusEffectState`, `ActiveStatusEffect`, `StatusEffectModifiers`, `StatusEffectPulse` und `StatusEffectSaveState` liegen in `common.gameplay.status`.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.status.StatusEffectSystemTest -PadventuraTestRunId=status_effect_common_2 --no-daemon --max-workers=1`.
+
+### Offen
+
+- ~~StatusEffectSystem mit Physics-Schnittstelle definieren:~~
+  - ~~chilled.~~
+  - ~~wet.~~
+  - ~~burning.~~
+  - ~~rested.~~
+  - ~~cozy.~~
+  - ~~poison spaeter.~~
+- ~~Effekte duerfen Movement/Jump/Stamina nur ueber klare Modifier aendern.~~
+  Erledigt: 2026-05-01 - `StatusEffectModifiers` kombiniert reine Multiplikatoren fuer Movement, Jump, Stamina-Regen, Hunger-Drain und Health-Regen.
+  Verifikation: `StatusEffectSystemTest.combinedModifiersRemainPureCommonContract`.
+- Save- und Networking-Auswirkungen mit Main Networking Dev abstimmen.
+
+### Akzeptanz
+
+- Biome/Hazards koennen Bewegung beeinflussen, ohne Physics-Sonderfaelle.
+- Effekte sind serverautoritativ und testbar.
+
+## P4.4 Engine Surface Aufgaben
+
+### Offen
+
+- Kleine Extraktionen aus `GameClient` unterstuetzen:
+  - Input state.
+  - interaction targeting.
+  - debug toggles.
+  - physics debug rendering.
+- ClientWorld-APIs fuer Physics sauber halten.
+- Kein tiefer Shader-/Render-Pipeline-Umbau; diese Aufgabe bleibt beim Lead Engine Developer.
+
+### Akzeptanz
+
+- Physics-Features koennen parallel entwickelt werden.
+- Lead Engine Developer wird bei Engine-Oberflaechen entlastet.

@@ -3,6 +3,7 @@ package dev.voxelgame.server.net;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.item.CraftingCategory;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingStationType;
@@ -1593,10 +1594,17 @@ class ServerConnectionHandlerTest {
 
             server.tickEntities(99L);
 
-            GamePacket.ProjectileImpact impact = readLastProjectileImpact(channel);
+            ProjectileImpactEvents impactEvents = readProjectileImpactAndGameplayEvents(channel);
+            GamePacket.ProjectileImpact impact = impactEvents.impact();
             assertEquals(ProjectileHit.Type.BLOCK, impact.hitType());
             assertEquals("voxel:arrow_projectile", impact.projectileTypeKey());
             assertEquals(99L, impact.serverTick());
+            assertEquals(1, impactEvents.events().events().size());
+            GameplayEvent.ProjectileImpact gameplayImpact = (GameplayEvent.ProjectileImpact) impactEvents.events().events().getFirst();
+            assertEquals(99L, gameplayImpact.sequence());
+            assertEquals(impact.projectileId(), gameplayImpact.projectileId());
+            assertEquals(impact.projectileTypeKey(), gameplayImpact.projectileTypeKey());
+            assertEquals(GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY, gameplayImpact.targetEntityId());
             assertEquals(0, tracker.projectileCount());
         } finally {
             channel.finishAndReleaseAll();
@@ -1674,6 +1682,39 @@ class ServerConnectionHandlerTest {
             }
 
             assertTrue(rejected != null && "Already logged in".equals(rejected.reason()));
+            assertFalse(channel.isActive());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void handshakeRejectsProtocolMismatchWithActionableReason() {
+        ServerWorld world = new ServerWorld(123L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker(),
+                TEST_STREAM_RADIUS_CHUNKS
+        ));
+        try {
+            drainOutbound(channel);
+
+            channel.writeInbound(new GamePacket.Handshake(GamePacket.PROTOCOL_VERSION - 1, "old-client"));
+
+            Object outbound;
+            GamePacket.LoginRejected rejected = null;
+            while ((outbound = channel.readOutbound()) != null) {
+                if (outbound instanceof GamePacket.LoginRejected loginRejected) {
+                    rejected = loginRejected;
+                }
+            }
+
+            String expected = "Protocol mismatch: server requires version "
+                    + GamePacket.PROTOCOL_VERSION
+                    + ", client sent "
+                    + (GamePacket.PROTOCOL_VERSION - 1);
+            assertTrue(rejected != null && expected.equals(rejected.reason()));
             assertFalse(channel.isActive());
         } finally {
             channel.finishAndReleaseAll();
@@ -2637,6 +2678,29 @@ class ServerConnectionHandlerTest {
             throw new AssertionError("Expected projectile impact");
         }
         return impact;
+    }
+
+    private static ProjectileImpactEvents readProjectileImpactAndGameplayEvents(EmbeddedChannel channel) {
+        GamePacket.ProjectileImpact impact = null;
+        GamePacket.GameplayEvents events = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.ProjectileImpact projectileImpact) {
+                impact = projectileImpact;
+            } else if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events = gameplayEvents;
+            }
+        }
+        if (impact == null) {
+            throw new AssertionError("Expected projectile impact");
+        }
+        if (events == null) {
+            throw new AssertionError("Expected gameplay event batch");
+        }
+        return new ProjectileImpactEvents(impact, events);
+    }
+
+    private record ProjectileImpactEvents(GamePacket.ProjectileImpact impact, GamePacket.GameplayEvents events) {
     }
 
     private static GamePacket.PlayerStatsSnapshot readLastPlayerStats(EmbeddedChannel channel) {

@@ -78,6 +78,18 @@ class ClientWorldCollisionTest {
     }
 
     @Test
+    void blockUpdatesInvalidateClientCollisionCache() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 80, 8, Blocks.STONE));
+
+        assertTrue(world.collidesPlayer(8.5, 80.0, 8.5));
+
+        world.applyBlock(new GamePacket.BlockUpdate(8, 80, 8, Blocks.AIR));
+
+        assertFalse(world.collidesPlayer(8.5, 80.0, 8.5));
+    }
+
+    @Test
     void localPlacementCannotIntersectPlayerBounds() {
         ClientWorld world = new ClientWorld(123L);
         world.applyBlock(new GamePacket.BlockUpdate(8, 64, 8, Blocks.AIR));

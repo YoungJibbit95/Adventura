@@ -430,7 +430,7 @@ Structures können mehrere Chunks betreffen und dürfen nicht halb fehlen.
 
 ## Manual Smoke Tests
 
-Siehe `11_WORLD_SMOKE_TESTS.md`.
+Siehe `docs/WORLD_SMOKE_TESTS.md`.
 
 ## Akzeptanz
 
@@ -439,3 +439,99 @@ Siehe `11_WORLD_SMOKE_TESTS.md`.
 - Worldgen bleibt deterministisch.
 - Spawn ist sicher.
 - Chunk-Grenzen sind nicht sichtbar problematisch.
+
+---
+
+# P7 – World Content Production Pipeline
+
+Owner: Lead Game Design Engineer und Project Manager, mit Engine-Schnittstellen zum Lead Engine Developer.
+
+## P7.1 Generator-Monolith weiter schneiden
+
+### Offen
+
+- `OverworldGenerator` in klarere Services aufteilen:
+  - `ClimateSampler`.
+  - `HeightmapSampler`.
+  - `BiomeResolver`.
+  - `TerrainFiller`.
+  - `FeaturePlanner`.
+  - `StructurePlanner`.
+  - `SpawnPlanner`.
+  - `GenerationMetricsCollector`.
+- Vor jeder Extraktion deterministische Tests sichern.
+- Generator-Passes in `ARCHITECTURE.md` oder eigener Worldgen-Doc spiegeln.
+
+### Akzeptanz
+
+- Neue Biome/Features vergrößern nicht eine zentrale Datei.
+- Tests können einzelne Passes prüfen.
+- Seed-Reproduzierbarkeit bleibt stabil.
+
+## P7.2 Datengetriebene Feature- und Structure-Tables
+
+### Offen
+
+- Feature Tables konkretisieren:
+  - resource nodes.
+  - plant clusters.
+  - rocks/boulders.
+  - trees.
+  - ruins.
+  - campsites.
+  - village parts.
+- Structure Templates ausbauen:
+  - bounds.
+  - palette.
+  - markers.
+  - rotations.
+  - loot table key.
+  - encounter table key.
+  - journal/lore key.
+- Validierung:
+  - alle Block-/Item-Keys existieren.
+  - marker names eindeutig.
+  - template bounds passen.
+  - loot tables vorhanden.
+
+### Akzeptanz
+
+- Content kann erweitert werden, ohne Generator-Sonderfälle zu stapeln.
+- Structures sind gameplay-relevant und nicht nur Dekoration.
+- QA kann Templates gezielt testen.
+
+## P7.3 Biome Progression Contracts
+
+### Offen
+
+- Pro Biom eine Design-Karte pflegen:
+  - Silhouette.
+  - Farb-/Lichtstimmung.
+  - Ressourcen.
+  - Tiere.
+  - Structures.
+  - Gefahren.
+  - Station-/Item-Progression.
+  - Journal-Einträge.
+- Biome-Ressourcen mit `GAMEPLAY_TODO_LIST.md` synchronisieren.
+- Seltene Biome dürfen besonders sein, aber Core-Progression darf nicht komplett vom Zufall abhängen.
+
+### Akzeptanz
+
+- Jedes Biom hat mindestens einen klaren Grund für Rückkehr.
+- Progression bleibt seed-robust.
+- Worldgen und Game Design widersprechen sich nicht.
+
+## P7.4 Worldgen Debug und QA Teleport
+
+### Offen
+
+- `/tpbiome` und `/spawnstructure` technisch sauber planen.
+- Debug-Overlay für Biome/Feature/Structure-Marker in UI/HUD abstimmen.
+- Smoke-Seeds automatisch aus Profilen ableiten oder zumindest gepflegt halten.
+- Worldgen-Profiling mit GenerationMetrics in Reports aufnehmen.
+
+### Akzeptanz
+
+- Agenten können neue Biome/Structures schnell prüfen.
+- Smoke-Tests finden Randfälle ohne manuelle Suche.

@@ -15,6 +15,7 @@ import dev.voxelgame.client.audio.AudioCueRules;
 import dev.voxelgame.client.audio.GameAudio;
 import dev.voxelgame.client.hud.ClientComfortSources;
 import dev.voxelgame.client.hud.ComfortHudInfo;
+import dev.voxelgame.client.hud.HudLayout;
 import dev.voxelgame.client.hud.HudStat;
 import dev.voxelgame.client.hud.InteractionHudCard;
 import dev.voxelgame.client.hud.InteractionStatusCard;
@@ -50,6 +51,7 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
+import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.gameplay.InteractionRules;
 import dev.voxelgame.common.gameplay.ProjectileItemRules;
 import dev.voxelgame.common.item.CraftingCategory;
@@ -191,6 +193,7 @@ public final class GameClient {
     private final AnimationPlayback craftingFailureShake = new AnimationPlayback();
     private final AtomicReference<GamePacket.PlayerPositionSnapshot> pendingAuthoritativePlayerState = new AtomicReference<>();
     private final ConcurrentLinkedQueue<GamePacket.ProjectileImpact> pendingProjectileImpacts = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<GamePacket.GameplayEvents> pendingGameplayEvents = new ConcurrentLinkedQueue<>();
     private final WeatherLightningController weatherLightning = new WeatherLightningController();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
@@ -388,6 +391,7 @@ public final class GameClient {
                 phaseStartNanos = System.nanoTime();
                 consumeAuthoritativePlayerState();
                 consumeProjectileImpacts();
+                consumeGameplayEvents();
                 lastNetworkPhaseMilliseconds = (System.nanoTime() - phaseStartNanos) / 1_000_000.0;
 
                 phaseStartNanos = System.nanoTime();
@@ -2029,6 +2033,32 @@ public final class GameClient {
         GamePacket.ProjectileImpact impact;
         while ((impact = pendingProjectileImpacts.poll()) != null) {
             handleProjectileImpact(impact);
+        }
+    }
+
+    private void consumeGameplayEvents() {
+        GamePacket.GameplayEvents packet;
+        while ((packet = pendingGameplayEvents.poll()) != null) {
+            for (GameplayEvent event : packet.events()) {
+                handleGameplayEvent(event);
+            }
+        }
+    }
+
+    private void handleGameplayEvent(GameplayEvent event) {
+        double now = currentTimeSeconds();
+        GameplayEventFeedback.describe(event, GameClient::cozyName).ifPresent(entry -> {
+            statusMessage = entry.message();
+            feedbackLog.add(entry.message(), now, entry.kind());
+            entry.audioCue().ifPresent(audio::play);
+        });
+        switch (event) {
+            case GameplayEvent.Damage damage -> damageFlash.trigger(damage.amount(), now);
+            case GameplayEvent.Pickup pickup -> pickupPop.trigger(pickup.itemKey(), now);
+            case GameplayEvent.Craft craft when craft.success() -> craftingSuccessPop.trigger(craft.recipeKey(), now);
+            case GameplayEvent.RecipeUnlocked recipe -> recipeUnlockPop.trigger(recipe.recipeKey(), now);
+            default -> {
+            }
         }
     }
 
@@ -3946,34 +3976,6 @@ public final class GameClient {
     ) {
     }
 
-    record HudLayout(
-            float scale,
-            float margin,
-            float hotbarX,
-            float hotbarY,
-            float hotbarSlotSize,
-            float hotbarGap,
-            float hotbarWidth,
-            float statsY,
-            float statWidth,
-            float statIconSize,
-            float selectedTooltipY,
-            float selectedTooltipScale,
-            float comfortY,
-            float timeY,
-            float feedbackBottomY,
-            float interactionBottomLimitY,
-            boolean showSelectedTooltip,
-            boolean showTime,
-            boolean showWorldInfo,
-            boolean showMode,
-            boolean showComfort
-    ) {
-        float hotbarBottom() {
-            return hotbarY + hotbarSlotSize;
-        }
-    }
-
     private record StorageSlotInteraction(Hotbar.SlotView hoveredSlot, boolean droppedOnSlot) {
     }
 
@@ -4395,7 +4397,7 @@ public final class GameClient {
             return;
         }
         boolean minimalHud = hudMode == GameSettings.HudMode.MINIMAL;
-        HudLayout hud = hudLayout(framebufferWidth, framebufferHeight, uiScale, hudMode);
+        HudLayout hud = HudLayout.forViewport(framebufferWidth, framebufferHeight, uiScale, hudMode);
         renderSurvivalScreenFeedback(uiScale);
         float crosshairLength = 10.0f * uiScale;
         float crosshairThickness = Math.max(1.0f, 2.0f * uiScale);
@@ -4524,63 +4526,6 @@ public final class GameClient {
                 y + 9.0f * scale,
                 0.62f * scale,
                 UiColor.MUTED
-        );
-    }
-
-    static HudLayout hudLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
-        return hudLayout(framebufferWidth, framebufferHeight, uiScale, GameSettings.HudMode.NORMAL);
-    }
-
-    static HudLayout hudLayout(int framebufferWidth, int framebufferHeight, float uiScale, GameSettings.HudMode hudMode) {
-        float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
-        boolean minimalHud = hudMode == GameSettings.HudMode.MINIMAL;
-        float margin = Math.max(10.0f, Math.min(20.0f * safeUiScale, framebufferWidth * 0.055f));
-        float gap = Math.max(3.0f, Math.min(6.0f * safeUiScale, 8.0f));
-        float desiredSlot = 58.0f * safeUiScale;
-        float maxSlotByWidth = (framebufferWidth - margin * 2.0f - gap * (Hotbar.HOTBAR_SLOTS - 1)) / Hotbar.HOTBAR_SLOTS;
-        float maxSlotByHeight = Math.max(32.0f, framebufferHeight * 0.14f);
-        float hotbarSlotSize = Math.max(34.0f, Math.min(desiredSlot, Math.min(maxSlotByWidth, maxSlotByHeight)));
-        float scale = Math.max(0.62f, Math.min(safeUiScale, hotbarSlotSize / 58.0f));
-        gap = Math.max(3.0f, 6.0f * scale);
-        float hotbarWidth = Hotbar.HOTBAR_SLOTS * hotbarSlotSize + (Hotbar.HOTBAR_SLOTS - 1) * gap;
-        float hotbarX = clampFloat(framebufferWidth * 0.5f - hotbarWidth * 0.5f, margin, framebufferWidth - hotbarWidth - margin);
-        float hotbarY = Math.min(framebufferHeight - hotbarSlotSize - 14.0f * scale, framebufferHeight - 86.0f * scale);
-        hotbarY = Math.max(framebufferHeight * 0.62f, hotbarY);
-        float statsY = hotbarY - 44.0f * scale;
-        float statWidth = Math.min(188.0f * scale, hotbarWidth * 0.31f);
-        float statIconSize = Math.max(6.0f, 11.0f * scale);
-        boolean showSelectedTooltip = !minimalHud && statsY - 42.0f * scale > 58.0f * scale && framebufferWidth >= 460;
-        boolean showTime = !minimalHud && statsY - 18.0f * scale > 46.0f * scale && framebufferWidth >= 420;
-        boolean showWorldInfo = !minimalHud && framebufferWidth >= 520 && framebufferHeight >= 420;
-        boolean showMode = !minimalHud && framebufferWidth >= 720;
-        boolean showComfort = !minimalHud && framebufferHeight >= 410 && framebufferWidth >= 430;
-        float selectedTooltipY = statsY - 42.0f * scale;
-        float feedbackBottomY = showSelectedTooltip ? selectedTooltipY - 14.0f * scale : statsY - 38.0f * scale;
-        feedbackBottomY = Math.max(86.0f * scale, feedbackBottomY);
-        float interactionBottomLimitY = showSelectedTooltip ? selectedTooltipY - 16.0f * scale : statsY - 42.0f * scale;
-        interactionBottomLimitY = Math.max(framebufferHeight * 0.5f + 64.0f * scale, interactionBottomLimitY);
-        return new HudLayout(
-                scale,
-                margin,
-                hotbarX,
-                hotbarY,
-                hotbarSlotSize,
-                gap,
-                hotbarWidth,
-                statsY,
-                statWidth,
-                statIconSize,
-                selectedTooltipY,
-                1.45f * scale,
-                statsY + 22.0f * scale,
-                statsY - 18.0f * scale,
-                feedbackBottomY,
-                interactionBottomLimitY,
-                showSelectedTooltip,
-                showTime,
-                showWorldInfo,
-                showMode,
-                showComfort
         );
     }
 
@@ -5064,7 +5009,7 @@ public final class GameClient {
         uiRenderer.text("JOBS P/R/C/X " + formatJobCounter(jobs.chunkGenerate()) + " " + formatJobCounter(jobs.chunkLight()) + " " + formatJobCounter(jobs.chunkMesh()) + " " + formatJobCounter(jobs.saveWrite()) + " " + formatJobCounter(jobs.netEncode()), 22.0f, 144.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("BUD " + budgets.profile().toUpperCase(Locale.ROOT) + " F " + formatMilliseconds(frame.frameMilliseconds()) + "/" + formatMilliseconds(budgets.frameTargetMilliseconds()) + " GEN " + formatPercent(budgets.chunkGenerationUsage()) + " LIGHT " + formatPercent(budgets.lightingUsage()) + " MESH " + formatPercent(budgets.meshingUsage()) + " GPU " + formatPercent(budgets.gpuUploadMillisecondsUsage()) + " UPB " + formatPercent(budgets.gpuUploadBytesUsage()) + " DRAW " + formatPercent(budgets.drawCallUsage()) + " TRI " + formatPercent(budgets.triangleUsage()) + " PART " + formatPercent(budgets.particleUsage()) + " ENT " + formatPercent(budgets.entityUsage()) + " NET " + formatPercent(budgets.networkBytesPerSecondUsage()), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SECTIONS " + chunks.nonEmptySections() + "/" + chunks.totalSections() + " EMPTY " + chunks.emptySections() + " BOUNDS " + chunks.chunksWithSectionBounds() + " DIRTY G/L/F/B " + chunks.dirtyGeometrySections() + "/" + chunks.dirtyLightSections() + "/" + chunks.dirtyFluidSections() + "/" + chunks.dirtyBlockEntitySections() + " TCACHE " + chunks.terrainCacheChunks() + "/" + formatMegabytes(chunks.terrainCacheBytes()), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SORT " + rendering.sortedTransparentMeshes() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SORT " + rendering.sortedTransparentMeshes() + " RST " + rendering.renderStateChanges() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " UPB " + formatMegabytes(rendering.gpuUploadBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " EVAO " + resources.liveEntityVertexArrays() + " EBUF " + resources.liveEntityBuffers() + " TEX " + resources.liveTextures() + " SHD " + resources.liveShaderPrograms() + " RLD " + resources.shaderReloadCount() + " F " + resources.failedShaderReloadCount() + " " + formatMilliseconds(resources.lastShaderReloadMilliseconds()) + " PVAO " + resources.liveParticleVertexArrays() + " PBUF " + resources.liveParticleBuffers() + " FB " + resources.liveFramebuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " " + rendering.atlasWidth() + "x" + rendering.atlasHeight() + " " + formatMegabytes(rendering.atlasBytes()) + " DEBUGVIEW " + settings.renderDebugView().commandName(), 22.0f, 264.0f, 1.65f, UiColor.MUTED);
@@ -5626,6 +5571,7 @@ public final class GameClient {
         lastAuthoritativeMovementSequence = 0L;
         pendingAuthoritativePlayerState.set(null);
         pendingProjectileImpacts.clear();
+        pendingGameplayEvents.clear();
         weatherLightning.reset();
         String host = connectionOptions.host() == null ? "127.0.0.1" : connectionOptions.host();
         try {
@@ -5638,7 +5584,8 @@ public final class GameClient {
                     playerStats,
                     chatLog,
                     pendingAuthoritativePlayerState::set,
-                    pendingProjectileImpacts::add
+                    pendingProjectileImpacts::add,
+                    pendingGameplayEvents::add
             );
             connection.connect();
             gameState = GameState.PLAYING;
@@ -5683,6 +5630,7 @@ public final class GameClient {
         feedbackLog.clear();
         pendingAuthoritativePlayerState.set(null);
         pendingProjectileImpacts.clear();
+        pendingGameplayEvents.clear();
         weatherLightning.reset();
         announcedRecipeUnlocks.clear();
         discoveredBiomeKeys.clear();

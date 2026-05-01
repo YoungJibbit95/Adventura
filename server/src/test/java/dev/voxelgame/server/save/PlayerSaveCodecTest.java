@@ -41,6 +41,8 @@ class PlayerSaveCodecTest {
                 List.of("voxel:herb_soup"),
                 List.of("voxel:meadow"),
                 List.of("found-camp"),
+                List.of("voxel:first_supply", "voxel:first_food"),
+                List.of("voxel:goal_first_camp"),
                 "overworld"
         );
 
@@ -52,6 +54,8 @@ class PlayerSaveCodecTest {
         assertEquals(new ItemStack(berries, 4), decoded.inventory().getFirst());
         assertEquals(17, decoded.survival().health());
         assertEquals(List.of("voxel:herb_soup"), decoded.discoveredRecipes());
+        assertEquals(List.of("voxel:first_supply", "voxel:first_food"), decoded.achievedMilestones());
+        assertEquals(List.of("voxel:goal_first_camp"), decoded.completedGoals());
         assertFalse(encoded.containsKey("survival.comfort"));
     }
 
@@ -120,6 +124,5 @@ class PlayerSaveCodecTest {
         properties.setProperty("save.version", "1");
 
         assertThrows(IllegalArgumentException.class, () -> PlayerSaveCodec.decode(properties, items));
-    }
     }
 }

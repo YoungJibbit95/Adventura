@@ -50,6 +50,15 @@ public final class BlockCollisionShapes {
         };
     }
 
+    public static BlockCollisionShape projectileShape(short blockId) {
+        return switch (blockId) {
+            case Blocks.CAMPFIRE, Blocks.CAMPFIRE_ACTIVE, Blocks.CAMPFIRE_BURNED_OUT,
+                 Blocks.COOKING_POT, Blocks.SMALL_STONE, Blocks.CLAY_DEPOSIT,
+                 Blocks.MUSHROOM_CLUSTER, Blocks.GLOW_MUSHROOM, Blocks.SPORE_BLOSSOM -> placementShape(blockId);
+            default -> collisionShape(blockId);
+        };
+    }
+
     public static boolean hasPartialShape(short blockId) {
         BlockCollisionShape shape = collisionShape(blockId);
         return !shape.empty() && shape != BlockCollisionShape.FULL;

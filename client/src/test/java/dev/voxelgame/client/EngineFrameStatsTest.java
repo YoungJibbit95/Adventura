@@ -81,9 +81,9 @@ class EngineFrameStatsTest {
                 8,
                 5,
                 8192L,
-                new RenderPassStats("terrain.opaque", 3, 1, 1, 3, 120, 1, 0),
-                new RenderPassStats("terrain.cutout", 2, 1, 1, 2, 80, 0, 1),
-                new RenderPassStats("terrain.translucent", 1, 1, 1, 1, 40, 1, 0),
+                new RenderPassStats("terrain.opaque", 3, 1, 1, 3, 120, 1, 0, 3),
+                new RenderPassStats("terrain.cutout", 2, 1, 1, 2, 80, 0, 1, 3),
+                new RenderPassStats("terrain.translucent", 1, 1, 1, 1, 40, 1, 0, 6),
                 12,
                 1024L,
                 1,
@@ -192,6 +192,7 @@ class EngineFrameStatsTest {
         assertEquals(1, stats.rendering().transparentDrawCalls());
         assertEquals(240, stats.rendering().triangles());
         assertEquals(1, stats.rendering().sortedTransparentMeshes());
+        assertEquals(12, stats.rendering().renderStateChanges());
         assertEquals(4096L, stats.rendering().gpuUploadBytes());
         assertEquals(64, stats.rendering().atlasWidth());
         assertEquals(16384L, stats.rendering().atlasBytes());

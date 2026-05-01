@@ -53,14 +53,19 @@ Adventura soll als Voxel-Engine:
 ### Status 2026-05-01
 
 - Gradle Wrapper ist auf `9.3.1` angehoben.
-- Standard-`test`-Tasks raeumen `cleanTest` vor der Ausfuehrung, nutzen einen eigenen Binary-Result-Pfad und laufen mit Plain Console.
+- Standard-`test`-Tasks raeumen `cleanTest` vor der Ausfuehrung, nutzen einen eigenen Binary-Result-Pfad pro Gradle-Invocation und laufen mit Plain Console.
 - Kleine Output-Anchor-Tests in `client`, `common`, `server` und `tools` halten Gradles Binary-Testoutput-Store stabil, auch wenn die fachlichen Tests selbst nichts auf Stdout/Stderr schreiben.
 - README-Badge und Task-Doku spiegeln den aktuellen Gradle-Stand.
 - Verifiziert mit `./gradlew test --no-daemon` und `./gradlew buildGame --no-daemon`.
 
 ### Offen
 
-- parallele Gradle-Laeufe im selben Workspace vermeiden oder technisch absichern.
+- ~~Test-Binary-Result-Pfad gegen parallele `cleanTest`-Laeufe isolieren.~~
+  Erledigt: 2026-05-01, `binaryResultsDirectory` nutzt eine Run-ID aus `-PadventuraTestRunId`, `-Dadventura.testRunId` oder automatisch generierter UUID.
+  Verifikation: Gradle-Konfiguration kompiliert bis `compileTestJava`; `ContentTagRegistryTest` erzeugte XML/HTML mit 8 Tests, 0 Fehlern.
+- ~~🔴 Parallele Gradle-Laeufe im selben Workspace sind noch nicht vollstaendig abgesichert: gleichzeitige `buildGame`/`:server:test --rerun-tasks` koennen weiterhin gemeinsame `compileJava`/`compileTestJava`-Outputs stoeren.~~
+  Erledigt: 2026-05-01, `WorkspaceMutationLockService` haelt eine `.gradle/adventura-workspace-mutation.lock`-Dateisperre fuer mutierende Compile/Test/Clean/Archive/StartScript-Tasks. Opt-out fuer Spezialfaelle: `-PadventuraWorkspaceLock=false`.
+  Verifikation: `:client:test` und `:server:test` liefen mit aktiviertem Lock und isolierter Test-Run-ID gruen.
 - Testreports bei Fehlern automatisch auffindbar machen.
 - bekannte flaky Tests mit Ursache, Workaround und Owner dokumentieren.
 - Smoke-Test-Checkliste pro Release aktualisieren.
@@ -828,3 +833,176 @@ Eine Aufgabe gilt erst als abgeschlossen, wenn:
 - P3.3 Occlusion-Taktiken.
 - P8.2 AI Tick Scheduler.
 - P12 Forschungsthemen nur mit Benchmark.
+
+---
+
+# P13 - Alpha Core Gaps und Ownership
+
+Dieser Block sammelt Punkte, die beim Projektueberblick als noch nicht klar genug verteilt aufgefallen sind. Sie sind bewusst engine-weit formuliert und muessen mit `docs/IMPLEMENTATION_PLAN.md` abgeglichen werden.
+
+## P13.1 Monolithen gezielt aufteilen
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Project Manager erstellt die Refactor-Map fuer `GameClient`, `ServerConnectionHandler`, `OverworldGenerator`, `WorldRenderer` und Content-Registries und gleicht Reihenfolge/Ownership mit `docs/IMPLEMENTATION_PLAN.md` ab.~~
+  Erledigt: 2026-05-01, Refactor-Map, Ownership, Reihenfolge und erste sichere Extraktionen sind unten dokumentiert.
+  Verifikation: Abgleich mit `docs/IMPLEMENTATION_PLAN.md`, Nachbar-TODOs und Dateigroessen der Kernklassen; `./gradlew :common:test --tests dev.voxelgame.common.registry.RegistryTest --tests dev.voxelgame.common.world.OverworldGeneratorTest --no-daemon --max-workers=1`.
+- 🔴 Offen: Die eigentlichen Extraktions-Slices bleiben Phase-1-Arbeit der jeweiligen Owner und muessen mit Tests/Smokes nachgewiesen werden.
+
+### Problem
+
+Einige zentrale Dateien tragen zu viele Verantwortungen und bremsen parallele Arbeit:
+
+- `GameClient` mischt Main Loop, Input, lokale Gameplay-Aktionen, Screens, HUD, Debug, Chat, Settings, Audio-Hooks und Session-Management.
+- `ServerConnectionHandler` mischt Protocol Routing, Auth/Login, Actions, Movement Validation, Interest, Inventory, Storage, Cooking, Saves und Stats.
+- `OverworldGenerator` enthaelt Sampling, Terrain Fill, Decoration, Structures, Spawn Safety und Metrics.
+- `WorldRenderer` ist schon besser strukturiert, braucht aber fuer Shadows, Sprite Rendering und Draw-Ranges weitere Aufteilung.
+- `CraftingRecipes` und Content-Registries sind stark codegetrieben und werden bei mehr Items/Stations unhandlich.
+
+### Aufgaben
+
+- ~~Refactor-Map mit Zielpaketen schreiben:~~
+  - `client.session`
+  - `client.input`
+  - `client.screens`
+  - `client.hud`
+  - `client.commands`
+  - `server.protocol`
+  - `server.actions`
+  - `server.interest`
+  - `server.persistence`
+  - `common.content`
+  - `common.actions`
+  Erledigt: 2026-05-01, siehe Refactor-Map unten.
+  Verifikation: Doku-Abgleich mit `docs/IMPLEMENTATION_PLAN.md`, `docs/ARCHITECTURE.md`, den primaeren TODO-Listen und den realen Dateigroessen; fokussierter Common-Testlauf gruen.
+- Pro Refactor erst Contract-/Layout-/Codec-Test sichern, dann verschieben.
+- Keine grossen Feature-PRs direkt in Monolithen bauen, wenn ein kleiner Extraktionsschritt sinnvoll ist.
+- ~~Dateien ueber 1000 Zeilen mit Owner, Zielzustand und Aufteilungsreihenfolge markieren.~~
+  Erledigt: 2026-05-01, `GameClient`, `ServerConnectionHandler` und `OverworldGenerator` sind unten explizit markiert; `WorldRenderer` und Content-Registries sind wegen zentraler Architekturwirkung ebenfalls aufgenommen.
+  Verifikation: `wc -l` fuer die Kernklassen und Querverweis auf Rendering, Worldgen, Networking, UI/HUD und Gameplay TODOs.
+
+### Refactor-Map 2026-05-01
+
+| Block | Owner | Prioritaet | Hauptrisiko | Zielzustand | Erste sichere Extraktion |
+| --- | --- | --- | --- | --- | --- |
+| `GameClient` ca. 5759 Zeilen | Lead UI/UX fuer Screens/HUD, Physics und Engine Worker fuer Input/Targeting, Project Manager als Steward | 🔴 | Merge-Konflikte, UI-State und lokale Gameplay-Aktionen vermischen sich, serverkritische Entscheidungen koennen clientseitig nachwachsen | `client.session`, `client.input`, `client.screens`, `client.hud`, `client.commands`, `client.interaction` | `ScreenContext` plus `ClientInputState` als reine Snapshot-/State-Objekte; bestehende Methoden delegieren zuerst weiter. Danach `DebugCommandRegistry` und `HudPresenter` als getrennte Slices. |
+| `ServerConnectionHandler` ca. 2102 Zeilen | Main Networking Dev, Project Manager fuer Contract-Grenzen | 🔴 | Auth, Routing, Movement, Inventory, Stations, Saves und Interest koennen sich gegenseitig regressieren; Netty/Event-Loop darf nicht blockieren | `server.protocol`, `server.actions`, `server.movement`, `server.interest`, `server.persistence`, `server.stations` | `PacketDispatch`/`ConnectionCommandRouter` als duenne Dispatch-Schicht mit bestehenden Handler-Methoden als Delegates. Parallel Common-`ActionRequest`/`ActionValidationResult` Skeleton fuer P1 ohne Migration aller Aktionen. |
+| `OverworldGenerator` ca. 1003 Zeilen | Lead Game Design Engineer und Project Manager | 🟠 | Seed-Reproduzierbarkeit, Spawn Safety und Structure-Platzierung koennen bei Extraktion leise driften | `ClimateSampler`, `HeightmapSampler`, `BiomeResolver`, `TerrainFiller`, `FeaturePlanner`, `StructurePlanner`, `SpawnPlanner`, `GenerationMetricsCollector` | `ClimateSampler` + `BiomeResolver` als pure Services aus vorhandenen Methoden; vorher/nachher `OverworldGeneratorTest` und Smoke-Seeds gegen Height/Biome/Spawn laufen lassen. |
+| `WorldRenderer` ca. 711 Zeilen, aber zentraler GL-Knoten | Lead Engine Developer | 🟠 | GL-State-Leaks, GPU-Resource-Lifetime, Upload-Spikes und Draw-Range-Arbeit landen sonst wieder in einer Klasse | `RenderPassExecutor`, `RenderStateGuard`, `TerrainRenderer`, `TerrainUploadQueue`, `VisibilityCollector`, spaeter `WaterRenderer`, `SelectionRenderer` | P10.1a fortfuehren: pure `VisibilityCollector` und `RenderPassExecutor` zuerst, danach `TerrainUploadQueue`; GL-lastsensitive Slices mit `WorldRendererTest`/Render-Pass-Contracts absichern. |
+| Content-Registries und `CraftingRecipes` ca. 650 Zeilen | Lead Game Design Engineer, Main Networking Dev fuer Save/Protocol, Lead Engine Developer fuer Render-Materialien, Project Manager als Steward | 🔴 | Items, Blocks, Recipes, Loot, Render, Physics und Networking koennen in getrennten Java-Sonderfaellen auseinanderlaufen | `common.content`, `common.tags`, `common.recipes`, `common.actions`, klare Alias-/Migration-Reports | Codebasierte `ContentTagRegistry` V1 mit Item-/Block-/Entity-Tags und Coverage-Tests. JSON/Codegen erst nach stabilem API-Contract pruefen. |
+
+### Reihenfolge und Konfliktgrenzen
+
+1. 🔴 `ServerConnectionHandler` und `GameClient` duerfen parallel geschnitten werden, solange zuerst nur Routing-/State-/ViewModel-Contracts entstehen und bestehende Methoden delegiert bleiben.
+2. ~~🔴 `ContentTagRegistry` V1 blockiert groessere neue Item-, Physics-, Station- und Action-Arbeit.~~
+   Erledigt: V1 steht in `common.content` mit `ContentKey`, Item-/Block-/Entity-Tags, Alias-Aufloesung, Coverage-Report und Tests. Folgearbeit: ActionPipeline/Physics/Rendering schrittweise auf die Read-API umstellen.
+3. 🟠 `WorldRenderer` P10.1a muss vor Shadows, Draw-Ranges, Water- und Selection-Ausbau weiterlaufen.
+4. 🟠 `OverworldGenerator` P7.1 muss vor datengetriebenen Feature-/Structure-Tables mindestens Sampler/Resolver/Filler-Grenzen haben.
+5. Neue Featurearbeit in einer markierten Monolith-Datei braucht entweder einen kleinen vorgelagerten Extraktionsslice oder eine dokumentierte Begruendung, warum der Fix nicht warten kann.
+
+### DoD fuer Monolith-Extraktionen
+
+- Der erste Slice ist ein Contract, ViewModel, Router, Registry oder Service mit klarer Paketgrenze.
+- Bestehende Methoden delegieren im ersten Schritt weiter, wenn ein direkter Move zu riskant waere.
+- Mindestens ein fokussierter Test haelt Layout, Codec, Routing, Seed-Stabilitaet, Render-Pass-Reihenfolge oder Registry-Abdeckung fest.
+- Jede serverkritische Aktion bleibt serverautoritativ; Client-Slices duerfen nur Intent, Preview oder ViewModel liefern.
+- Jede GL-/Rendering-Extraktion benennt State-Lifetime, Resource-Ownership und passenden Smoke.
+- Die betroffene TODO-Liste nennt Owner, Prioritaet, Verifikation und Restunsicherheit.
+
+### Akzeptanz
+
+- Neue Features landen in klaren Modulen statt in `GameClient` oder `ServerConnectionHandler`.
+- Bestehende Tests bleiben gruen und Verhalten bleibt nachvollziehbar.
+- Parallele Agenten koennen ohne staendige Konflikte arbeiten.
+
+## P13.2 Gemeinsames Content- und Tag-System
+
+### Status 2026-05-01
+
+- ~~🟠 In Arbeit: Project Manager definiert die erste Ownership- und Contract-Schnittstelle, Lead Game Design Engineer behaelt die Feature-Ownership fuer Gameplay-Tags und Balancing.~~
+  Erledigt: 2026-05-01, Contract-Schnitt und Owner stehen unten.
+  Verifikation: Abgleich mit Gameplay, Physics, Rendering und Networking TODOs; `RegistryTest` und `OverworldGeneratorTest` gruen.
+- ~~🔴 In Arbeit: `ContentTagRegistry` V1 wird als Common-Contract mit `ContentKey`, fehlenden Tags und Tests fuer Aliase, unbekannte Keys und Tag-Coverage umgesetzt.~~
+  Erledigt: 2026-05-01, `common.content.ContentTagRegistry` leitet V1-Tags codebasiert aus `Items`, `Blocks`, Recipes und bekannten Entity-Typen ab.
+  Verifikation: `ContentTagRegistryTest` XML/HTML meldet 8 Tests, 0 Failures; kompletter Gradle-Task wurde danach durch parallele Workspace-Gradle-Laeufe gestoert, siehe P0.1.
+- ~~🔴 Offen: Implementierung von `ContentTagRegistry` V1 mit Tests fuer unbekannte Keys, Alias-Aufloesung und Tag-Abdeckung.~~
+  Erledigt: 2026-05-01, Coverage-Report, `entries(ContentKind)`, `keysWithTag(...)`, Unknown-Key-Verhalten und Alias-Tests sind vorhanden.
+  Verifikation: `common/build/test-results/test/TEST-dev.voxelgame.common.content.ContentTagRegistryTest.xml`.
+
+### Ziel
+
+Items, Blocks, Entities, Actions, Loot, Stations und Render-/Physics-Eigenschaften sollen nicht in vielen Java-Switches auseinanderlaufen.
+
+### Aufgaben
+
+- ~~`ContentTagRegistry` planen:~~
+  - `flammable`
+  - `fuel`
+  - `food`
+  - `ranged`
+  - `ammo`
+  - `comfort_source`
+  - `station`
+  - `storage`
+  - `cold`
+  - `hot`
+  - `floaty`
+  - `heavy`
+  - `transparent`
+  - `emissive`
+  Erledigt: 2026-05-01, Contract-Schnitt und Owner sind unten festgelegt.
+  Verifikation: Abgleich mit `GAMEPLAY_TODO_LIST.md` P9.2, `PHYSICS_TODO_LIST.md` roten Engine-Abhaengigkeiten, Rendering-Materialdaten und Networking-ActionPipeline; `ContentTagRegistryTest` XML gruen.
+- ~~Tags zuerst codebasiert einfuehren, spaeter JSON/Codegen pruefen.~~
+  Erledigt: 2026-05-01, V1 ist codebasiert; JSON/Codegen bleibt spaeteres Datenpipeline-Thema.
+  Verifikation: Default-Tags werden aus `Items`, `Blocks`, Recipes und Entity-Keys abgeleitet.
+- ~~Tests fuer unbekannte Keys, Alias-Aufloesung und Tag-Abdeckung.~~
+  Erledigt: 2026-05-01.
+  Verifikation: `ContentTagRegistryTest`.
+- Render, Physics, Gameplay und Networking nur ueber stabile Content-APIs koppeln.
+
+### ContentTagRegistry Contract V1 2026-05-01
+
+| Contract | Owner | Prioritaet | Erwartete API | Erste sichere Umsetzung |
+| --- | --- | --- | --- | --- |
+| Item-/Block-/Entity-Tags | Lead Game Design Engineer | 🔴 | `ContentTagRegistry`, `ContentTag`, `ContentKey`, `tagsFor(key)` und `hasTag(key, tag)` in `common.content` | Codebasierte Registry aus bestehenden `Items`, `Blocks` und Entity-Typen ableiten; keine JSON-Ladung im ersten Slice. |
+| Action-relevante Tags | Main Networking Dev mit Lead Game Design Engineer | 🔴 | Tags wie `food`, `fuel`, `ranged`, `ammo`, `station`, `storage` fuer `ActionPipeline`-Validierung | Nur lesende Nutzung in Common-Regeln vorbereiten; Server bleibt Autoritaet. |
+| Render-/Physics-Tags | Lead Engine Developer und Physics und Engine Worker | 🟠 | Tags wie `transparent`, `emissive`, `floaty`, `heavy`, `cold`, `hot` als stabile Queries | V1 darf bestehende Material-/Blockfelder spiegeln, aber keine Shader-Sonderfaelle einfuehren. |
+| Save-/Migration-Sicht | Main Networking Dev | 🟠 | Alias-/Unknown-Key-Report fuer Saves und Protocol-Diagnose | An bestehende `Registry.aliases()` anschliessen; Migration bleibt in P6.2/Persistence. |
+
+### Akzeptanz
+
+- Neue Items/Blocks brauchen weniger verstreute Speziallogik.
+- Tags sind server- und clientseitig identisch.
+- Content-Fehler fallen beim Start oder in Tests auf.
+
+## P13.3 Engine Ownership Matrix
+
+### Lead Engine Developer
+
+- Rendering Pipeline, Shader, Lighting, Shadows, Sprite Rendering, Render-Pass-Logik, Material-/Atlas-System, GPU-Ressourcen, Profiling.
+
+### Physics und Engine Worker
+
+- Player/Entity/Projectile/Fluid Physics, Collision Shapes, Replay-Tests, Debug-Overlays, ClientWorld/Engine-Oberflaechenarbeit und kleine Engine-Extraktionen.
+
+### Lead Game Design Engineer
+
+- Gameplay-Systeme, Item-/Block-/Entity-Tags, Core Loop, Station-Progression, Biome-Gameplay und Content-Anforderungen an Engine/Networking.
+
+### Lead UI/UX Frontend Developer
+
+- UI-/HUD-Screens, Component Library, ViewModels, Transaction Feedback, Launcher/Game UX und UI-Anforderungen an Engine Diagnostics.
+
+### Project Manager
+
+- Refactor-Planung, Architekturgrenzen, technische Schulden, Bug-Triage, Test-Gates, DoD, Dokumentationspflege, Konfliktarme PR-Schnitte.
+
+### Main Networking Dev
+
+- Protocol, Netty, Interest, Reconnect, Server Actions, Save Queue, Region Storage, BlockEntity Sync und Multiplayer-Sicherheit.
+
+### Akzeptanz
+
+- Jede neue Engine-Aufgabe nennt Owner und betroffene TODO-Liste.
+- Agenten arbeiten nach eigener Liste plus `docs/IMPLEMENTATION_PLAN.md`.
+- Cross-Owner-Aenderungen bekommen vorher kleine Interface- oder Contract-PRs.

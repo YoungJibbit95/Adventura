@@ -1,6 +1,8 @@
 package dev.voxelgame.common.net;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.gameplay.GameplayEvent;
+import dev.voxelgame.common.gameplay.GameplayEventBatch;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.world.ChunkPos;
@@ -80,6 +82,29 @@ class PacketCodecTest {
     }
 
     @Test
+    void rejectsOversizedLoginRejectedReason() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new GamePacket.LoginRejected("x".repeat(GamePacket.MAX_LOGIN_REJECTED_REASON_LENGTH + 1))
+        );
+    }
+
+    @Test
+    void rejectsUnknownPacketIds() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(9_999);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("Unknown packet id"));
+    }
+
+    @Test
     void roundTripsChunkDataDefensively() {
         short[] blocks = {1, 2, 3};
         byte[] sky = {15, 14, 13};
@@ -93,6 +118,25 @@ class PacketCodecTest {
         assertArrayEquals(new short[]{1, 2, 3}, decoded.blockIds());
         assertArrayEquals(new byte[]{15, 14, 13}, decoded.skyLight());
         assertArrayEquals(new byte[]{0, 1, 2}, decoded.blockLight());
+    }
+
+    @Test
+    void rejectsChunkArrayLengthBeyondRemainingPayload() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.CHUNK_DATA.id());
+        out.writeInt(0);
+        out.writeInt(0);
+        out.writeInt(-64);
+        out.writeInt(1);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("remaining payload"));
     }
 
     @Test
@@ -216,6 +260,22 @@ class PacketCodecTest {
     }
 
     @Test
+    void rejectsEntitySnapshotCountBeyondRemainingPayload() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.ENTITY_SNAPSHOT.id());
+        out.writeInt(1);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("remaining payload"));
+    }
+
+    @Test
     void projectileSnapshotTrafficStaysInsidePacketBudget() {
         List<EntitySnapshot> projectiles = new ArrayList<>();
         for (int i = 0; i < 128; i++) {
@@ -290,6 +350,47 @@ class PacketCodecTest {
         assertEquals(ProjectileHit.BlockFace.WEST, decoded.blockFace());
         assertTrue(decoded.stuck());
         assertEquals(1234L, decoded.serverTick());
+    }
+
+    @Test
+    void roundTripsGameplayEvents() {
+        UUID playerId = UUID.fromString("01234567-89ab-cdef-0fed-cba987654321");
+        GamePacket.GameplayEvents packet = new GamePacket.GameplayEvents(List.of(
+                new GameplayEvent.Damage(1L, 42L, 3, "voxel:berry_thorn"),
+                new GameplayEvent.Heal(2L, 42L, 2),
+                new GameplayEvent.StatCritical(3L, "hunger", 1),
+                new GameplayEvent.Pickup(4L, "voxel:moss_clump", 5),
+                new GameplayEvent.Craft(5L, "voxel:planks", true, "none"),
+                new GameplayEvent.CookComplete(6L, "voxel:cooked_berries", "voxel:cooked_berries", 1),
+                new GameplayEvent.ProjectileImpact(7L, -1_000_000L, "voxel:arrow_projectile", 1.25, 80.5, -3.75, GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY),
+                new GameplayEvent.Sleep(8L, playerId, true),
+                new GameplayEvent.WeatherThunder(9L, 2.5, 90.0, -8.5),
+                new GameplayEvent.JournalEntryDiscovered(10L, playerId, "journal:first_campfire"),
+                new GameplayEvent.RecipeUnlocked(11L, playerId, "voxel:stone_pickaxe"),
+                new GameplayEvent.StructureDiscovered(12L, playerId, "voxel:old_ruin")
+        ));
+
+        GamePacket.GameplayEvents decoded = (GamePacket.GameplayEvents) PacketCodec.decode(PacketCodec.encode(packet));
+
+        assertEquals(GameplayEventBatch.CURRENT_SCHEMA_VERSION, decoded.schemaVersion());
+        assertEquals(packet.events(), decoded.events());
+    }
+
+    @Test
+    void rejectsGameplayEventCountBeyondCodecLimitBeforeAllocation() throws Exception {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeInt(PacketType.GAMEPLAY_EVENTS.id());
+        out.writeInt(GameplayEventBatch.CURRENT_SCHEMA_VERSION);
+        out.writeInt(GameplayEventBatch.MAX_EVENTS + 1);
+        out.flush();
+
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> PacketCodec.decode(bytes.toByteArray())
+        );
+
+        assertTrue(exception.getMessage().contains("gameplay event count"));
     }
 
     @Test

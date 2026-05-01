@@ -1,5 +1,6 @@
 package dev.voxelgame.common.physics;
 
+import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.world.DimensionSettings;
 import org.junit.jupiter.api.Tag;
@@ -35,6 +36,49 @@ class ProjectilePhysicsTest {
         assertEquals(0, hit.blockFace().normalZ());
         assertTrue(hit.impactX() > 0.0);
         assertTrue(hit.terminal());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void sweptProjectileUsesPartialShapeImpactQuery() {
+        ProjectileState arrow = arrow(0.0, 64.5, 0.5, 30.0, 0.0, 0.0);
+
+        ProjectileHit hit = ProjectilePhysics.step(
+                arrow,
+                0.12,
+                noGravityConfig(0.18),
+                (fromX, fromY, fromZ, toX, toY, toZ, bounds) -> BlockCollisionShapes.collisionShape(Blocks.GARDEN_FENCE)
+                        .raycastProjectile(fromX, fromY, fromZ, toX, toY, toZ, bounds, 2, 64, 0),
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
+                List.of()
+        );
+
+        assertEquals(ProjectileHit.Type.BLOCK, hit.type());
+        assertEquals(2, hit.blockX());
+        assertEquals(ProjectileHit.BlockFace.WEST, hit.blockFace());
+        assertEquals(2.36, hit.impactX(), 0.0001);
+        assertTrue(hit.state().x() < hit.impactX());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void nearerBlockImpactWinsOverFartherEntityHit() {
+        ProjectileState arrow = arrow(0.0, 80.45, 0.5, 30.0, 0.0, 0.0);
+        EntitySnapshot sheep = new EntitySnapshot(42L, "voxel:cozy_sheep", null, 2.3, 80.0, 0.5, 0.0f, 0.0f, 10);
+
+        ProjectileHit hit = ProjectilePhysics.step(
+                arrow,
+                0.1,
+                noGravityConfig(10.0),
+                (fromX, fromY, fromZ, toX, toY, toZ, bounds) -> BlockCollisionShape.FULL
+                        .raycastProjectile(fromX, fromY, fromZ, toX, toY, toZ, bounds, 1, 80, 0),
+                (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
+                List.of(sheep)
+        );
+
+        assertEquals(ProjectileHit.Type.BLOCK, hit.type());
+        assertEquals(1, hit.blockX());
+        assertEquals(ProjectileHit.BlockFace.WEST, hit.blockFace());
     }
 
     @Test
@@ -197,5 +241,18 @@ class ProjectilePhysicsTest {
 
     private static ProjectileState arrow(double x, double y, double z, double vx, double vy, double vz) {
         return new ProjectileState(1L, null, "voxel:arrow_projectile", x, y, z, vx, vy, vz, 0);
+    }
+
+    private static ProjectilePhysicsConfig noGravityConfig(double maxStep) {
+        return new ProjectilePhysicsConfig(
+                "voxel:arrow_projectile",
+                ProjectileBounds.ARROW,
+                36.0,
+                0.0,
+                0.72,
+                160,
+                maxStep,
+                4
+        );
     }
 }
