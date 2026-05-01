@@ -2,7 +2,7 @@
 
 # Adventura
 
-## Adventura Website: https://adventuraproject.xyz
+## https://adventuraproject.xyz
 
 ### Cozy voxel survival-adventure prototype in Java, LWJGL and Netty
 
