@@ -2257,7 +2257,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     }
 
     private static int chunkPriority(ChunkPos pos, ChunkPos center) {
-        return ChunkStreamingRings.distanceSquared(center, pos);
+        long priority = ChunkStreamingRings.distanceSquared(center, pos);
+        return priority >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) priority;
     }
 
     private static void broadcastToLoggedIn(GamePacket packet) {

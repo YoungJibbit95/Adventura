@@ -58,6 +58,22 @@ fun archiveContainsClassFile(file: File): Boolean {
     }
 }
 
+val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
+val supportsNativeAccessFlag = Runtime.version().feature() >= 22
+val lwjglClientJvmArgs = buildList {
+    add("-Dorg.lwjgl.system.allocator=jemalloc")
+    if (isMacOs) {
+        add("-XstartOnFirstThread")
+    }
+    if (supportsNativeAccessFlag) {
+        add("--enable-native-access=ALL-UNNAMED")
+    }
+}
+
+fun JavaExec.configureLwjglClientJvm(vararg additionalJvmArgs: String) {
+    jvmArgs(lwjglClientJvmArgs + additionalJvmArgs)
+}
+
 tasks.register("buildGame") {
     group = "voxel"
     description = "Builds all game modules and runs tests."
@@ -141,7 +157,7 @@ tasks.register<JavaExec>("runClient") {
     dependsOn(":client:classes")
     classpath = project(":client").sourceSets.main.get().runtimeClasspath
     mainClass.set("dev.voxelgame.client.ClientMain")
-    jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
+    configureLwjglClientJvm()
 }
 
 tasks.register<JavaExec>("runSingleplayer") {
@@ -151,7 +167,7 @@ tasks.register<JavaExec>("runSingleplayer") {
     classpath = project(":client").sourceSets.main.get().runtimeClasspath
     mainClass.set("dev.voxelgame.client.ClientMain")
     args("--auto-singleplayer", "--preview-radius", "3", "--render-distance", "8")
-    jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
+    configureLwjglClientJvm()
 }
 
 tasks.register<JavaExec>("profileSingleplayerJfr") {
@@ -165,8 +181,7 @@ tasks.register<JavaExec>("profileSingleplayerJfr") {
     doFirst {
         recordingFile.get().asFile.parentFile.mkdirs()
     }
-    jvmArgs(
-        "-Dorg.lwjgl.system.allocator=jemalloc",
+    configureLwjglClientJvm(
         "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
         "-XX:FlightRecorderOptions=stackdepth=128"
     )
@@ -183,8 +198,7 @@ tasks.register<JavaExec>("profileJoinLocalJfr") {
     doFirst {
         recordingFile.get().asFile.parentFile.mkdirs()
     }
-    jvmArgs(
-        "-Dorg.lwjgl.system.allocator=jemalloc",
+    configureLwjglClientJvm(
         "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
         "-XX:FlightRecorderOptions=stackdepth=128"
     )
@@ -201,8 +215,7 @@ tasks.register<JavaExec>("profileLongExploreJfr") {
     doFirst {
         recordingFile.get().asFile.parentFile.mkdirs()
     }
-    jvmArgs(
-        "-Dorg.lwjgl.system.allocator=jemalloc",
+    configureLwjglClientJvm(
         "-XX:StartFlightRecording=filename=${recordingFile.get().asFile.absolutePath},settings=profile,dumponexit=true",
         "-XX:FlightRecorderOptions=stackdepth=128"
     )
@@ -242,7 +255,7 @@ tasks.register<JavaExec>("joinLocal") {
     classpath = project(":client").sourceSets.main.get().runtimeClasspath
     mainClass.set("dev.voxelgame.client.ClientMain")
     args("--auto-join", "--connect", "127.0.0.1", "--port", "25565", "--username", "Player", "--render-distance", "8")
-    jvmArgs("-Dorg.lwjgl.system.allocator=jemalloc")
+    configureLwjglClientJvm()
 }
 
 allprojects {

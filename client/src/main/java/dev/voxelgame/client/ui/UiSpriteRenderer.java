@@ -93,6 +93,11 @@ public final class UiSpriteRenderer implements AutoCloseable {
     }
 
     public void flush(int framebufferWidth, int framebufferHeight) {
+        // For backward compatibility, use window dimensions equal to framebuffer when only framebuffer size is provided
+        flush(framebufferWidth, framebufferHeight, framebufferWidth, framebufferHeight);
+    }
+
+    public void flush(int framebufferWidth, int framebufferHeight, int windowWidth, int windowHeight) {
         if (batches.isEmpty()) {
             return;
         }
@@ -103,7 +108,9 @@ public final class UiSpriteRenderer implements AutoCloseable {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         shader.bind();
-        shader.setMatrix4("uProjection", new Matrix4f().ortho2D(0.0f, framebufferWidth, framebufferHeight, 0.0f));
+        // Use window dimensions (logical size) for UI coordinate system, not framebuffer (physical pixels)
+        // This ensures UI is the same visual size on all displays (Retina and non-Retina)
+        shader.setMatrix4("uProjection", new Matrix4f().ortho2D(0.0f, windowWidth, windowHeight, 0.0f));
         shader.setInt("uTexture", 0);
         glBindVertexArray(vao);
         glActiveTexture(GL_TEXTURE0);

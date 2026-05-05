@@ -119,16 +119,20 @@ import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_FORWARD_COMPAT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_COCOA_RETINA_FRAMEBUFFER;
+import static org.lwjgl.glfw.GLFW.GLFW_TRUE;
 import static org.lwjgl.glfw.GLFW.glfwCreateWindow;
 import static org.lwjgl.glfw.GLFW.glfwDefaultWindowHints;
 import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
 import static org.lwjgl.glfw.GLFW.glfwGetCursorPos;
+import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwGetMouseButton;
 import static org.lwjgl.glfw.GLFW.glfwInit;
 import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
 import static org.lwjgl.glfw.GLFW.glfwPollEvents;
 import static org.lwjgl.glfw.GLFW.glfwSetFramebufferSizeCallback;
+import static org.lwjgl.glfw.GLFW.glfwSetWindowSizeCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetCharCallback;
 import static org.lwjgl.glfw.GLFW.glfwSetInputMode;
 import static org.lwjgl.glfw.GLFW.glfwSetScrollCallback;
@@ -213,6 +217,8 @@ public final class GameClient {
     private long window;
     private int framebufferWidth = 1280;
     private int framebufferHeight = 720;
+    private int windowWidth = 1280;
+    private int windowHeight = 720;
     private boolean previousLeftMouse;
     private boolean previousRightMouse;
     private boolean previousEscape;
@@ -340,12 +346,33 @@ public final class GameClient {
         glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
         glfwShowWindow(window);
         GL.createCapabilities();
+
+        // Query actual sizes once so Retina framebuffers start with correct UI and viewport dimensions.
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var fbWidthBuf = stack.mallocInt(1);
+            var fbHeightBuf = stack.mallocInt(1);
+            var winWidthBuf = stack.mallocInt(1);
+            var winHeightBuf = stack.mallocInt(1);
+
+            glfwGetFramebufferSize(window, fbWidthBuf, fbHeightBuf);
+            glfwGetWindowSize(window, winWidthBuf, winHeightBuf);
+
+            framebufferWidth = Math.max(1, fbWidthBuf.get(0));
+            framebufferHeight = Math.max(1, fbHeightBuf.get(0));
+            windowWidth = Math.max(1, winWidthBuf.get(0));
+            windowHeight = Math.max(1, winHeightBuf.get(0));
+        }
+
         glEnable(GL_DEPTH_TEST);
         glViewport(0, 0, framebufferWidth, framebufferHeight);
         glfwSetFramebufferSizeCallback(window, (handle, width, height) -> {
             framebufferWidth = Math.max(1, width);
             framebufferHeight = Math.max(1, height);
             glViewport(0, 0, framebufferWidth, framebufferHeight);
+        });
+        glfwSetWindowSizeCallback(window, (handle, width, height) -> {
+            windowWidth = Math.max(1, width);
+            windowHeight = Math.max(1, height);
         });
         glfwSetCharCallback(window, (handle, codepoint) -> appendChatCharacter(codepoint));
         glfwSetScrollCallback(window, (handle, xoffset, yoffset) -> {
@@ -618,9 +645,9 @@ public final class GameClient {
                 renderHud(mouse);
                 renderChatOverlay();
             }
-            backgroundSpriteRenderer.flush(framebufferWidth, framebufferHeight);
-            uiRenderer.flush(framebufferWidth, framebufferHeight);
-            spriteRenderer.flush(framebufferWidth, framebufferHeight);
+            backgroundSpriteRenderer.flush(framebufferWidth, framebufferHeight, windowWidth, windowHeight);
+            uiRenderer.flush(framebufferWidth, framebufferHeight, windowWidth, windowHeight);
+            spriteRenderer.flush(framebufferWidth, framebufferHeight, windowWidth, windowHeight);
             lastUiMilliseconds = (System.nanoTime() - uiStartNanos) / 1_000_000.0;
 
             glfwSwapBuffers(window);
@@ -5844,7 +5871,12 @@ public final class GameClient {
             DoubleBuffer x = stack.mallocDouble(1);
             DoubleBuffer y = stack.mallocDouble(1);
             glfwGetCursorPos(window, x, y);
-            return new MousePosition(x.get(0), y.get(0));
+
+            // Mouse callbacks report window coordinates; UI interaction uses framebuffer coordinates.
+            double scaleX = (double) framebufferWidth / Math.max(1, windowWidth);
+            double scaleY = (double) framebufferHeight / Math.max(1, windowHeight);
+
+            return new MousePosition(x.get(0) * scaleX, y.get(0) * scaleY);
         }
     }
 

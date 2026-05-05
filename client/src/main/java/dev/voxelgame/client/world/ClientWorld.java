@@ -753,7 +753,7 @@ public final class ClientWorld {
                 .stream()
                 .map(Chunk::pos)
                 .sorted(Comparator
-                        .comparingInt((ChunkPos pos) -> ChunkStreamingRings.distanceSquared(center, pos))
+                        .comparingLong((ChunkPos pos) -> ChunkStreamingRings.distanceSquared(center, pos))
                         .reversed()
                         .thenComparingInt(ChunkPos::x)
                         .thenComparingInt(ChunkPos::z))

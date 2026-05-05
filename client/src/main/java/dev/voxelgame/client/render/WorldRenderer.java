@@ -309,7 +309,7 @@ public final class WorldRenderer implements AutoCloseable {
                 (int) Math.floor(priorityPosition.z)
         );
         List<ClientWorld.LayeredMeshBuild> sortedBuilds = new ArrayList<>(pendingGpuUploads);
-        sortedBuilds.sort(Comparator.comparingInt(build -> ChunkStreamingRings.distanceSquared(cameraChunk, build.pos())));
+        sortedBuilds.sort(Comparator.comparingLong(build -> ChunkStreamingRings.distanceSquared(cameraChunk, build.pos())));
         pendingGpuUploads.clear();
         pendingGpuUploads.addAll(sortedBuilds);
     }
