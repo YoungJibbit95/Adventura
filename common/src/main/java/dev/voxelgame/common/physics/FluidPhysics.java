@@ -5,6 +5,7 @@ import java.util.Objects;
 public final class FluidPhysics {
     private static final FluidSample AIR = new FluidSample(false, 0.0, 0.0, 0.0, 1.0, 0.0);
     private static final FluidSample STILL_WATER = new FluidSample(true, 0.0, 0.0, 0.0, 0.72, 6.5);
+    private static final FluidSample STILL_LAVA = new FluidSample(true, 0.0, -0.025, 0.0, 0.34, 0.8);
 
     private FluidPhysics() {
     }
@@ -22,11 +23,23 @@ public final class FluidPhysics {
         return STILL_WATER;
     }
 
+    public static FluidSample stillLava() {
+        return STILL_LAVA;
+    }
+
     public static FluidSample water(double velocityX, double velocityY, double velocityZ) {
         return new FluidSample(true, velocityX, velocityY, velocityZ, 0.72, 6.5);
     }
 
     public static FluidSample water(double velocityX, double velocityY, double velocityZ, double drag, double buoyancy) {
+        return new FluidSample(true, velocityX, velocityY, velocityZ, drag, buoyancy);
+    }
+
+    public static FluidSample lava(double velocityX, double velocityY, double velocityZ) {
+        return new FluidSample(true, velocityX, velocityY, velocityZ, 0.34, 0.8);
+    }
+
+    public static FluidSample lava(double velocityX, double velocityY, double velocityZ, double drag, double buoyancy) {
         return new FluidSample(true, velocityX, velocityY, velocityZ, drag, buoyancy);
     }
 

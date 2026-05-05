@@ -101,7 +101,7 @@ public final class ClientNetworkStats {
     }
 
     private static GamePacket.ServerStatsSnapshot emptyServerStats() {
-        return new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0);
+        return GamePacket.ServerStatsSnapshot.empty();
     }
 
     public record Snapshot(

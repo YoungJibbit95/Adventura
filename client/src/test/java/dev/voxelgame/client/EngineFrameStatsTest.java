@@ -114,7 +114,33 @@ class EngineFrameStatsTest {
                 8,
                 9,
                 10,
-                new GamePacket.ServerStatsSnapshot(5, 2L, 11L, 7L, 3L, 1L, 0L, 0L, 20L, 2400L, 120L, 8.0)
+                new GamePacket.ServerStatsSnapshot(
+                        5,
+                        2L,
+                        11L,
+                        7L,
+                        3L,
+                        1L,
+                        0L,
+                        0L,
+                        20L,
+                        2400L,
+                        120L,
+                        8.0,
+                        4,
+                        1,
+                        9L,
+                        8L,
+                        1L,
+                        2L,
+                        2048L,
+                        6L,
+                        0.75,
+                        0.4,
+                        1024.0,
+                        1.25,
+                        0.05
+                )
         );
         RenderResourceTracker.Snapshot resourceStats = new RenderResourceTracker.Snapshot(
                 8,
@@ -179,6 +205,10 @@ class EngineFrameStatsTest {
         assertEquals(world.dirtyChunkCount(), stats.jobs().chunkMesh().pendingJobs());
         assertEquals(9L, stats.jobs().chunkGenerate().completedJobs());
         assertEquals(9L, stats.jobs().chunkLight().completedJobs());
+        assertEquals(4, stats.jobs().saveWrite().pendingJobs());
+        assertEquals(1, stats.jobs().saveWrite().runningJobs());
+        assertEquals(8L, stats.jobs().saveWrite().completedJobs());
+        assertEquals(3L, stats.jobs().saveWrite().canceledJobs());
         assertEquals(10L + networkStats.serverStats().sentPackets(), stats.jobs().netEncode().completedJobs());
         assertEquals(8, stats.chunks().renderDistanceChunks());
         assertEquals(9, stats.chunks().loadedChunks());
@@ -225,12 +255,13 @@ class EngineFrameStatsTest {
         assertEquals("Custom", stats.budgets().profile());
         assertEquals(1000.0 / 60.0, stats.budgets().frameTargetMilliseconds(), 0.001);
         assertEquals(16.6 / (1000.0 / 60.0), stats.budgets().frameUsage(), 0.001);
-        assertEquals(3.0, stats.budgets().meshingBudgetMilliseconds(), 0.001);
-        assertEquals(2.0, stats.budgets().gpuUploadBudgetMilliseconds(), 0.001);
+        assertEquals(10.0, stats.budgets().meshingBudgetMilliseconds(), 0.001);
+        assertEquals(8.0, stats.budgets().gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(4096.0 / 2_000_000.0, stats.budgets().gpuUploadBytesUsage(), 0.001);
         assertEquals(6.0 / 1_100.0, stats.budgets().drawCallUsage(), 0.001);
         assertEquals(240.0 / 800_000.0, stats.budgets().triangleUsage(), 0.001);
         assertEquals(0.25, stats.budgets().particleUsage(), 0.001);
+        assertEquals(1.25 / 16.0, stats.budgets().saveWriteUsage(), 0.001);
     }
 
     @Test

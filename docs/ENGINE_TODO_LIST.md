@@ -513,14 +513,21 @@ Wasser soll spielbar, renderbar und physikalisch konsistent sein.
 
 World-Saves sollen skalieren und nicht bei jeder kleinen Aenderung grosse Dateien schreiben.
 
+### Fortschritt 2026-05-02
+
+- `SaveQueue` fuehrt den Engine-Job-Slot `save.write` serverseitig als koaleszierende Hintergrund-Queue ein.
+- `RegionFileLayout` definiert 32x32-Regionen, negative Chunk-Zuordnung, stabile Region-Pfade und Save-Keys.
+- `docs/NETWORKING_AND_PERSITENCE_TODO_LIST.md` haelt Header-/Index-/Chunk-Record-Plan, Atomic-Write-Regel und Properties-V1-Migrationspfad fest.
+- Properties-V1 bleibt aktiver WorldSave-Writer, bis ein Region Reader/Writer mit Migrationstests vorhanden ist.
+
 ### Aufgaben
 
-- Region-Layout definieren, z. B. 32x32 Chunks pro Region.
+- ~~Region-Layout definieren, z. B. 32x32 Chunks pro Region.~~
 - Dirty Chunk Deltas getrennt von generiertem Basisterrain speichern.
 - Kompression evaluieren.
-- atomare Writes mit Temp-Datei und Rename.
+- ~~atomare Writes mit Temp-Datei und Rename.~~ bleibt fuer Properties-V1 aktiv; Region-Writer muss denselben `SaveFiles`-Contract nutzen.
 - Backup/Migration-Regeln pro Version beibehalten.
-- Save-Queue im Hintergrund mit Budget.
+- ~~Save-Queue im Hintergrund mit Budget.~~ V1 besitzt max pending writes, Coalescing, Flush und Metriken; Diagnostics-Anbindung bleibt offen.
 
 ### Akzeptanz
 
@@ -699,18 +706,19 @@ Nicht alle Diagnosen muessen ins kleine HUD.
 - ~~Particle Count.~~ Particle Budget Usage ist sichtbar.
 - 🔴 Entity Tickzeit braucht P8.1/P8.2: Entities brauchen einen Tick-Scheduler, der pro Entity-Klasse `started/finished/skipped` und `tickMilliseconds` misst. `EngineFrameStats.Entities` sollte danach `entityTickMilliseconds`, `averageEntityTickMilliseconds` und `entityBudgetUsage` bekommen; Server-Stats muessen dieselbe Zahl fuer Multiplayer liefern.
 - ~~Netzwerk bytes/s.~~ HUD-Budget nutzt aktuelle Packet-Rate mal durchschnittliche Packet-Groesse als sichtbare Schaetzung.
-- 🔴 Save Queue ms/s braucht P6.1: Die Save-Queue soll Writes als `save.write` Jobs messen, pro Sekunde `queuedWrites`, `writtenBytes`, `writeMilliseconds`, `averageWriteMilliseconds` und `failedWrites` melden und diese Werte an `EngineFrameStats.Budgets`/Diagnostics weiterreichen.
+- ~~🔴 Save Queue ms/s braucht P6.1: Die Save-Queue soll Writes als `save.write` Jobs messen, pro Sekunde `queuedWrites`, `writtenBytes`, `writeMilliseconds`, `averageWriteMilliseconds` und `failedWrites` melden und diese Werte an `EngineFrameStats.Budgets`/Diagnostics weiterreichen.~~
+  Erledigt: 2026-05-02 - `SaveQueueStats` misst Save-Write-Raten; `SERVER_STATS_SNAPSHOT` Protocol Version 25 liefert sie an den Client; `EngineFrameStats.Jobs.saveWrite` und `EngineFrameStats.Budgets.saveWriteUsage` zeigen Pending/Running/Completed/Failed und ms/s-Budget.
 
 ### Erreicht 2026-05-01
 
 - `EngineFrameStats.Budgets` berechnet Alpha-Budget-Ziele fuer Low/Medium/High bzw. Custom-Settings.
-- Das Debug-HUD zeigt eine `BUD`-Zeile fuer Frame, Chunkgen, Light, Mesh, GPU-ms, GPU-Bytes, Draw, Triangles, Particles, Entities und Network.
+- Das Debug-HUD zeigt eine `BUD`-Zeile fuer Frame, Chunkgen, Light, Mesh, GPU-ms, GPU-Bytes, Draw, Triangles, Particles, Entities, Save und Network.
 - Section-Dirty-Budgets sind direkt daneben in der `SECTIONS`-Zeile sichtbar.
 - Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.EngineFrameStatsTest --no-daemon --max-workers=1 --rerun-tasks`
 
 ### Akzeptanz
 
-- ~~Budgets sind im Debug-HUD oder Diagnostics Screen sichtbar.~~ Basiswerte sind im Debug-HUD sichtbar; Save-Queue und echte Entity-Tickzeit brauchen P6/P8.
+- ~~Budgets sind im Debug-HUD oder Diagnostics Screen sichtbar.~~ Basiswerte und Save-Queue-ms/s sind im Debug-HUD sichtbar; echte Entity-Tickzeit braucht P8.
 - ~~Presets veraendern Budgets nachvollziehbar.~~ Profilziele folgen Render-Distance/Preset und Mesh-/Upload-ms nutzen die aktiven Settings.
 
 ## P10.2 Benchmark Seeds

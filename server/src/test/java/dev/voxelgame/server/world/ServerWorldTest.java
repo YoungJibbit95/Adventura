@@ -7,6 +7,8 @@ import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.EnvironmentHazardRules;
+import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.PartialShapeImpactResolver;
@@ -165,6 +167,24 @@ class ServerWorldTest {
     }
 
     @Test
+    void lavaIsFluidAndHazardWithoutCountingAsWater() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(10, 64, 10, Blocks.LAVA);
+        double eyeY = 66.05;
+
+        PlayerWaterState waterState = world.playerWaterState(10.5, eyeY, 10.5, PlayerBounds.DEFAULT);
+        FluidPhysics.FluidSample sample = world.fluidSample(10.5, 64.5, 10.5);
+        EnvironmentHazardRules.Hazard hazard = world.environmentHazardAtPlayer(10.5, eyeY, 10.5, PlayerBounds.DEFAULT);
+
+        assertFalse(waterState.movementAffected());
+        assertTrue(sample.inFluid());
+        assertTrue(sample.drag() < FluidPhysics.stillWater().drag());
+        assertEquals("voxel:lava", hazard.key());
+        assertTrue(hazard.hot());
+        assertTrue(hazard.damagePerPulse() >= 4);
+    }
+
+    @Test
     void ambientEntityPlacementRequiresSupportAndRejectsSolidOrWaterOverlap() {
         ServerWorld world = new ServerWorld(123L);
         EntitySnapshot sheep = ambient(100L, "voxel:cozy_sheep", 20.5, 250.0, 20.5, EntitySnapshot.STATE_IDLE);
@@ -236,10 +256,12 @@ class ServerWorldTest {
         world.setBlock(60, 250, 60, Blocks.STONE);
         world.setBlock(61, 250, 60, Blocks.WATER);
         world.setBlock(62, 250, 60, Blocks.CAMPFIRE);
+        world.setBlock(63, 250, 60, Blocks.LAVA);
 
         assertTrue(world.collidesProjectile(60.5, 250.5, 60.5, ProjectileBounds.ARROW));
         assertFalse(world.collidesProjectile(61.5, 250.5, 60.5, ProjectileBounds.ARROW));
         assertTrue(world.collidesProjectile(62.5, 250.25, 60.5, ProjectileBounds.ARROW));
+        assertFalse(world.collidesProjectile(63.5, 250.5, 60.5, ProjectileBounds.ARROW));
         assertTrue(world.projectileInWater(61.5, 250.5, 60.5));
     }
 

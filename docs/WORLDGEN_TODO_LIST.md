@@ -186,35 +186,45 @@ Für Adventura: Region-basierte Feature-Seeds oder deterministic deferred placem
 
 ## P2.2 Feature Tables
 
+### Status 2026-05-02
+
+- ~~🟠 In Arbeit: Feature Tables fuer Surface Resources, Pflanzen, Rocks, Trees und erste Structure-Hooks als Common-Worldgen-Contract definieren.~~
+  Erledigt: `FeatureKind`, `FeatureEntry`, `FeatureTable` und `WorldFeatureTables` bilden validierbare Feature Tables; `BiomeResourceProfiles.detailResourceFor(...)` konsumiert die Tabellen zuerst und behaelt Profil-Fallback.
+  Verifikation: `./gradlew :common:clean :common:test --tests 'dev.voxelgame.common.world.gen.WorldFeatureTablesTest' --tests 'dev.voxelgame.common.world.gen.BiomeResourceProfilesTest' --tests 'dev.voxelgame.common.world.gen.OverworldGeneratorResourceTest' --no-daemon --max-workers=1 -PadventuraTestRunId=world_feature_tables_1` gruen.
+
 ### Offen
 
 Feature Tables definieren:
 
-- `meadow_surface_features`
-- `pine_forest_features`
-- `mushroom_grove_features`
-- `lakeside_features`
-- `old_ruins_features`
-- `highlands_features`
-- `frost_features`
+- ~~`meadow_surface_features`~~
+- ~~`pine_forest_features`~~
+- ~~`mushroom_grove_features`~~
+- ~~`lakeside_features`~~
+- ~~`old_ruins_features`~~
+- ~~`highlands_features`~~
+- ~~`frost_features`~~
+  Erledigt: Core-Tabellen plus `flower_fields`, `skyroot_forest`, `mire` und `sun_dunes` sind in `WorldFeatureTables` vorhanden.
+  Verifikation: `WorldFeatureTablesTest.requiredP22FeatureTablesExist` und `everyDefaultBiomeHasDetailFeatureTable`.
 
 ### Feature Entry
 
-- feature key
-- weight
-- min/max count
-- spacing
-- slope rules
-- allowed biomes
-- required surface
-- avoid water
-- avoid structure
-- rare chance
+- ~~feature key~~
+- ~~weight~~
+- ~~min/max count~~
+- ~~spacing~~
+- ~~slope rules~~
+- ~~allowed biomes~~
+- ~~required surface~~
+- ~~avoid water~~
+- ~~avoid structure~~
+- ~~rare chance~~
+  Erledigt: `FeatureEntry` enthaelt diese Felder plus `placementChance`, Block-/Structure-Ziel, Loot-/Encounter-/Journal-Key.
+  Verifikation: `WorldFeatureTablesTest.featureEntriesReferenceRegisteredBiomesBlocksAndStructures`.
 
 ### Akzeptanz
 
-- Feature-Verteilung ist datengetriebener.
-- neue Pflanzen/Rocks/Decorations brauchen weniger Generator-Sonderfälle.
+- ~~Feature-Verteilung ist datengetriebener.~~
+- ~~neue Pflanzen/Rocks/Decorations brauchen weniger Generator-Sonderfälle.~~
 
 ---
 
@@ -470,57 +480,88 @@ Owner: Lead Game Design Engineer und Project Manager, mit Engine-Schnittstellen 
 
 ## P7.2 Datengetriebene Feature- und Structure-Tables
 
+### Status 2026-05-02
+
+- ~~🟠 Teil erledigt: Feature Tables konkretisieren.~~
+  Erledigt: `WorldFeatureTables` deckt Resource Nodes, Plant Clusters, Rocks, Trees, Ruins, Campsites und Village Parts ab.
+  Verifikation: `WorldFeatureTablesTest.tablesCoverFeatureKindsNeededByWorldContentPipeline`.
+- ~~🟠 Teil erledigt: Structure Template Metadata/Builtin-Catalog.~~
+  Erledigt: `StructureCatalog` beschreibt Builtin-Templates mit Bounds, Palette, Rotations, LootTableKeys, EncounterTableKey und JournalKey.
+  Verifikation: `StructureCatalogTest` plus `WorldFeatureTablesTest` und `JournalProgressionTest`.
+
 ### Offen
 
-- Feature Tables konkretisieren:
-  - resource nodes.
-  - plant clusters.
-  - rocks/boulders.
-  - trees.
-  - ruins.
-  - campsites.
-  - village parts.
-- Structure Templates ausbauen:
-  - bounds.
-  - palette.
-  - markers.
-  - rotations.
-  - loot table key.
-  - encounter table key.
-  - journal/lore key.
-- Validierung:
-  - alle Block-/Item-Keys existieren.
-  - marker names eindeutig.
-  - template bounds passen.
-  - loot tables vorhanden.
+- ~~Feature Tables konkretisieren:~~
+  - ~~resource nodes.~~
+  - ~~plant clusters.~~
+  - ~~rocks/boulders.~~
+  - ~~trees.~~
+  - ~~ruins.~~
+  - ~~campsites.~~
+  - ~~village parts.~~
+  Erledigt: Feature-Kinds und Table-Entries stehen in `WorldFeatureTables`.
+  Verifikation: `WorldFeatureTablesTest.tablesCoverFeatureKindsNeededByWorldContentPipeline`.
+- ~~Structure Templates ausbauen:~~
+  - ~~bounds.~~
+  - ~~palette.~~
+  - ~~markers.~~
+  - ~~rotations.~~
+  - ~~loot table key.~~
+  - ~~encounter table key.~~
+  - ~~journal/lore key.~~
+  Erledigt: `StructureCatalogEntry` leitet Bounds aus Template-Blocks/Markers ab und validiert Marker-IDs sowie Loot-Marker gegen Catalog-LootTableKeys.
+  Verifikation: `StructureCatalogTest.entriesExposeBoundsPalettesRotationsMarkersLootAndJournalKeys`.
+- ~~Validierung:~~
+  - ~~alle Block-/Item-Keys existieren.~~
+  - ~~marker names eindeutig.~~
+  - ~~template bounds passen.~~
+  - ~~loot tables vorhanden.~~
+  Erledigt: Builtin-Strukturen, Biome-Profile und FeatureTable-Structure-Entries werden gegen Block-Registry, Encounter-Keys, JournalProgression und Catalog-LootTableKeys geprueft.
+  Verifikation: `StructureCatalogTest.templateBlocksAndEncounterKeysReferenceRegisteredContentOrTemplateMarkers`, `StructureCatalogTest.biomeProfilesOnlyReferenceCatalogStructures`, `StructureCatalogTest.featureTableStructureReferencesResolveAgainstCatalogAndJournal`.
 
 ### Akzeptanz
 
-- Content kann erweitert werden, ohne Generator-Sonderfälle zu stapeln.
-- Structures sind gameplay-relevant und nicht nur Dekoration.
-- QA kann Templates gezielt testen.
+- ~~Content kann erweitert werden, ohne Generator-Sonderfälle zu stapeln.~~
+- ~~Structures sind gameplay-relevant und nicht nur Dekoration.~~
+- ~~QA kann Templates gezielt testen.~~
+  Erledigt: Feature Tables und StructureCatalog trennen Content-Daten von Generator-Sonderfaellen und referenzieren Journal-/Loot-/Encounter-Contracts.
+  Verifikation: `./gradlew :common:clean :common:test --tests 'dev.voxelgame.common.world.structure.StructureCatalogTest' --tests 'dev.voxelgame.common.world.gen.WorldFeatureTablesTest' --tests 'dev.voxelgame.common.gameplay.JournalProgressionTest' --no-daemon --max-workers=1 -PadventuraTestRunId=structure_catalog_1` gruen.
 
 ## P7.3 Biome Progression Contracts
 
+### Status 2026-05-02
+
+- ~~🟠 Erledigt: Biome Progression Designkarten als Common-Contract.~~
+  Erledigt: `BiomeProgressionCatalog` beschreibt jedes Default-Biom mit Silhouette, Farb-/Lichtstimmung, Ressourcen, Tiere, Structures, Gefahren, Umwelt-StatusEffects, Milestones, Item-Progression, JournalEntries, Return-Reasons und Seed-Robustness-Contract.
+  Verifikation: `BiomeProgressionCatalogTest` plus `BiomeResourceProfilesTest`, `WorldFeatureTablesTest`, `StructureCatalogTest` und `JournalProgressionTest`.
+
 ### Offen
 
-- Pro Biom eine Design-Karte pflegen:
-  - Silhouette.
-  - Farb-/Lichtstimmung.
-  - Ressourcen.
-  - Tiere.
-  - Structures.
-  - Gefahren.
-  - Station-/Item-Progression.
-  - Journal-Einträge.
-- Biome-Ressourcen mit `GAMEPLAY_TODO_LIST.md` synchronisieren.
-- Seltene Biome dürfen besonders sein, aber Core-Progression darf nicht komplett vom Zufall abhängen.
+- ~~Pro Biom eine Design-Karte pflegen:~~
+  - ~~Silhouette.~~
+  - ~~Farb-/Lichtstimmung.~~
+  - ~~Ressourcen.~~
+  - ~~Tiere.~~
+  - ~~Structures.~~
+  - ~~Gefahren.~~
+  - ~~Station-/Item-Progression.~~
+  - ~~Journal-Einträge.~~
+  Erledigt: Alle `Biomes.createDefaultRegistry()`-Keys haben eine `BiomeProgressionProfile`-Karte.
+  Verifikation: `BiomeProgressionCatalogTest.everyDefaultBiomeHasProgressionDesignCard`.
+- ~~Biome-Ressourcen mit `GAMEPLAY_TODO_LIST.md` synchronisieren.~~
+  Erledigt: Progression-Cards referenzieren nur registrierte Blocks, Items, Entities, Structures, JournalEntries und AlphaMilestones und bleiben mit `BiomeResourceProfiles` synchron.
+  Verifikation: `BiomeProgressionCatalogTest.designCardsReferenceRegisteredContentAndProgressionContracts` und `BiomeProgressionCatalogTest.progressionCardsStayInSyncWithBiomeResourceProfiles`.
+- ~~Seltene Biome dürfen besonders sein, aber Core-Progression darf nicht komplett vom Zufall abhängen.~~
+  Erledigt: Core-Biome decken gemeinsam alle `AlphaMilestoneKey`s ab; seltene Biome bleiben optionale Expeditionen mit explizitem Seed-Robustness-Hinweis.
+  Verifikation: `BiomeProgressionCatalogTest.coreBiomeProgressionCoversAlphaMilestoneChainAndStaysSeedRobust`.
 
 ### Akzeptanz
 
-- Jedes Biom hat mindestens einen klaren Grund für Rückkehr.
-- Progression bleibt seed-robust.
-- Worldgen und Game Design widersprechen sich nicht.
+- ~~Jedes Biom hat mindestens einen klaren Grund für Rückkehr.~~
+- ~~Progression bleibt seed-robust.~~
+- ~~Worldgen und Game Design widersprechen sich nicht.~~
+  Erledigt: Return-Reasons, Core-Flags und Registry-Sync sind testgesichert.
+  Verifikation: `./gradlew :common:clean :common:test --tests 'dev.voxelgame.common.world.gen.BiomeProgressionCatalogTest' --tests 'dev.voxelgame.common.world.gen.BiomeResourceProfilesTest' --tests 'dev.voxelgame.common.world.gen.WorldFeatureTablesTest' --tests 'dev.voxelgame.common.world.structure.StructureCatalogTest' --tests 'dev.voxelgame.common.gameplay.JournalProgressionTest' --no-daemon --max-workers=1 -PadventuraTestRunId=biome_progression_catalog_1` gruen.
 
 ## P7.4 Worldgen Debug und QA Teleport
 

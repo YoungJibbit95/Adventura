@@ -50,6 +50,7 @@ public final class Items {
         block(registry, (short) 84, "voxel:workbench");
         block(registry, (short) 85, "voxel:forge");
         block(registry, (short) 100, "voxel:spore_blossom");
+        block(registry, (short) 102, "voxel:lava");
         registry.register((short) 20, "voxel:coal", new ItemType((short) 20, "voxel:coal", 64, ToolType.NONE, 0, null));
         registry.register((short) 21, "voxel:raw_iron", new ItemType((short) 21, "voxel:raw_iron", 64, ToolType.NONE, 0, null));
         registry.register((short) 22, "voxel:raw_copper", new ItemType((short) 22, "voxel:raw_copper", 64, ToolType.NONE, 0, null));

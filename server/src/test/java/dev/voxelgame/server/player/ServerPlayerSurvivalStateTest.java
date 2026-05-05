@@ -1,7 +1,11 @@
 package dev.voxelgame.server.player;
 
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.gameplay.status.StatusEffectSaveState;
+import dev.voxelgame.common.gameplay.status.StatusEffectType;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -88,6 +92,39 @@ class ServerPlayerSurvivalStateTest {
 
         assertTrue(cozy.hunger() > plain.hunger());
         assertEquals(25, cozy.comfort());
+    }
+
+    @Test
+    void statusEffectsApplyServerSidePulsesAndModifiers() {
+        ServerPlayerSurvivalState burning = new ServerPlayerSurvivalState();
+        ServerPlayerSurvivalState plain = new ServerPlayerSurvivalState();
+        ServerPlayerSurvivalState chilled = new ServerPlayerSurvivalState();
+
+        assertEquals(ServerPlayerSurvivalState.StatusEffectChange.APPLIED, burning.applyStatusEffect(StatusEffectType.BURNING, 2.5, 2));
+        burning.tick(1.0, false);
+        assertEquals(18, burning.health());
+
+        plain.tick(3.0, true, false, true);
+        chilled.applyStatusEffect(StatusEffectType.CHILLED, 10.0, 1);
+        chilled.tick(3.0, true, false, true);
+        plain.tick(1.0, false);
+        chilled.tick(1.0, false);
+        assertTrue(chilled.stamina() < plain.stamina(), "chilled should slow stamina recovery under status control");
+    }
+
+    @Test
+    void statusEffectsRoundTripThroughPersistentState() {
+        ServerPlayerSurvivalState state = new ServerPlayerSurvivalState();
+        state.applyStatusEffect(StatusEffectType.RESTED, 90.0, 1);
+
+        List<StatusEffectSaveState> saveStates = state.statusEffectSaveStates();
+        ServerPlayerSurvivalState restored = new ServerPlayerSurvivalState();
+        restored.loadPersistentStats(12, 11, 10, 9, saveStates);
+
+        assertEquals(12, restored.health());
+        assertEquals(11, restored.hunger());
+        assertTrue(restored.hasStatusEffect(StatusEffectType.RESTED));
+        assertEquals(saveStates, restored.statusEffectSaveStates());
     }
 
     @Test

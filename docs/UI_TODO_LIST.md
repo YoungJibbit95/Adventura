@@ -337,8 +337,9 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
   Erwarteter Contract: `LoadingScreen`/`LoadingScreenViewModel` mit Phasen `boot`, `loading_world`, `joining_server`, `streaming_spawn`, optionalem Progress, animiertem Visual, Cancel- und Error-State.
   Akzeptanz: Vor dem Hauptmenü und während Singleplayer-/Server-Entry erscheint eine nicht blockierende Ladeanimation; Fehler führen sauber zurück ins Menü.
   Erledigt: 2026-05-01 fuer den Contract, `LoadingScreenViewModel` deckt `BOOT`, `LOADING_WORLD`, `JOINING_SERVER`, `STREAMING_SPAWN` und `ERROR` inklusive Progress, Cancel und Error-State ab.
-  Offen: Sichtbares Rendering/Animation im `GameClient` und nicht-blockierende Phasenwechsel anbinden.
-  Verifikation: `LoadingScreenViewModelTest`.
+  Erledigt: 2026-05-02 fuer sichtbares Rendering, `GameClient` rendert Boot-, Singleplayer-Load-, Server-Join-, Streaming-Spawn- und Error-Frames ueber `LoadingScreenViewModel`; Progressbar und indeterminierte Animation haben Viewport-Layout-Tests.
+  Offen: Echte Hintergrund-Phasen fuer komplett nicht-blockierende Worldgen-/Connect-Schritte bleiben ein spaeterer Async-Loader-Slice.
+  Verifikation: `LoadingScreenViewModelTest`, `GameClientUiLayoutTest.loadingLayoutKeepsProgressBarAndTextInsideViewport`, `GameClientUiLayoutTest.loadingBarFillUsesProgressOrIndeterminateAnimation`.
 
 ## Pause Menu
 

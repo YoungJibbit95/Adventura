@@ -71,7 +71,8 @@ class JournalProgressionTest {
                         Structures.smallRuin(),
                         Structures.watchtower(),
                         Structures.mushroomCircle(),
-                        Structures.compactVillage()
+                        Structures.compactVillage(),
+                        Structures.desertWell()
                 )
                 .map(StructureTemplate::key)
                 .collect(Collectors.toSet());

@@ -6,6 +6,7 @@ import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.ChunkStreamingRings;
 import org.joml.Matrix4f;
 import org.joml.FrustumIntersection;
 import org.joml.Vector3f;
@@ -13,6 +14,7 @@ import org.joml.Vector3f;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -134,6 +136,7 @@ public final class WorldRenderer implements AutoCloseable {
                     previewRadiusChunks,
                     maxBuildMilliseconds
             ));
+            sortPendingGpuUploadsByPriority(priorityPosition);
         }
         int updated = 0;
         long uploadedBytes = 0L;
@@ -295,6 +298,20 @@ public final class WorldRenderer implements AutoCloseable {
             bytes += build.transparentMesh().estimatedBytes();
         }
         return bytes;
+    }
+
+    private void sortPendingGpuUploadsByPriority(Vector3f priorityPosition) {
+        if (priorityPosition == null || pendingGpuUploads.size() <= 1) {
+            return;
+        }
+        ChunkPos cameraChunk = ChunkPos.fromBlock(
+                (int) Math.floor(priorityPosition.x),
+                (int) Math.floor(priorityPosition.z)
+        );
+        List<ClientWorld.LayeredMeshBuild> sortedBuilds = new ArrayList<>(pendingGpuUploads);
+        sortedBuilds.sort(Comparator.comparingInt(build -> ChunkStreamingRings.distanceSquared(cameraChunk, build.pos())));
+        pendingGpuUploads.clear();
+        pendingGpuUploads.addAll(sortedBuilds);
     }
 
     private static Release removeMesh(Map<ChunkPos, GpuChunkMesh> target, ChunkPos pos) {

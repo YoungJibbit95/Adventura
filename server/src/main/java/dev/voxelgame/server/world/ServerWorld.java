@@ -110,6 +110,10 @@ public final class ServerWorld {
         return spawnPoint;
     }
 
+    public synchronized String biomeKeyAt(double x, double z) {
+        return generator.biomeAt(floor(x), floor(z)).key();
+    }
+
     public DimensionSettings dimension() {
         return world.dimension();
     }
@@ -388,10 +392,16 @@ public final class ServerWorld {
         int blockX = floor(x);
         int blockY = floor(y);
         int blockZ = floor(z);
-        if (blockIdAt(blockX, blockY, blockZ) != Blocks.WATER) {
+        short blockId = blockIdAt(blockX, blockY, blockZ);
+        if (blockId != Blocks.WATER && blockId != Blocks.LAVA) {
             return FluidPhysics.air();
         }
         double phase = (blockX * 0.37) + (blockZ * 0.61) + (blockY * 0.13) + (seed & 0xFFFFL) * 0.0003;
+        if (blockId == Blocks.LAVA) {
+            double velocityX = Math.sin(phase) * 0.045;
+            double velocityZ = Math.cos(phase * 0.73) * 0.045;
+            return FluidPhysics.lava(velocityX, -0.025, velocityZ);
+        }
         double velocityX = Math.sin(phase) * 0.16;
         double velocityZ = Math.cos(phase * 0.73) * 0.16;
         return FluidPhysics.water(velocityX, 0.025, velocityZ);

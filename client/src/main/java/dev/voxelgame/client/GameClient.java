@@ -42,6 +42,7 @@ import dev.voxelgame.client.ui.UiButton;
 import dev.voxelgame.client.ui.UiColor;
 import dev.voxelgame.client.ui.UiRenderer;
 import dev.voxelgame.client.ui.UiSpriteRenderer;
+import dev.voxelgame.client.viewmodel.LoadingScreenViewModel;
 import dev.voxelgame.client.world.ClientWorld;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
@@ -117,7 +118,7 @@ import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_CORE_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_FORWARD_COMPAT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
-import static org.lwjgl.glfw.GLFW.GLFW_TRUE;
+import static org.lwjgl.glfw.GLFW.GLFW_COCOA_RETINA_FRAMEBUFFER;
 import static org.lwjgl.glfw.GLFW.glfwCreateWindow;
 import static org.lwjgl.glfw.GLFW.glfwDefaultWindowHints;
 import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
@@ -197,6 +198,8 @@ public final class GameClient {
     private final WeatherLightningController weatherLightning = new WeatherLightningController();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
+    private LoadingScreenViewModel loadingScreen = LoadingScreenViewModel.boot();
+    private Runnable pendingLoadingAction;
     private ClientWorld world;
     private WorldRenderer worldRenderer;
     private ChunkBorderRenderer chunkBorderRenderer;
@@ -321,7 +324,14 @@ public final class GameClient {
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        window = glfwCreateWindow(1280, 720, "Adventura", 0, 0);
+        // macOS compatibility
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("mac")) {
+            glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+            glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);
+        }
+
+        window = glfwCreateWindow(1920, 1080, "Adventura", 0, 0);
         if (window == 0) {
             throw new IllegalStateException("Failed to create GLFW window");
         }
@@ -357,6 +367,12 @@ public final class GameClient {
             startMultiplayer();
         } else if (connectionOptions.autoSingleplayer()) {
             startSingleplayer();
+        } else {
+            beginLoading(LoadingScreenViewModel.boot(), () -> {
+                gameState = GameState.MAIN_MENU;
+                setCursorForState();
+                updateWindowTitle();
+            });
         }
     }
 
@@ -583,6 +599,8 @@ public final class GameClient {
             spriteRenderer.begin();
             if (gameState == GameState.MAIN_MENU) {
                 renderMainMenu(mouse, leftClicked);
+            } else if (gameState == GameState.LOADING) {
+                renderLoadingScreen(loadingScreen, now);
             } else if (gameState == GameState.PAUSED) {
                 renderPauseMenu(mouse, leftClicked);
             } else if (gameState == GameState.SETTINGS) {
@@ -596,14 +614,17 @@ public final class GameClient {
             } else if (gameState == GameState.DEAD) {
                 renderDeathScreen(mouse, leftClicked);
             }
-            renderHud(mouse);
-            renderChatOverlay();
+            if (gameState != GameState.LOADING) {
+                renderHud(mouse);
+                renderChatOverlay();
+            }
             backgroundSpriteRenderer.flush(framebufferWidth, framebufferHeight);
             uiRenderer.flush(framebufferWidth, framebufferHeight);
             spriteRenderer.flush(framebufferWidth, framebufferHeight);
             lastUiMilliseconds = (System.nanoTime() - uiStartNanos) / 1_000_000.0;
 
             glfwSwapBuffers(window);
+            runPendingLoadingAction();
             glfwPollEvents();
 
             previousLeftMouse = leftMouse;
@@ -981,14 +1002,14 @@ public final class GameClient {
     private void handleEntityInteract(EntitySnapshot target, double now) {
         GamePacket.EntityInteract.Action action = hotbar.selectedItemIsFood()
                 ? GamePacket.EntityInteract.Action.FEED
-                : GamePacket.EntityInteract.Action.OBSERVE;
+                : GamePacket.EntityInteract.Action.ATTACK;
         if (onlineMode) {
             connection.send(new GamePacket.EntityInteract(target.entityId(), hotbar.selectedIndex(), action));
-            setStatus(action == GamePacket.EntityInteract.Action.FEED ? "Feed requested" : "Entity observed");
+            setStatus(action == GamePacket.EntityInteract.Action.FEED ? "Feed requested" : "Entity attacked");
         } else {
             setStatus(action == GamePacket.EntityInteract.Action.FEED
                     ? cozyName(target.typeKey()) + " seems interested"
-                    : cozyName(target.typeKey()));
+                    : cozyName(target.typeKey()) + " attacked");
         }
         nextBlockActionTime = now + 0.22;
         heldItemAnimation.use(now);
@@ -2066,6 +2087,7 @@ public final class GameClient {
         if (window != 0) {
             String suffix = switch (gameState) {
                 case MAIN_MENU -> "Main Menu";
+                case LOADING -> loadingScreen.title();
                 case PAUSED -> "Paused";
                 case SETTINGS -> "Settings";
                 case CHAT -> "Chat";
@@ -2129,6 +2151,22 @@ public final class GameClient {
         drawButton(settingsButton, mouse, clicked, () -> openSettings(GameState.MAIN_MENU));
         drawButton(quit, mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
         uiRenderer.centeredText(statusMessage, framebufferWidth * 0.5f, y + 246.0f, 2.0f, UiColor.MUTED);
+    }
+
+    private void renderLoadingScreen(LoadingScreenViewModel viewModel, double nowSeconds) {
+        LoadingScreenViewModel screen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
+        LoadingScreenLayout layout = loadingScreenLayout(framebufferWidth, framebufferHeight, settings.uiScale());
+        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.025f, 0.04f, 0.045f, 1.0f));
+        uiRenderer.rect(0, layout.horizonY(), framebufferWidth, framebufferHeight - layout.horizonY(), new UiColor(0.05f, 0.10f, 0.08f, 0.92f));
+        uiRenderer.centeredText(screen.title().toUpperCase(Locale.ROOT), framebufferWidth * 0.5f, layout.titleY(), layout.titleScale(), UiColor.WHITE);
+        uiRenderer.centeredText(screen.detail(), framebufferWidth * 0.5f, layout.detailY(), layout.detailScale(), screen.error() ? UiColor.WARNING : UiColor.MUTED);
+        uiRenderer.rect(layout.barX(), layout.barY(), layout.barWidth(), layout.barHeight(), new UiColor(0.10f, 0.13f, 0.12f, 0.96f));
+        uiRenderer.rect(layout.barX() + layout.border(), layout.barY() + layout.border(), layout.barWidth() - layout.border() * 2.0f, layout.barHeight() - layout.border() * 2.0f, new UiColor(0.24f, 0.28f, 0.24f, 0.70f));
+        float fill = (float) loadingBarFill(screen, nowSeconds);
+        float fillWidth = Math.max(0.0f, (layout.barWidth() - layout.border() * 2.0f) * fill);
+        UiColor fillColor = screen.error() ? UiColor.WARNING : new UiColor(0.78f, 0.86f, 0.56f, 0.94f);
+        uiRenderer.rect(layout.barX() + layout.border(), layout.barY() + layout.border(), fillWidth, layout.barHeight() - layout.border() * 2.0f, fillColor);
+        uiRenderer.centeredText(Math.round(screen.progress() * 100.0) + "%", framebufferWidth * 0.5f, layout.percentY(), layout.percentScale(), UiColor.WHITE);
     }
 
     private void renderPauseMenu(MousePosition mouse, boolean clicked) {
@@ -2769,6 +2807,50 @@ public final class GameClient {
         hotbar.closeStorage();
         clearInventoryDrag();
         resumeGame();
+    }
+
+    static LoadingScreenLayout loadingScreenLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
+        float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
+        float layoutScale = Math.max(0.78f, Math.min(safeUiScale, Math.min(1.5f, framebufferHeight / 520.0f)));
+        float margin = Math.max(28.0f, 32.0f * layoutScale);
+        float contentWidth = Math.min(520.0f * layoutScale, Math.max(220.0f, framebufferWidth - margin * 2.0f));
+        float barWidth = Math.max(180.0f, Math.min(contentWidth, framebufferWidth - margin * 2.0f));
+        float barHeight = Math.max(16.0f, 18.0f * layoutScale);
+        float titleScale = fitTextScale("STREAMING SPAWN", 4.8f * layoutScale, 1.8f, framebufferWidth - margin * 2.0f);
+        float detailScale = Math.max(0.95f, Math.min(1.55f * layoutScale, 1.75f));
+        float percentScale = Math.max(0.85f, Math.min(1.25f * layoutScale, 1.45f));
+        float titleY = Math.max(72.0f, framebufferHeight * 0.28f);
+        float detailY = titleY + BitmapFont.textHeight(titleScale) + 20.0f * layoutScale;
+        float barY = detailY + BitmapFont.textHeight(detailScale) + 28.0f * layoutScale;
+        float bottomLimit = framebufferHeight - margin - barHeight - BitmapFont.textHeight(percentScale);
+        if (barY > bottomLimit) {
+            barY = Math.max(margin, bottomLimit);
+            detailY = Math.max(margin, barY - BitmapFont.textHeight(detailScale) - 24.0f * layoutScale);
+            titleY = Math.max(margin, detailY - BitmapFont.textHeight(titleScale) - 18.0f * layoutScale);
+        }
+        return new LoadingScreenLayout(
+                Math.max(framebufferHeight * 0.58f, barY + barHeight + 34.0f * layoutScale),
+                framebufferWidth * 0.5f - barWidth * 0.5f,
+                barY,
+                barWidth,
+                barHeight,
+                Math.max(2.0f, 2.0f * layoutScale),
+                titleY,
+                titleScale,
+                detailY,
+                detailScale,
+                barY + barHeight + 12.0f * layoutScale,
+                percentScale
+        );
+    }
+
+    static double loadingBarFill(LoadingScreenViewModel viewModel, double nowSeconds) {
+        LoadingScreenViewModel screen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
+        if (!screen.indeterminate()) {
+            return screen.progress();
+        }
+        double pulse = (Math.sin(nowSeconds * 3.0) + 1.0) * 0.5;
+        return 0.18 + pulse * 0.64;
     }
 
     static StorageScreenLayout storageScreenLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
@@ -3910,6 +3992,25 @@ public final class GameClient {
         }
     }
 
+    record LoadingScreenLayout(
+            float horizonY,
+            float barX,
+            float barY,
+            float barWidth,
+            float barHeight,
+            float border,
+            float titleY,
+            float titleScale,
+            float detailY,
+            float detailScale,
+            float percentY,
+            float percentScale
+    ) {
+        float bottom() {
+            return percentY + BitmapFont.textHeight(percentScale);
+        }
+    }
+
     record StorageScreenLayout(
             float layoutScale,
             float panelX,
@@ -4999,7 +5100,7 @@ public final class GameClient {
                         .orElse("none");
             }
         }
-        uiRenderer.rect(12.0f, 12.0f, 970.0f, 402.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
+        //uiRenderer.rect(12.0f, 12.0f, 970.0f, 402.0f, new UiColor(0.02f, 0.03f, 0.035f, 0.58f));
         uiRenderer.text("FPS " + frame.fps() + " FRAME " + formatMilliseconds(frame.frameMilliseconds()) + " UPD " + formatMilliseconds(frame.updateMilliseconds()) + " RENDER " + formatMilliseconds(frame.renderMilliseconds()) + " UI " + formatMilliseconds(frame.uiMilliseconds()), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("PHASE IN " + formatMilliseconds(phases.inputMilliseconds()) + " NET " + formatMilliseconds(phases.networkMilliseconds()) + " PLY " + formatMilliseconds(phases.playerMilliseconds()) + " WORLD " + formatMilliseconds(phases.worldMilliseconds()) + " JOB " + formatMilliseconds(phases.chunkJobsMilliseconds()) + " GPU " + formatMilliseconds(phases.gpuUploadMilliseconds()) + " RPASS " + formatMilliseconds(phases.renderPassMilliseconds()), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z) + " CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome) + " H " + terrainHeight, 22.0f, 64.0f, 1.65f, UiColor.MUTED);
@@ -5007,7 +5108,7 @@ public final class GameClient {
         uiRenderer.text("LOADED " + chunks.loadedChunks() + " VIS " + chunks.visibleChunks() + " UNLD " + chunks.unloadedChunks() + "/" + formatCount(chunks.totalUnloadedChunks()) + " FREED " + chunks.releasedGpuMeshLayers() + " GPU MESH " + rendering.loadedGpuMeshes() + " GPU CHUNK " + rendering.loadedGpuChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("QUEUE " + chunks.queuedChunks() + " REP " + formatCount(chunks.replacedChunkBuilds()) + " CAN " + formatCount(chunks.canceledChunkBuilds()) + " WAIT " + formatMilliseconds(chunks.averageChunkBuildWaitMilliseconds()) + " GEN " + formatMilliseconds(chunks.chunkGenerationMilliseconds()) + " MESH " + formatMilliseconds(chunks.meshingMilliseconds()) + " LIGHT " + formatMilliseconds(chunks.lightingMilliseconds()) + " UP " + formatMilliseconds(chunks.gpuUploadMilliseconds()) + " B/s " + formatRate(chunks.chunksBuiltPerSecond()), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("JOBS P/R/C/X " + formatJobCounter(jobs.chunkGenerate()) + " " + formatJobCounter(jobs.chunkLight()) + " " + formatJobCounter(jobs.chunkMesh()) + " " + formatJobCounter(jobs.saveWrite()) + " " + formatJobCounter(jobs.netEncode()), 22.0f, 144.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("BUD " + budgets.profile().toUpperCase(Locale.ROOT) + " F " + formatMilliseconds(frame.frameMilliseconds()) + "/" + formatMilliseconds(budgets.frameTargetMilliseconds()) + " GEN " + formatPercent(budgets.chunkGenerationUsage()) + " LIGHT " + formatPercent(budgets.lightingUsage()) + " MESH " + formatPercent(budgets.meshingUsage()) + " GPU " + formatPercent(budgets.gpuUploadMillisecondsUsage()) + " UPB " + formatPercent(budgets.gpuUploadBytesUsage()) + " DRAW " + formatPercent(budgets.drawCallUsage()) + " TRI " + formatPercent(budgets.triangleUsage()) + " PART " + formatPercent(budgets.particleUsage()) + " ENT " + formatPercent(budgets.entityUsage()) + " NET " + formatPercent(budgets.networkBytesPerSecondUsage()), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("BUD " + budgets.profile().toUpperCase(Locale.ROOT) + " F " + formatMilliseconds(frame.frameMilliseconds()) + "/" + formatMilliseconds(budgets.frameTargetMilliseconds()) + " GEN " + formatPercent(budgets.chunkGenerationUsage()) + " LIGHT " + formatPercent(budgets.lightingUsage()) + " MESH " + formatPercent(budgets.meshingUsage()) + " GPU " + formatPercent(budgets.gpuUploadMillisecondsUsage()) + " UPB " + formatPercent(budgets.gpuUploadBytesUsage()) + " DRAW " + formatPercent(budgets.drawCallUsage()) + " TRI " + formatPercent(budgets.triangleUsage()) + " PART " + formatPercent(budgets.particleUsage()) + " ENT " + formatPercent(budgets.entityUsage()) + " SAVE " + formatPercent(budgets.saveWriteUsage()) + " NET " + formatPercent(budgets.networkBytesPerSecondUsage()), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SECTIONS " + chunks.nonEmptySections() + "/" + chunks.totalSections() + " EMPTY " + chunks.emptySections() + " BOUNDS " + chunks.chunksWithSectionBounds() + " DIRTY G/L/F/B " + chunks.dirtyGeometrySections() + "/" + chunks.dirtyLightSections() + "/" + chunks.dirtyFluidSections() + "/" + chunks.dirtyBlockEntitySections() + " TCACHE " + chunks.terrainCacheChunks() + "/" + formatMegabytes(chunks.terrainCacheBytes()), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SORT " + rendering.sortedTransparentMeshes() + " RST " + rendering.renderStateChanges() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " UPB " + formatMegabytes(rendering.gpuUploadBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
@@ -5015,7 +5116,7 @@ public final class GameClient {
         uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " " + rendering.atlasWidth() + "x" + rendering.atlasHeight() + " " + formatMegabytes(rendering.atlasBytes()) + " DEBUGVIEW " + settings.renderDebugView().commandName(), 22.0f, 264.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("PART " + particles.particleCount() + " SPAWN/s " + formatRate(particles.spawnRate()) + " BUD " + formatPercent(particles.budgetUsage()) + " Q " + formatPercent(settings.particleQuality()) + " EVICT " + particles.evictedParticles() + " PDC " + particles.drawCalls() + " PTRI " + particles.triangles() + " BORDERS " + rendering.debugChunkBorders() + " MBOUNDS " + rendering.debugMeshBounds() + " SBOUNDS " + rendering.debugSectionBounds() + " PBOUNDS " + particles.debugBounds() + " SHAPES " + lastCollisionShapeDebugBoxes + " PSWEEP " + lastProjectileSweepDebugBoxes + " MODE " + gameMode.name() + " GROUND " + onOff(camera.onGround()) + " LIGHT " + combinedLight + " S " + skyLight + " B " + blockLight, 22.0f, 284.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("NET " + onOff(network.online()) + " TX " + formatCount(network.sentPackets()) + " RX " + formatCount(network.receivedPackets()) + " TX/s " + formatRate(network.sentPacketsPerSecond()) + " RX/s " + formatRate(network.receivedPacketsPerSecond()) + " AVG " + formatCount(Math.round(network.averagePacketBytes())) + "B BAD " + formatCount(network.invalidPacketsDropped()) + " Q " + network.chunkStreamQueueLength() + " CH " + formatCount(network.chunkPackets()) + " BLK " + formatCount(network.blockUpdatePackets()) + " ENT " + formatCount(network.entitySnapshotPackets()) + " INV " + formatCount(network.inventoryPackets()), 22.0f, 304.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("SRVSTAT PKT " + formatCount(network.serverStatsPackets()) + " SUB " + serverStats.chunkSubscriptions() + " CH " + formatCount(serverStats.sentChunkPackets()) + " ES " + formatCount(serverStats.sentEntitySnapshots()) + "/" + formatCount(serverStats.sentEntitySnapshotPackets()) + " BLK " + formatCount(serverStats.sentBlockUpdates()) + " DROP " + formatCount(serverStats.discardedUpdatesOutsideInterest()) + " REJ " + formatCount(serverStats.rejectedChunkRequests()) + " FAIL " + formatCount(serverStats.failedChunkRequests()) + " AVG " + formatCount(serverStats.averagePacketBytes()) + "B PPS " + formatRate(serverStats.packetRatePerSecond()), 22.0f, 324.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("SRVSTAT PKT " + formatCount(network.serverStatsPackets()) + " SUB " + serverStats.chunkSubscriptions() + " CH " + formatCount(serverStats.sentChunkPackets()) + " ES " + formatCount(serverStats.sentEntitySnapshots()) + "/" + formatCount(serverStats.sentEntitySnapshotPackets()) + " BLK " + formatCount(serverStats.sentBlockUpdates()) + " DROP " + formatCount(serverStats.discardedUpdatesOutsideInterest()) + " REJ " + formatCount(serverStats.rejectedChunkRequests()) + " FAIL " + formatCount(serverStats.failedChunkRequests()) + " SAVE " + serverStats.savePendingWrites() + "/" + serverStats.saveRunningWrites() + "/" + formatCount(serverStats.saveCompletedWrites()) + " " + formatMilliseconds(serverStats.saveAverageWriteMilliseconds()) + " AVG " + formatCount(serverStats.averagePacketBytes()) + "B PPS " + formatRate(serverStats.packetRatePerSecond()), 22.0f, 324.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SEL " + clampText(selectedItem, 72), 22.0f, 344.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOOK " + clampText(lookingAt, 72), 22.0f, 364.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("PHYS " + physicsLoadingLabel(physicsLoading), 22.0f, 384.0f, 1.65f, physicsLoading != null && physicsLoading.blocked() ? UiColor.WARNING : UiColor.MUTED);
@@ -5526,7 +5627,12 @@ public final class GameClient {
     }
 
     private void startSingleplayer() {
+        beginLoading(LoadingScreenViewModel.loadingWorld(0.05), this::loadSingleplayerAsync);
+    }
+
+    private void loadSingleplayerAsync() {
         closeGameSession();
+        showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.10));
         onlineMode = false;
         worldStartTimeSeconds = currentTimeSeconds();
         world = new ClientWorld(connectionOptions.seed());
@@ -5536,30 +5642,61 @@ public final class GameClient {
         hotbar.resetForNewGame();
         resetSurvivalHudSignals();
         syncKnownRecipeUnlocks();
+
+        // Start async chunk generation
         ChunkStreamingRings rings = chunkStreamingRings();
-        world.generatePreview(rings.previewRadiusChunks());
-        setCameraToSpawn();
-        worldRenderer.rebuildDirty(
-                world,
-                settings.ambientOcclusionEnabled(),
-                settings.transparentWaterEnabled(),
-                Integer.MAX_VALUE,
-                camera.position(),
-                Double.POSITIVE_INFINITY,
-                Double.POSITIVE_INFINITY,
-                rings.renderRadiusChunks(),
-                rings.previewRadiusChunks(),
-                settings.greedyMeshingEnabled()
-        );
-        gameState = GameState.PLAYING;
-        setStatus("Singleplayer world loaded");
-        setCursorForState();
-        camera.resetMouseTracking();
-        updateWindowTitle();
+        int previewRadius = rings.previewRadiusChunks();
+        int renderRadius = rings.renderRadiusChunks();
+
+        // Generate spawn chunks asynchronously
+        new Thread(() -> {
+            try {
+                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.25));
+                world.generatePreview(previewRadius);
+                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.50));
+
+                // Build initial meshes
+                worldRenderer.rebuildDirty(
+                        world,
+                        settings.ambientOcclusionEnabled(),
+                        settings.transparentWaterEnabled(),
+                        settings.meshBuildBudgetChunks(),
+                        camera.position(),
+                        Double.POSITIVE_INFINITY,
+                        Double.POSITIVE_INFINITY,
+                        renderRadius,
+                        previewRadius,
+                        settings.greedyMeshingEnabled()
+                );
+                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.75));
+
+                // Set camera and finalize
+                setCameraToSpawn();
+                showLoadingFrame(LoadingScreenViewModel.loadingWorld(1.0));
+
+                // Switch to game on main thread
+                pendingLoadingAction = () -> {
+                    gameState = GameState.PLAYING;
+                    setStatus("Singleplayer world loaded");
+                    setCursorForState();
+                    camera.resetMouseTracking();
+                    updateWindowTitle();
+                };
+
+            } catch (Exception e) {
+                showLoadingFrame(LoadingScreenViewModel.error("Failed to load world: " + e.getMessage()));
+            }
+        }, "Singleplayer-World-Loader").start();
     }
 
     private void startMultiplayer() {
+        String host = connectionOptions.host() == null ? "127.0.0.1" : connectionOptions.host();
+        beginLoading(LoadingScreenViewModel.joiningServer(host + ":" + connectionOptions.port()), () -> loadMultiplayer(host));
+    }
+
+    private void loadMultiplayer(String host) {
         closeGameSession();
+        showLoadingFrame(LoadingScreenViewModel.joiningServer(host + ":" + connectionOptions.port()));
         onlineMode = true;
         worldStartTimeSeconds = currentTimeSeconds();
         world = new ClientWorld(connectionOptions.seed());
@@ -5573,7 +5710,6 @@ public final class GameClient {
         pendingProjectileImpacts.clear();
         pendingGameplayEvents.clear();
         weatherLightning.reset();
-        String host = connectionOptions.host() == null ? "127.0.0.1" : connectionOptions.host();
         try {
             connection = new GameClientConnection(
                     host,
@@ -5594,9 +5730,50 @@ public final class GameClient {
             camera.resetMouseTracking();
             updateWindowTitle();
         } catch (RuntimeException e) {
+            showLoadingFrame(LoadingScreenViewModel.error("Connection failed: " + host + ":" + connectionOptions.port()));
             closeGameSession();
+            gameState = GameState.MAIN_MENU;
             setStatus("Connection failed: " + host + ":" + connectionOptions.port());
+            setCursorForState();
+            updateWindowTitle();
         }
+    }
+
+    private void beginLoading(LoadingScreenViewModel viewModel, Runnable action) {
+        loadingScreen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
+        pendingLoadingAction = action;
+        gameState = GameState.LOADING;
+        setCursorForState();
+        updateWindowTitle();
+    }
+
+    private void runPendingLoadingAction() {
+        if (gameState != GameState.LOADING || pendingLoadingAction == null) {
+            return;
+        }
+        Runnable action = pendingLoadingAction;
+        pendingLoadingAction = null;
+        action.run();
+    }
+
+    private void showLoadingFrame(LoadingScreenViewModel viewModel) {
+        loadingScreen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
+        if (window == 0 || uiRenderer == null) {
+            return;
+        }
+        glClearColor(0.025f, 0.04f, 0.045f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        uiRenderer.begin();
+        renderLoadingScreen(loadingScreen, currentTimeSeconds());
+        uiRenderer.flush(framebufferWidth, framebufferHeight);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    private static int loadingChunkTarget(int radiusChunks) {
+        int radius = Math.max(0, radiusChunks);
+        int diameter = radius * 2 + 1;
+        return diameter * diameter;
     }
 
     private void resumeGame() {
@@ -5692,6 +5869,7 @@ public final class GameClient {
 
     private enum GameState {
         MAIN_MENU,
+        LOADING,
         PLAYING,
         PAUSED,
         SETTINGS,

@@ -54,6 +54,7 @@ public final class Blocks {
     public static final short FORGE = 48;
     public static final short GLOW_MUSHROOM = 49;
     public static final short SPORE_BLOSSOM = 50;
+    public static final short LAVA = 51;
 
     private Blocks() {
     }
@@ -111,6 +112,7 @@ public final class Blocks {
         register(registry, FORGE, "voxel:forge", 2.4f, ToolType.PICKAXE, 1, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:forge");
         register(registry, GLOW_MUSHROOM, "voxel:glow_mushroom", 0.0f, ToolType.KNIFE, false, false, false, 8, BlockRenderLayer.CUTOUT, "voxel:glow_mushroom_cap");
         register(registry, SPORE_BLOSSOM, "voxel:spore_blossom", 0.0f, ToolType.KNIFE, false, false, false, 5, BlockRenderLayer.CUTOUT, "voxel:spore_blossom");
+        register(registry, LAVA, "voxel:lava", 100.0f, ToolType.NONE, false, false, false, 15, BlockRenderLayer.TRANSLUCENT, null);
         aliases(registry);
         return registry;
     }

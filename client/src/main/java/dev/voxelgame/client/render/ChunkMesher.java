@@ -34,8 +34,8 @@ public final class ChunkMesher {
     };
     private static final int[] FULL_AO = {255, 255, 255, 255};
 
-    private final FloatMeshBuffer vertices = new FloatMeshBuffer(4096);
-    private final IntMeshBuffer indices = new IntMeshBuffer(2048);
+    private final FloatMeshBuffer vertices = new FloatMeshBuffer(16384);
+    private final IntMeshBuffer indices = new IntMeshBuffer(8192);
     private boolean greedyMeshingEnabled = true;
     private MeshBuildStats lastBuildStats = MeshBuildStats.empty();
 

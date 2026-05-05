@@ -25,9 +25,10 @@ class GameplayEventTest {
                 new GameplayEvent.ProjectileImpact(7L, 8L, "voxel:arrow_projectile", 1.0, 64.0, 1.0, GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY),
                 new GameplayEvent.Sleep(8L, PLAYER_ID, true),
                 new GameplayEvent.WeatherThunder(9L, 4.0, 90.0, -2.0),
-                new GameplayEvent.JournalEntryDiscovered(10L, PLAYER_ID, "voxel:first_ruin"),
-                new GameplayEvent.RecipeUnlocked(11L, PLAYER_ID, "voxel:hearty_stew"),
-                new GameplayEvent.StructureDiscovered(12L, PLAYER_ID, "voxel:old_ruins")
+                new GameplayEvent.StatusEffectChanged(10L, PLAYER_ID, "voxel:wet", "applied", 1),
+                new GameplayEvent.JournalEntryDiscovered(11L, PLAYER_ID, "voxel:first_ruin"),
+                new GameplayEvent.RecipeUnlocked(12L, PLAYER_ID, "voxel:hearty_stew"),
+                new GameplayEvent.StructureDiscovered(13L, PLAYER_ID, "voxel:old_ruins")
         );
 
         assertEquals(GameplayEventType.DAMAGE, events.get(0).type());
@@ -36,7 +37,9 @@ class GameplayEventTest {
         assertEquals("pickup:voxel:twig", events.get(3).debugKey());
         assertEquals(GameplayEventType.PROJECTILE_IMPACT, events.get(6).type());
         assertEquals("projectile_impact:voxel:arrow_projectile", events.get(6).debugKey());
-        assertEquals(GameplayEventType.STRUCTURE_DISCOVERED, events.get(11).type());
+        assertEquals(GameplayEventType.STATUS_EFFECT_CHANGED, events.get(9).type());
+        assertEquals("status_effect:applied:voxel:wet", events.get(9).debugKey());
+        assertEquals(GameplayEventType.STRUCTURE_DISCOVERED, events.get(12).type());
         GameplayEvent.ProjectileImpact serverProjectile = new GameplayEvent.ProjectileImpact(
                 13L,
                 -1_000_000L,
@@ -68,6 +71,8 @@ class GameplayEventTest {
         assertThrows(IllegalArgumentException.class, () -> new GameplayEvent.ProjectileImpact(1L, 0L, "voxel:arrow_projectile", 0.0, 0.0, 0.0, -1L));
         assertThrows(IllegalArgumentException.class, () -> new GameplayEvent.ProjectileImpact(1L, 2L, "voxel:arrow_projectile", Double.NaN, 0.0, 0.0, -2L));
         assertThrows(NullPointerException.class, () -> new GameplayEvent.Sleep(1L, null, true));
+        assertThrows(IllegalArgumentException.class, () -> new GameplayEvent.StatusEffectChanged(1L, PLAYER_ID, " ", "applied", 1));
+        assertThrows(IllegalArgumentException.class, () -> new GameplayEvent.StatusEffectChanged(1L, PLAYER_ID, "voxel:wet", "applied", 0));
         assertTrue(new GameplayEvent.Craft(1L, "voxel:stick", false, "").debugKey().startsWith("craft.fail"));
     }
 }

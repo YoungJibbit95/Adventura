@@ -189,7 +189,7 @@ public final class AssetAtlasReport {
                 Blocks.PINE_LEAVES,
                 Blocks.SKYROOT_PLANKS
         );
-        put(sheets, "blocks_tiles_sheet.png", Blocks.WATER);
+        put(sheets, "blocks_tiles_sheet.png", Blocks.WATER, Blocks.LAVA);
         put(sheets, "nature_food_sheet.png", Blocks.TORCH);
         put(sheets, "ores_materials_sheet.png",
                 Blocks.COAL_ORE,

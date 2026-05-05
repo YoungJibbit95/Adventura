@@ -54,6 +54,22 @@ class GameplayEventFeedbackTest {
         assertEquals("Air running out", describe(new GameplayEvent.StatCritical(6L, "breath", 2)).message());
     }
 
+    @Test
+    void mapsStatusEffectsToFeedbackKinds() {
+        UUID playerId = UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+        GameplayEventFeedback.Entry cozy = describe(new GameplayEvent.StatusEffectChanged(7L, playerId, "voxel:cozy", "applied", 1));
+        GameplayEventFeedback.Entry burning = describe(new GameplayEvent.StatusEffectChanged(8L, playerId, "voxel:burning", "applied", 2));
+        GameplayEventFeedback.Entry expired = describe(new GameplayEvent.StatusEffectChanged(9L, playerId, "voxel:wet", "expired", 1));
+
+        assertEquals("Status: cozy", cozy.message());
+        assertEquals(FeedbackLog.Kind.COMFORT, cozy.kind());
+        assertEquals("Status: burning", burning.message());
+        assertEquals(FeedbackLog.Kind.WARNING, burning.kind());
+        assertEquals("Status ended: wet", expired.message());
+        assertEquals(FeedbackLog.Kind.INFO, expired.kind());
+    }
+
     private static GameplayEventFeedback.Entry describe(GameplayEvent event) {
         return GameplayEventFeedback.describe(event, LABELER).orElseThrow();
     }

@@ -4,6 +4,7 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.gameplay.GameplayEvent;
+import dev.voxelgame.common.gameplay.status.StatusEffectSaveState;
 import dev.voxelgame.common.item.CraftingCategory;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingStationType;
@@ -22,6 +23,7 @@ import dev.voxelgame.server.auth.AuthResult;
 import dev.voxelgame.server.entity.ServerEntityTracker;
 import dev.voxelgame.server.save.PlayerSave;
 import dev.voxelgame.server.save.PlayerSaveStore;
+import dev.voxelgame.server.save.SaveQueue;
 import dev.voxelgame.server.save.SaveMetadata;
 import dev.voxelgame.server.world.ServerWorld;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -724,9 +726,8 @@ class ServerConnectionHandlerTest {
 
             releaseInitialLoad.countDown();
             assertTrue(loadedMovedChunk.await(3, TimeUnit.SECONDS));
-            channel.runPendingTasks();
 
-            List<GamePacket.ChunkData> chunks = readChunkDataPackets(channel);
+            List<GamePacket.ChunkData> chunks = readChunkDataPacketsUntilContains(channel, movedPos);
             assertFalse(chunks.stream().anyMatch(chunk -> chunk.pos().equals(initialPos)));
             assertTrue(chunks.stream().anyMatch(chunk -> chunk.pos().equals(movedPos)));
             assertEquals(1, handler(channel).interestStats().chunkSubscriptions());
@@ -752,6 +753,45 @@ class ServerConnectionHandlerTest {
             assertTrue(stats.packetRatePerSecond() > 0.0);
         } finally {
             channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void serverStatsSnapshotIncludesSaveQueueMetrics() throws Exception {
+        ServerWorld world = new ServerWorld(123L);
+        try (SaveQueue saveQueue = new SaveQueue("test-stats-save-queue", 4)) {
+            saveQueue.enqueue("world:test", () -> {
+                TimeUnit.MILLISECONDS.sleep(5);
+                return 42L;
+            }).get(1, TimeUnit.SECONDS);
+            EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                    world,
+                    (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                    new ServerEntityTracker(),
+                    TEST_STREAM_RADIUS_CHUNKS,
+                    null,
+                    ServerChunkStreamer.direct(),
+                    null,
+                    saveQueue
+            ));
+            try {
+                channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+                drainOutbound(channel);
+
+                ServerConnectionHandler.broadcastServerStats(world);
+                GamePacket.ServerStatsSnapshot stats = readLastServerStats(channel);
+
+                assertEquals(0, stats.savePendingWrites());
+                assertEquals(0, stats.saveRunningWrites());
+                assertEquals(1L, stats.saveQueuedWrites());
+                assertEquals(1L, stats.saveCompletedWrites());
+                assertEquals(42L, stats.saveWrittenBytes());
+                assertTrue(stats.saveAverageWriteMilliseconds() > 0.0);
+                assertTrue(stats.saveWrittenBytesPerSecond() > 0.0);
+                assertTrue(stats.saveWriteMillisecondsPerSecond() > 0.0);
+            } finally {
+                channel.finishAndReleaseAll();
+            }
         }
     }
 
@@ -1014,10 +1054,59 @@ class ServerConnectionHandlerTest {
         try {
             channel.writeInbound(new GamePacket.SleepRequest(8, 120, 9));
 
-            GamePacket.PlayerStatsSnapshot stats = readLastPlayerStats(channel);
+            StatsAndGameplayEvents response = readStatsAndGameplayEvents(channel);
 
             assertEquals(ServerWorld.MORNING_TICK, world.dayTimeTicks() % ServerWorld.DAY_LENGTH_TICKS);
-            assertEquals(4, stats.comfort());
+            assertEquals(4, response.stats().comfort());
+            assertTrue(hasStatusEffectEvent(response.events(), "voxel:rested", "applied"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void sleepRequestRefreshesExistingRestedStatusEvent(@TempDir Path playerSaveDirectory) throws Exception {
+        PlayerSaveStore.save(playerSaveDirectory, new PlayerSave(
+                SaveMetadata.CURRENT_SAVE_VERSION,
+                PLAYER_ID,
+                "RestedTester",
+                8.5,
+                120.0,
+                8.5,
+                0.0f,
+                0.0f,
+                List.of(),
+                0,
+                PlayerSave.SurvivalStats.defaults(),
+                PlayerSave.SpawnPoint.empty(),
+                "survival",
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new StatusEffectSaveState("voxel:rested", 90.0, 1, 0.0)),
+                "overworld"
+        ));
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 9, Blocks.SLEEPING_MAT);
+        world.setBlock(8, 123, 9, Blocks.SKYROOT_PLANKS);
+        world.setDayTimeTicks(ServerWorld.NIGHT_START_TICK + 500L);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker(),
+                TEST_STREAM_RADIUS_CHUNKS,
+                playerSaveDirectory
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+
+            channel.writeInbound(new GamePacket.SleepRequest(8, 120, 9));
+            StatsAndGameplayEvents response = readStatsAndGameplayEvents(channel);
+
+            assertTrue(hasStatusEffectEvent(response.events(), "voxel:rested", "refreshed"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1413,6 +1502,50 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void entityInteractFavoriteFeedPersistsFriendshipAndRejectsCooldownDuplicate(@TempDir Path playerSaveDirectory) throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        short berries = items.requireByKey("voxel:berries").id();
+        ServerWorld world = new ServerWorld(123L);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot target = reachableAmbientTarget();
+        tracker.addAmbient(target);
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                tracker,
+                TEST_STREAM_RADIUS_CHUNKS,
+                playerSaveDirectory
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(berries, 2));
+
+            channel.writeInbound(new GamePacket.EntityInteract(target.entityId(), 0, GamePacket.EntityInteract.Action.FEED));
+            EntityInteractResponse accepted = readEntityInteractResponse(channel);
+            assertEquals(1, count(accepted.inventory().slots(), items, "voxel:berries"));
+
+            clearEntityInteractCooldown(channel);
+            channel.writeInbound(new GamePacket.EntityInteract(target.entityId(), 0, GamePacket.EntityInteract.Action.FEED));
+            EntityInteractResponse rejected = readEntityInteractResponse(channel);
+            assertEquals(1, count(rejected.inventory().slots(), items, "voxel:berries"));
+        } finally {
+            channel.close();
+            channel.finishAndReleaseAll();
+        }
+
+        PlayerSave saved = PlayerSaveStore.load(playerSaveDirectory, PLAYER_ID).orElseThrow();
+        PlayerSave.CreatureFriendshipState friendship = saved.creatureFriendships().getFirst();
+        assertEquals("voxel:cozy_sheep", friendship.entityKey());
+        assertEquals(1, friendship.acceptedFeedsTotal());
+        assertEquals(1, friendship.acceptedFeedsToday());
+        assertEquals(0L, friendship.feedDay());
+        assertEquals(0L, friendship.lastFeedWorldTick());
+    }
+
+    @Test
     void entityInteractFeedRejectsNonFoodItem() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         ServerEntityTracker tracker = new ServerEntityTracker();
@@ -1586,9 +1719,12 @@ class ServerConnectionHandlerTest {
         ServerWorld world = new ServerWorld(123L);
         GameServer server = new GameServer(0, world, (username, authToken) -> AuthResult.accepted(PLAYER_ID));
         ServerEntityTracker tracker = serverEntityTracker(server);
-        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        EmbeddedChannel channel = loggedInChannel(world, tracker, PLAYER_ID);
+        EmbeddedChannel farChannel = loggedInChannel(world, tracker, SECOND_PLAYER_ID);
         try {
             drainOutbound(channel);
+            farChannel.writeInbound(new GamePacket.PlayerMove(120.5, 180.0, 8.5, 0.0f, 0.0f, false));
+            drainOutbound(farChannel);
             world.setBlock(2, 80, 0, Blocks.STONE);
             tracker.spawnArrowProjectile(PLAYER_ID, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
 
@@ -1605,9 +1741,13 @@ class ServerConnectionHandlerTest {
             assertEquals(impact.projectileId(), gameplayImpact.projectileId());
             assertEquals(impact.projectileTypeKey(), gameplayImpact.projectileTypeKey());
             assertEquals(GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY, gameplayImpact.targetEntityId());
+            assertFalse(drainHasProjectileImpactOrGameplayEvents(farChannel));
+            assertTrue(containsInterestLog(farChannel, "filter projectile_impact outside_event_interest"));
+            assertTrue(containsInterestLog(farChannel, "filter gameplay_event outside_event_interest"));
             assertEquals(0, tracker.projectileCount());
         } finally {
             channel.finishAndReleaseAll();
+            farChannel.finishAndReleaseAll();
             server.close();
         }
     }
@@ -1742,6 +1882,9 @@ class ServerConnectionHandlerTest {
                 List.of("voxel:herb_soup"),
                 List.of("voxel:meadow"),
                 List.of("found-camp"),
+                List.of(),
+                List.of(),
+                List.of(new StatusEffectSaveState("voxel:rested", 90.0, 1, 0.0)),
                 "overworld"
         ));
         EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
@@ -1781,6 +1924,40 @@ class ServerConnectionHandlerTest {
         assertEquals(13, saved.survival().health());
         assertEquals(List.of("voxel:herb_soup"), saved.discoveredRecipes());
         assertEquals(List.of("found-camp"), saved.journalEntries());
+        assertEquals(1, saved.statusEffects().size());
+        StatusEffectSaveState rested = saved.statusEffects().getFirst();
+        assertEquals("voxel:rested", rested.effectKey());
+        assertEquals(1, rested.intensity());
+        assertTrue(rested.remainingSeconds() > 80.0 && rested.remainingSeconds() <= 90.0);
+        assertTrue(rested.tickProgressSeconds() >= 0.0);
+    }
+
+    @Test
+    void disconnectCanWritePlayerSaveThroughSaveQueue(@TempDir Path playerSaveDirectory) throws Exception {
+        try (SaveQueue saveQueue = new SaveQueue("test-handler-save-queue", 4)) {
+            EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                    new ServerWorld(123L),
+                    (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                    new ServerEntityTracker(),
+                    TEST_STREAM_RADIUS_CHUNKS,
+                    playerSaveDirectory,
+                    ServerChunkStreamer.direct(),
+                    null,
+                    saveQueue
+            ));
+            try {
+                channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+                drainOutbound(channel);
+            } finally {
+                channel.close();
+                channel.finishAndReleaseAll();
+            }
+            saveQueue.flush();
+        }
+
+        PlayerSave saved = PlayerSaveStore.load(playerSaveDirectory, PLAYER_ID).orElseThrow();
+        assertEquals("Tester", saved.playerName());
+        assertEquals("overworld", saved.lastWorldKey());
     }
 
     @Test
@@ -2284,6 +2461,97 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void playerMoveAppliesWetStatusEventFromAuthoritativeWaterState() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 179, 8, Blocks.WATER);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = loggedInChannel(world, tracker);
+        PlayerWaterState bodyWater = new PlayerWaterState(false, true, false);
+        try {
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 8.5, 180.0, 8.5, 0.0f, 0.0f, false, bodyWater));
+
+            GamePacket.GameplayEvents events = readLastGameplayEvents(channel);
+            GameplayEvent.StatusEffectChanged status = events.events().stream()
+                    .filter(GameplayEvent.StatusEffectChanged.class::isInstance)
+                    .map(GameplayEvent.StatusEffectChanged.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(PLAYER_ID, status.playerId());
+            assertEquals("voxel:wet", status.effectKey());
+            assertEquals("applied", status.changeKey());
+            assertEquals(1, status.intensity());
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void loginAppliesBurningAndCozyStatusEventsFromAuthoritativeEnvironment() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 120, 8, Blocks.CAMPFIRE_ACTIVE);
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                world,
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                tracker,
+                TEST_STREAM_RADIUS_CHUNKS
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+
+            List<GameplayEvent> events = readGameplayEvents(channel);
+            assertTrue(hasStatusEffectEvent(events, "voxel:burning", "applied"));
+            assertTrue(hasStatusEffectEvent(events, "voxel:cozy", "applied"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void playerMoveEmitsExpiredStatusEffectEvent(@TempDir Path playerSaveDirectory) throws Exception {
+        PlayerSaveStore.save(playerSaveDirectory, new PlayerSave(
+                SaveMetadata.CURRENT_SAVE_VERSION,
+                PLAYER_ID,
+                "WetTester",
+                8.5,
+                120.0,
+                8.5,
+                0.0f,
+                0.0f,
+                List.of(),
+                0,
+                PlayerSave.SurvivalStats.defaults(),
+                PlayerSave.SpawnPoint.empty(),
+                "survival",
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new StatusEffectSaveState("voxel:wet", 0.05, 1, 0.0)),
+                "overworld"
+        ));
+        EmbeddedChannel channel = new EmbeddedChannel(new ServerConnectionHandler(
+                new ServerWorld(123L),
+                (username, authToken) -> AuthResult.accepted(PLAYER_ID),
+                new ServerEntityTracker(),
+                TEST_STREAM_RADIUS_CHUNKS,
+                playerSaveDirectory
+        ));
+        try {
+            channel.writeInbound(new GamePacket.LoginRequest("Tester", "dev-token"));
+            drainOutbound(channel);
+            ageLastSurvivalUpdate(channel, 1.0);
+
+            channel.writeInbound(new GamePacket.PlayerMove(1L, 8.5, 120.0, 8.5, 0.0f, 0.0f, false));
+
+            assertTrue(hasStatusEffectEvent(readGameplayEvents(channel), "voxel:wet", "expired"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void playerMoveAcceptsJumpStartAfterSupportedGroundMove() {
         ServerWorld world = new ServerWorld(123L);
         world.setBlock(8, 119, 8, Blocks.STONE);
@@ -2640,13 +2908,38 @@ class ServerConnectionHandlerTest {
 
     private static List<GamePacket.ChunkData> readChunkDataPackets(EmbeddedChannel channel) {
         List<GamePacket.ChunkData> chunks = new ArrayList<>();
+        drainChunkDataPackets(channel, chunks);
+        return chunks;
+    }
+
+    private static List<GamePacket.ChunkData> readChunkDataPacketsUntilContains(EmbeddedChannel channel, ChunkPos expected) {
+        List<GamePacket.ChunkData> chunks = new ArrayList<>();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        do {
+            channel.runPendingTasks();
+            drainChunkDataPackets(channel, chunks);
+            if (chunks.stream().anyMatch(chunk -> chunk.pos().equals(expected))) {
+                return chunks;
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(10);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        } while (System.nanoTime() < deadline);
+        channel.runPendingTasks();
+        drainChunkDataPackets(channel, chunks);
+        return chunks;
+    }
+
+    private static void drainChunkDataPackets(EmbeddedChannel channel, List<GamePacket.ChunkData> chunks) {
         Object outbound;
         while ((outbound = channel.readOutbound()) != null) {
             if (outbound instanceof GamePacket.ChunkData chunk) {
                 chunks.add(chunk);
             }
         }
-        return chunks;
     }
 
     private static EntityInteractResponse readEntityInteractResponse(EmbeddedChannel channel) {
@@ -2700,7 +2993,73 @@ class ServerConnectionHandlerTest {
         return new ProjectileImpactEvents(impact, events);
     }
 
+    private static boolean drainHasProjectileImpactOrGameplayEvents(EmbeddedChannel channel) {
+        boolean hasEvent = false;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.ProjectileImpact || outbound instanceof GamePacket.GameplayEvents) {
+                hasEvent = true;
+            }
+        }
+        return hasEvent;
+    }
+
     private record ProjectileImpactEvents(GamePacket.ProjectileImpact impact, GamePacket.GameplayEvents events) {
+    }
+
+    private static GamePacket.GameplayEvents readLastGameplayEvents(EmbeddedChannel channel) {
+        GamePacket.GameplayEvents events = null;
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events = gameplayEvents;
+            }
+        }
+        if (events == null) {
+            throw new AssertionError("Expected gameplay event batch");
+        }
+        return events;
+    }
+
+    private static List<GameplayEvent> readGameplayEvents(EmbeddedChannel channel) {
+        List<GameplayEvent> events = new ArrayList<>();
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events.addAll(gameplayEvents.events());
+            }
+        }
+        if (events.isEmpty()) {
+            throw new AssertionError("Expected gameplay event batch");
+        }
+        return events;
+    }
+
+    private static StatsAndGameplayEvents readStatsAndGameplayEvents(EmbeddedChannel channel) {
+        GamePacket.PlayerStatsSnapshot stats = null;
+        List<GameplayEvent> events = new ArrayList<>();
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.PlayerStatsSnapshot snapshot) {
+                stats = snapshot;
+            } else if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events.addAll(gameplayEvents.events());
+            }
+        }
+        if (stats == null) {
+            throw new AssertionError("Expected player stats snapshot");
+        }
+        return new StatsAndGameplayEvents(stats, List.copyOf(events));
+    }
+
+    private static boolean hasStatusEffectEvent(List<GameplayEvent> events, String effectKey, String changeKey) {
+        return events.stream()
+                .filter(GameplayEvent.StatusEffectChanged.class::isInstance)
+                .map(GameplayEvent.StatusEffectChanged.class::cast)
+                .anyMatch(status -> status.effectKey().equals(effectKey) && status.changeKey().equals(changeKey));
+    }
+
+    private record StatsAndGameplayEvents(GamePacket.PlayerStatsSnapshot stats, List<GameplayEvent> events) {
     }
 
     private static GamePacket.PlayerStatsSnapshot readLastPlayerStats(EmbeddedChannel channel) {
@@ -2871,6 +3230,15 @@ class ServerConnectionHandlerTest {
         );
     }
 
+    private static void ageLastSurvivalUpdate(EmbeddedChannel channel, double seconds) throws Exception {
+        Field lastSurvivalUpdateTimeField = ServerConnectionHandler.class.getDeclaredField("lastSurvivalUpdateTime");
+        lastSurvivalUpdateTimeField.setAccessible(true);
+        lastSurvivalUpdateTimeField.setDouble(
+                handler(channel),
+                System.nanoTime() / 1_000_000_000.0 - seconds
+        );
+    }
+
     private static void setGameMode(EmbeddedChannel channel, String gameMode) throws Exception {
         Field gameModeField = ServerConnectionHandler.class.getDeclaredField("gameMode");
         gameModeField.setAccessible(true);
@@ -2905,6 +3273,12 @@ class ServerConnectionHandlerTest {
         Field inventoryField = ServerConnectionHandler.class.getDeclaredField("inventory");
         inventoryField.setAccessible(true);
         return (Inventory) inventoryField.get(channel.pipeline().get(ServerConnectionHandler.class));
+    }
+
+    private static void clearEntityInteractCooldown(EmbeddedChannel channel) throws Exception {
+        Field cooldownField = ServerConnectionHandler.class.getDeclaredField("nextEntityInteractTime");
+        cooldownField.setAccessible(true);
+        cooldownField.setDouble(channel.pipeline().get(ServerConnectionHandler.class), 0.0);
     }
 
     private static ServerEntityTracker serverEntityTracker(GameServer server) throws Exception {

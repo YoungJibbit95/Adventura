@@ -37,6 +37,10 @@ class ContentTagRegistryTest {
         assertTrue(tags.hasTag(ContentKind.BLOCK, "voxel:campfire_active", ContentTag.LIGHT_SOURCE));
         assertTrue(tags.hasTag(ContentKind.BLOCK, "voxel:snow", ContentTag.COLD));
         assertTrue(tags.hasTag(ContentKind.BLOCK, "voxel:forge", ContentTag.HEAVY));
+        assertTrue(tags.hasTag(ContentKind.BLOCK, "voxel:lava", ContentTag.HOT));
+        assertTrue(tags.hasTag(ContentKind.BLOCK, "voxel:lava", ContentTag.TRANSPARENT));
+        assertTrue(tags.hasTag(ContentKind.ITEM, "voxel:lava", ContentTag.PLACEABLE));
+        assertTrue(tags.hasTag(ContentKind.ITEM, "voxel:lava", ContentTag.HOT));
         assertTrue(tags.hasTag(ContentKind.ENTITY, "voxel:firefly_swarm", ContentTag.NIGHT_VISIBLE));
         assertTrue(tags.hasTag(ContentKind.ENTITY, "voxel:firefly_swarm", ContentTag.FLOATY));
         assertTrue(tags.hasTag(ContentKind.ENTITY, "voxel:arrow_projectile", ContentTag.PROJECTILE));

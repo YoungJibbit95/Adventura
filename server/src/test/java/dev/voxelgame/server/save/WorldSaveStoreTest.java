@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +67,34 @@ class WorldSaveStoreTest {
         assertTrue(Files.exists(savePath));
         assertFalse(hasTempSaveFile(savePath.getParent()));
         assertEquals(4321L, WorldSaveStore.loadWorld(savePath, 0.0).seed());
+    }
+
+    @Test
+    void queuedWorldSaveSnapshotsBeforeBackgroundWrite() throws Exception {
+        ServerWorld source = new ServerWorld(55L);
+        source.setBlock(6, 80, 6, Blocks.DIRT);
+        Path savePath = tempDir.resolve("world.properties");
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+
+        try (SaveQueue queue = new SaveQueue("test-world-save-queue", 4)) {
+            queue.enqueue("blocker", () -> {
+                blockerStarted.countDown();
+                assertTrue(releaseBlocker.await(2, TimeUnit.SECONDS));
+                return 0L;
+            });
+            assertTrue(blockerStarted.await(1, TimeUnit.SECONDS));
+            var queued = WorldSaveStore.saveWorldQueued(queue, savePath, source, 10.0);
+            source.setBlock(6, 80, 6, Blocks.STONE);
+            releaseBlocker.countDown();
+            queue.flush();
+
+            SaveQueue.SaveResult result = queued.get(1, TimeUnit.SECONDS);
+            assertTrue(result.bytesWritten() > 0L);
+        }
+
+        ServerWorld loaded = WorldSaveStore.loadWorld(savePath, 20.0);
+        assertEquals(Blocks.DIRT, loaded.blockAt(6, 80, 6).orElseThrow().id());
     }
 
     @Test

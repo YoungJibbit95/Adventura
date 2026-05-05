@@ -3,6 +3,7 @@ package dev.voxelgame.server.entity;
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
 import dev.voxelgame.common.entity.DamageResult;
 import dev.voxelgame.common.entity.DamageSource;
+import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.item.ItemType;
@@ -34,6 +35,7 @@ import java.util.function.Predicate;
 public final class ServerEntityTracker {
     public static final double SLEEP_DANGER_RADIUS = 8.0;
     private static final double AMBIENT_DAMAGE_INVULNERABILITY_SECONDS = 0.28;
+    private static final double AMBIENT_TICK_SECONDS = 0.05;
     private static final double ITEM_MERGE_RADIUS_SQUARED = 0.42 * 0.42;
     private static final Registry<ItemType> ITEMS = Items.createDefaultRegistry();
 
@@ -203,6 +205,12 @@ public final class ServerEntityTracker {
 
     public int projectileCount() {
         return projectiles.size();
+    }
+
+    public List<ProjectileState> projectileStates() {
+        return projectiles.values().stream()
+                .sorted(Comparator.comparingLong(ProjectileState::projectileId))
+                .toList();
     }
 
     public List<ProjectileHit> tickProjectiles(
@@ -520,8 +528,14 @@ public final class ServerEntityTracker {
             FleeThreat fleeThreat = followTarget == null ? fleeThreatFor(current).orElse(null) : null;
             EntitySnapshot moved = moveAmbient(anchor, current, followTarget, fleeThreat, tick);
             EntityPhysicsProfile profile = EntityPhysicsProfile.forType(current.typeKey());
+            EntitySnapshot fluidCurrent = EntityPhysics.applyFluidForces(
+                    current,
+                    profile,
+                    fluidSampleFor(current, fluidQuery),
+                    AMBIENT_TICK_SECONDS
+            );
             List<EntitySnapshot> neighbors = separationNeighbors(current.entityId());
-            moved = EntityPhysics.applyImpulseMotion(current, moved, profile);
+            moved = EntityPhysics.applyImpulseMotion(fluidCurrent, moved, profile);
             moved = EntityPhysics.applySeparation(current, moved, neighbors);
 
             EntityPhysics.MoveResult moveResult = EntityPhysics.sweepWithSlide(
@@ -549,6 +563,13 @@ public final class ServerEntityTracker {
                 System.nanoTime() - startNanos
         );
         return updated;
+    }
+
+    private static FluidPhysics.FluidSample fluidSampleFor(EntitySnapshot snapshot, FluidPhysics.FluidQuery fluidQuery) {
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        double sampleY = EntityBounds.baseY(snapshot) + bounds.height() * 0.5;
+        FluidPhysics.FluidSample sample = fluidQuery.sample(snapshot.x(), sampleY, snapshot.z());
+        return sample == null ? FluidPhysics.air() : sample;
     }
 
     private boolean parkedOutsideActiveChunks(EntitySnapshot current) {

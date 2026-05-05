@@ -787,21 +787,36 @@ Dieser Block ergänzt die reine Feature-Liste um die Systeme, die Adventura als 
 - ~~🔴 In Arbeit: Status Effects als Common-Gameplay-Contract fuer Hazards, Biome, Rested/Cozy-Boni und spaetere HUD/Save-Anbindung definieren.~~
   Erledigt: `common.gameplay.status` definiert `StatusEffectSystem`, `StatusEffectType`, `StatusEffectDefinition`, `StatusEffectState`, `StatusEffectModifiers`, Tick-Pulses und Save-State fuer burning, chilled, wet, rested, cozy und poison.
   Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.status.StatusEffectSystemTest -PadventuraTestRunId=status_effect_common_2 --no-daemon --max-workers=1`.
+- ~~🟠 PlayerSave-Persistenz fuer StatusEffects anbinden.~~
+  Erledigt: 2026-05-02 - `PlayerSave` und `PlayerSaveCodec` schreiben/lesen `StatusEffectSaveState`; geladene StatusEffects bleiben ueber `ServerPlayerSurvivalState.statusEffectSaveStates()` im Disconnect-Snapshot erhalten.
+  Verifikation: `./gradlew :server:test --tests dev.voxelgame.server.save.PlayerSaveCodecTest -PadventuraTestRunId=status_effect_save_codec_2 --no-daemon --max-workers=1` und `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.loginLoadsPlayerSaveAndDisconnectWritesLatestSnapshot -PadventuraTestRunId=status_effect_server_snapshot_4 --no-daemon --max-workers=1`.
+- ~~🟠 Environment-StatusEffect-Regeln als Common-Contract und serverseitige Event-Smokes absichern.~~
+  Erledigt: 2026-05-02 - `StatusEffectEnvironmentRules` schneidet Water/Hot/Cold/Frost/Comfort als kleine Common-Regel; Server-Smokes pruefen Wet, Burning, Cozy, Rested und expired Events.
+  Verifikation: `./gradlew buildGame --no-daemon --max-workers=1`.
 
 ### Offen
 
-- Serverautoritative Anwendung anbinden:
-  - Hot/Hazard-Blocks -> burning.
-  - Cold/Frost-Biome -> chilled.
-  - Water/Weather -> wet.
-  - Sleep/Comfort -> rested/cozy.
-  - Poison spaeter fuer Adventure-Danger.
-- StatusEffects in PlayerSave/WorldSave persistieren.
-- `GameplayEvent`/HUD/Audio Feedback fuer applied/refreshed/expired definieren.
-- Balancing der Modifier gegen Hunger/Stamina/Health im echten Server-Tick pruefen.
+- ~~Serverautoritative Anwendung anbinden: Hot/Hazard-Blocks -> burning, Cold/Frost-Biome -> chilled, Water -> wet, Sleep/Comfort -> rested/cozy; Poison bleibt als definierter Adventure-Danger ohne aktive Alpha-Quelle.~~
+  Erledigt: 2026-05-02 - `ServerConnectionHandler` wendet StatusEffects aus autoritativer Welt-/Biome-/Comfort-/Sleep-Logik an; Hot-Hazards laufen ueber burning-Puls statt parallelem Direktschaden.
+  Verifikation: `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.playerMoveAppliesWetStatusEventFromAuthoritativeWaterState --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.loginLoadsPlayerSaveAndDisconnectWritesLatestSnapshot --no-daemon --max-workers=1`.
+- ~~StatusEffects fuer World-/Entity-State pruefen, falls spaetere Nicht-Spieler-Effekte persistieren muessen.~~
+  Erledigt: 2026-05-02 - Alpha-StatusEffects sind player-owned und bleiben in `PlayerSave`; World-/Entity-Persistenz wird erst bei konkreten Nicht-Spieler-Effekten als eigener Owner-Contract benoetigt.
+  Verifikation: `PlayerSaveCodecTest` und `ServerConnectionHandlerTest.loginLoadsPlayerSaveAndDisconnectWritesLatestSnapshot`.
+- ~~`GameplayEvent`/HUD/Audio Feedback fuer applied/refreshed/expired definieren.~~
+  Erledigt: 2026-05-02 - `GameplayEvent.StatusEffectChanged` ist im PacketCodec roundtrippbar; `GameplayEventFeedback` mapped cozy/rested als Comfort, wet als Info und negative Effekte als Warning. Status-spezifische Audio-Cues bleiben bewusst leer, bis der Audio-Owner konkrete Cues liefert.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.GameplayEventTest --tests dev.voxelgame.common.net.PacketCodecTest --no-daemon --max-workers=1` und `./gradlew :client:test --tests dev.voxelgame.client.GameplayEventFeedbackTest --no-daemon --max-workers=1`.
+- ~~Balancing der Modifier gegen Hunger/Stamina/Health im echten Server-Tick pruefen.~~
+  Erledigt: 2026-05-02 - `ServerPlayerSurvivalState` tickt Status-Pulse, kombiniert Hunger-/Stamina-/Health-Modifier mit Comfort und persistiert/restored aktive Effekte.
+  Verifikation: `./gradlew :server:test --tests dev.voxelgame.server.player.ServerPlayerSurvivalStateTest --no-daemon --max-workers=1`.
 
 ### Akzeptanz
 
-- Biome/Hazards fuehlen sich lebendig an, ohne clientseitige Autoritaet.
-- Cozy/Rested belohnt Basebuilding, ohne Pflicht-Grind zu werden.
-- Status Effects sind speicherbar, testbar und fuer HUD erklaerbar.
+- ~~Biome/Hazards fuehlen sich lebendig an, ohne clientseitige Autoritaet.~~
+  Erledigt: 2026-05-02 - Statusquellen werden aus ServerWorld/Hazard/Biome/Water/Comfort/Sleep abgeleitet.
+  Verifikation: ServerConnectionHandler-Smoke fuer autoritativen Water-State plus SurvivalState-Tests fuer burning/chilled.
+- ~~Cozy/Rested belohnt Basebuilding, ohne Pflicht-Grind zu werden.~~
+  Erledigt: 2026-05-02 - Cozy wird nur bei ausreichendem Comfort refreshed; Rested kommt ueber Sleep-Wake und nutzt bounded Common-Dauer/Modifier.
+  Verifikation: `ServerPlayerSurvivalStateTest.statusEffectsApplyServerSidePulsesAndModifiers`.
+- ~~Status Effects sind speicherbar, testbar und fuer HUD erklaerbar.~~
+  Erledigt: 2026-05-02 - SaveState, PacketCodec und Client-Feedback haben fokussierte Tests.
+  Verifikation: Common-/Client-/Server-Testbefehle aus P9.6.

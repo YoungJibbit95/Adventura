@@ -2,6 +2,7 @@ package dev.voxelgame.server;
 
 import dev.voxelgame.server.auth.WhitelistAuthProvider;
 import dev.voxelgame.server.net.GameServer;
+import dev.voxelgame.server.save.SaveQueue;
 import dev.voxelgame.server.save.WorldSaveStore;
 import dev.voxelgame.server.world.ServerWorld;
 
@@ -27,7 +28,8 @@ public final class GameServerMain {
         long autosaveIntervalTicks = autosaveIntervalTicks(args);
 
         ServerWorld world = loadWorld(seed, savePath);
-        GameServer server = new GameServer(port, world, new WhitelistAuthProvider(whitelist), playerSaveDirectory);
+        SaveQueue saveQueue = SaveQueue.createDefault();
+        GameServer server = new GameServer(port, world, new WhitelistAuthProvider(whitelist), playerSaveDirectory, saveQueue);
         server.start();
 
         TickLoop tickLoop = new TickLoop(tick -> {
@@ -43,14 +45,14 @@ public final class GameServerMain {
                 System.out.println("Server tick " + tick);
             }
             if (tick > 0 && autosaveIntervalTicks > 0 && tick % autosaveIntervalTicks == 0) {
-                saveWorldQuietly(savePath, world);
+                saveWorldQuietly(savePath, world, saveQueue);
             }
         });
         tickLoop.start();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             tickLoop.close();
-            saveWorldQuietly(savePath, world);
+            saveWorldQuietly(savePath, world, saveQueue);
             server.close();
         }, "shutdown"));
 
@@ -116,15 +118,23 @@ public final class GameServerMain {
         return (long) seconds * TickLoop.TPS;
     }
 
-    private static void saveWorldQuietly(Path savePath, ServerWorld world) {
+    private static void saveWorldQuietly(Path savePath, ServerWorld world, SaveQueue saveQueue) {
         if (savePath == null) {
             return;
         }
-        try {
-            double now = System.nanoTime() / 1_000_000_000.0;
-            WorldSaveStore.saveWorld(savePath, world, now);
-        } catch (IOException exception) {
-            System.err.println("Failed to save Adventura world: " + exception.getMessage());
+        double now = System.nanoTime() / 1_000_000_000.0;
+        WorldSaveStore.saveWorldQueued(saveQueue, savePath, world, now)
+                .exceptionally(exception -> {
+                    System.err.println("Failed to save Adventura world: " + saveFailureMessage(exception));
+                    return null;
+                });
+    }
+
+    private static String saveFailureMessage(Throwable exception) {
+        Throwable cause = exception;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
         }
+        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
     }
 }

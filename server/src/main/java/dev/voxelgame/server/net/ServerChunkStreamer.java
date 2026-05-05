@@ -45,7 +45,7 @@ final class ServerChunkStreamer implements AutoCloseable {
     }
 
     static ServerChunkStreamer createDefault() {
-        int workers = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 2));
+        int workers = Math.max(2, Runtime.getRuntime().availableProcessors() * 3 / 4);
         return async("adventura-chunk-streamer", workers, DEFAULT_MAX_IN_FLIGHT_CHUNKS);
     }
 

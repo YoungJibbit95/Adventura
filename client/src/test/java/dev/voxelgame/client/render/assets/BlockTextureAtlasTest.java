@@ -74,7 +74,7 @@ class BlockTextureAtlasTest {
         assertEquals(BlockTextureAtlas.UV_INSET_PIXELS, report.uvInsetPixels(), 0.0001f);
         assertEquals(BlockTextureAtlas.ATLAS_FILTER_MODE, report.filterMode());
         assertTrue(report.textureCount() > 0);
-        assertTrue(report.materialCount() > Blocks.FORGE);
+        assertTrue(report.materialCount() > Blocks.LAVA);
         assertEquals(BlockTextureAtlas.MAX_BLOCK_ID, report.materialCapacity());
         assertEquals(0, report.missingMaterialCount());
         assertTrue(report.estimatedBytes() > 0L);

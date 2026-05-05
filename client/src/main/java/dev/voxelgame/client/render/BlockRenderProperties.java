@@ -240,6 +240,7 @@ public record BlockRenderProperties(
         set(table, Blocks.CLAY_DEPOSIT, 0.50f, 0.58f, 0.62f);
         set(table, Blocks.GLOW_CRYSTAL_NODE, 0.34f, 0.78f, 0.92f, 1.0f, 0.92f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.CAMPFIRE_ACTIVE, 1.00f, 0.55f, 0.20f, 1.0f, 1.0f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
+        set(table, Blocks.LAVA, 0.96f, 0.24f, 0.04f, 0.72f, 1.0f, true, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.CAMPFIRE_BURNED_OUT, 0.24f, 0.22f, 0.20f);
         set(table, Blocks.SLEEPING_MAT, 0.55f, 0.30f, 0.28f);
         set(table, Blocks.COOKING_POT, 0.58f, 0.36f, 0.25f);

@@ -17,6 +17,9 @@ public final class EnvironmentHazardRules {
         if (blockId == Blocks.CAMPFIRE_ACTIVE) {
             return new Hazard("voxel:hot_block", 1, true, false);
         }
+        if (blockId == Blocks.LAVA) {
+            return new Hazard("voxel:lava", 4, true, false);
+        }
         if (blockId == Blocks.CACTUS) {
             return new Hazard("voxel:thorn_block", 1, false, false);
         }

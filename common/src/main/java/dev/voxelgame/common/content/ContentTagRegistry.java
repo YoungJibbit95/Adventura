@@ -384,7 +384,7 @@ public final class ContentTagRegistry {
         if (key.contains("snow") || key.contains("ice")) {
             tags.add(ContentTag.COLD);
         }
-        if (key.contains("campfire") || key.contains("forge")) {
+        if (key.contains("campfire") || key.contains("forge") || key.contains("lava")) {
             tags.add(ContentTag.HOT);
         }
         if (block.solid() && (block.hardness() >= 1.0f || key.contains("stone") || key.contains("ore"))) {

@@ -62,8 +62,8 @@ public final class ChunkBuildQueue {
         }
         long now = System.nanoTime();
         Comparator<Entry> priorityComparator = Comparator
-                .comparingInt((Entry entry) -> effectivePriority(entry, priorityPosition, renderDistanceChunks, previewRadiusChunks).sortOrder())
-                .thenComparingDouble((Entry entry) -> priorityScore(entry.pos(), priorityPosition, renderDistanceChunks, previewRadiusChunks))
+                .comparingInt((Entry entry) -> effectivePriority(entry, priorityPosition, renderDistanceChunks, previewRadiusChunks, now).sortOrder())
+                .thenComparingDouble((Entry entry) -> priorityScore(entry.pos(), priorityPosition, renderDistanceChunks, previewRadiusChunks, effectivePriority(entry, priorityPosition, renderDistanceChunks, previewRadiusChunks, now)))
                 .thenComparingLong(Entry::sequence);
         Optional<Entry> selected = entries.values()
                 .stream()
@@ -160,14 +160,20 @@ public final class ChunkBuildQueue {
         );
     }
 
-    private static double priorityScore(ChunkPos pos, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks) {
-        EngineJobPriority priority = distancePriority(pos, priorityPosition, renderDistanceChunks, previewRadiusChunks);
+    private static double priorityScore(ChunkPos pos, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks, EngineJobPriority priority) {
         return priority.sortOrder() * 1_000_000_000.0 + distanceSquaredToChunkCenter(pos, priorityPosition);
     }
 
-    private static EngineJobPriority effectivePriority(Entry entry, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks) {
+    private static EngineJobPriority effectivePriority(Entry entry, Vector3f priorityPosition, int renderDistanceChunks, int previewRadiusChunks, long now) {
         if (entry.urgent()) {
             return EngineJobPriority.PLAYER_ACTION;
+        }
+        double waitMilliseconds = Math.max(0.0, (now - entry.enqueuedNanos()) / 1_000_000.0);
+        if (waitMilliseconds >= 500.0) {
+            return EngineJobPriority.VISIBLE_CHUNK;
+        }
+        if (waitMilliseconds >= 200.0) {
+            return EngineJobPriority.PREVIEW;
         }
         return distancePriority(entry.pos(), priorityPosition, renderDistanceChunks, previewRadiusChunks);
     }

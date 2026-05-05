@@ -1,5 +1,6 @@
 package dev.voxelgame.server.save;
 
+import dev.voxelgame.common.gameplay.status.StatusEffectSaveState;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
@@ -43,6 +44,11 @@ class PlayerSaveCodecTest {
                 List.of("found-camp"),
                 List.of("voxel:first_supply", "voxel:first_food"),
                 List.of("voxel:goal_first_camp"),
+                List.of(
+                        new StatusEffectSaveState("voxel:rested", 120.0, 1, 0.0),
+                        new StatusEffectSaveState("voxel:chilled", 12.5, 2, 0.5)
+                ),
+                List.of(new PlayerSave.CreatureFriendshipState("voxel:cozy_sheep", 2, 1, 4L, 97_200L)),
                 "overworld"
         );
 
@@ -56,6 +62,10 @@ class PlayerSaveCodecTest {
         assertEquals(List.of("voxel:herb_soup"), decoded.discoveredRecipes());
         assertEquals(List.of("voxel:first_supply", "voxel:first_food"), decoded.achievedMilestones());
         assertEquals(List.of("voxel:goal_first_camp"), decoded.completedGoals());
+        assertEquals(save.statusEffects(), decoded.statusEffects());
+        assertEquals(save.creatureFriendships(), decoded.creatureFriendships());
+        assertEquals("voxel:chilled", encoded.getProperty("status.effect.0.effectKey"));
+        assertEquals("voxel:cozy_sheep", encoded.getProperty("creature.friendship.0.entity"));
         assertFalse(encoded.containsKey("survival.comfort"));
     }
 
@@ -109,6 +119,23 @@ class PlayerSaveCodecTest {
 
         assertEquals(new ItemStack(berries, 3), decoded.inventory().get(0));
         assertTrue(decoded.inventory().get(1).isEmpty());
+    }
+
+    @Test
+    void playerSaveDecodeRejectsUnknownStatusEffectKey() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        Properties properties = new Properties();
+        properties.setProperty("kind", "adventura-player");
+        properties.setProperty("save.version", "1");
+        properties.setProperty("player.id", "00000000-0000-0000-0000-000000000123");
+        properties.setProperty("inventory.count", "0");
+        properties.setProperty("status.effect.count", "1");
+        properties.setProperty("status.effect.0.effectKey", "mod:unknown_status");
+        properties.setProperty("status.effect.0.remainingSeconds", "4.0");
+        properties.setProperty("status.effect.0.intensity", "1");
+        properties.setProperty("status.effect.0.tickProgressSeconds", "0.0");
+
+        assertThrows(IllegalArgumentException.class, () -> PlayerSaveCodec.decode(properties, items));
     }
 
     private static boolean hasTempSaveFile(Path directory) throws Exception {

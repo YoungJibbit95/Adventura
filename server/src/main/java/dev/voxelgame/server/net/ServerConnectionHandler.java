@@ -7,9 +7,15 @@ import dev.voxelgame.common.entity.DamageResult;
 import dev.voxelgame.common.entity.DamageSource;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
+import dev.voxelgame.common.gameplay.CozyLifeProgression;
+import dev.voxelgame.common.gameplay.CreatureDesign;
+import dev.voxelgame.common.gameplay.CreatureFriendshipRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.gameplay.EntityDrops;
+import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.gameplay.status.StatusEffectEnvironmentRules;
+import dev.voxelgame.common.gameplay.status.StatusEffectType;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
 import dev.voxelgame.common.item.CraftingStationType;
@@ -36,6 +42,7 @@ import dev.voxelgame.server.entity.ServerEntityTracker;
 import dev.voxelgame.server.player.ServerPlayerSurvivalState;
 import dev.voxelgame.server.save.PlayerSave;
 import dev.voxelgame.server.save.PlayerSaveStore;
+import dev.voxelgame.server.save.SaveQueue;
 import dev.voxelgame.server.save.SaveMetadata;
 import dev.voxelgame.server.world.BlockEntityType;
 import dev.voxelgame.server.world.ServerWorld;
@@ -48,10 +55,12 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
@@ -62,13 +71,18 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class ServerConnectionHandler extends SimpleChannelInboundHandler<GamePacket> {
     private static final int STREAM_RADIUS_CHUNKS = 4;
-    private static final double ENTITY_INTERACT_RANGE = 6.0;
+    private static final double ENTITY_INTERACT_RANGE = 7.5;
     private static final double ENTITY_SNAPSHOT_RADIUS = 96.0;
+    private static final double EVENT_INTEREST_RADIUS = ENTITY_SNAPSHOT_RADIUS;
     private static final double INITIAL_MOVE_SYNC_RADIUS = 128.0;
     private static final double MOVE_RATE_WINDOW_SECONDS = 1.0;
     private static final int MAX_MOVES_PER_RATE_WINDOW = 30;
     private static final double INTENT_RATE_WINDOW_SECONDS = 1.0;
     private static final int INTEREST_DEBUG_LOG_LIMIT = 32;
+    private static final long FRIENDSHIP_FEED_COOLDOWN_TICKS = Math.max(
+            1L,
+            CreatureFriendshipRules.FEEDING_COOLDOWN_SECONDS * 20L
+    );
     private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
     private static final ChannelGroup CHANNELS = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
     private static final Set<ServerConnectionHandler> ACTIVE_HANDLERS = ConcurrentHashMap.newKeySet();
@@ -81,6 +95,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private final int streamRadiusChunks;
     private final Path playerSaveDirectory;
     private final ServerChunkStreamer chunkStreamer;
+    private final SaveQueue saveQueue;
     private final Registry<ItemType> items = Items.createDefaultRegistry();
     private final List<CraftingRecipe> recipes;
     private final Inventory inventory = new Inventory(36);
@@ -117,6 +132,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private List<String> journalEntries = List.of();
     private List<String> achievedMilestones = List.of();
     private List<String> completedGoals = List.of();
+    private final Map<String, PlayerSave.CreatureFriendshipState> creatureFriendships = new ConcurrentHashMap<>();
     private String lastWorldKey = "overworld";
     private double nextBlockActionTime;
     private double nextEntityInteractTime;
@@ -143,6 +159,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
     private boolean fallTouchedWater;
     private double lastSurvivalUpdateTime = Double.NaN;
     private long survivalTick;
+    private long gameplayEventSequence;
     private int lastSyncedComfort = -1;
     private int lastClientTransactionId;
 
@@ -221,7 +238,18 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             Path playerSaveDirectory,
             ServerChunkStreamer chunkStreamer
     ) {
-        this(world, authProvider, entityTracker, streamRadiusChunks, playerSaveDirectory, chunkStreamer, null);
+        this(world, authProvider, entityTracker, streamRadiusChunks, playerSaveDirectory, chunkStreamer, null, null);
+    }
+
+    ServerConnectionHandler(
+            ServerWorld world,
+            AuthProvider authProvider,
+            ServerEntityTracker entityTracker,
+            Path playerSaveDirectory,
+            ServerChunkStreamer chunkStreamer,
+            SaveQueue saveQueue
+    ) {
+        this(world, authProvider, entityTracker, STREAM_RADIUS_CHUNKS, playerSaveDirectory, chunkStreamer, null, saveQueue);
     }
 
     ServerConnectionHandler(
@@ -233,6 +261,19 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             ServerChunkStreamer chunkStreamer,
             List<CraftingRecipe> recipes
     ) {
+        this(world, authProvider, entityTracker, streamRadiusChunks, playerSaveDirectory, chunkStreamer, recipes, null);
+    }
+
+    ServerConnectionHandler(
+            ServerWorld world,
+            AuthProvider authProvider,
+            ServerEntityTracker entityTracker,
+            int streamRadiusChunks,
+            Path playerSaveDirectory,
+            ServerChunkStreamer chunkStreamer,
+            List<CraftingRecipe> recipes,
+            SaveQueue saveQueue
+    ) {
         if (streamRadiusChunks < 0) {
             throw new IllegalArgumentException("streamRadiusChunks must be >= 0");
         }
@@ -242,6 +283,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         this.streamRadiusChunks = streamRadiusChunks;
         this.playerSaveDirectory = playerSaveDirectory;
         this.chunkStreamer = chunkStreamer;
+        this.saveQueue = saveQueue;
         this.recipes = recipes == null ? CraftingRecipes.createDefaultRecipes(items) : List.copyOf(recipes);
     }
 
@@ -689,6 +731,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             handler.sleepReady = false;
             handler.nextBlockActionTime = now + 0.5;
             handler.updateSurvival(now, false);
+            handler.emitStatusEffectChange(
+                    handler.survivalState.applyStatusEffect(StatusEffectType.RESTED),
+                    StatusEffectType.RESTED,
+                    now,
+                    true
+            );
             handler.sendPlayerStats(handler.context, now, true);
         }
     }
@@ -864,7 +912,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         switch (interact.action()) {
             case FEED -> {
-                if (!tryFeedEntity(ctx, interact)) {
+                if (!tryFeedEntity(ctx, interact, target.get())) {
                     return;
                 }
             }
@@ -881,7 +929,11 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         sendInventory(ctx);
     }
 
-    private boolean tryFeedEntity(ChannelHandlerContext ctx, GamePacket.EntityInteract interact) {
+    private boolean tryFeedEntity(
+            ChannelHandlerContext ctx,
+            GamePacket.EntityInteract interact,
+            EntitySnapshot target
+    ) {
         ItemStack selected = inventory.slot(interact.selectedSlot());
         if (selected.isEmpty()) {
             sendInventory(ctx);
@@ -892,21 +944,74 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return false;
         }
+        Optional<CreatureDesign> creature = CozyLifeProgression.findCreature(target.typeKey());
+        boolean favoriteFeed = creature
+                .map(design -> CreatureFriendshipRules.canFeed(design, selectedItem.key()))
+                .orElse(false);
+        if (favoriteFeed && !canAcceptFavoriteFeed(creature.orElseThrow())) {
+            sendInventory(ctx);
+            return false;
+        }
         Optional<EntitySnapshot> updated = entityTracker.feedAmbient(interact.entityId(), Math.max(1, selectedItem.foodValue() / 2), playerId);
         if (updated.isEmpty()) {
             sendInventory(ctx);
             return false;
         }
         inventory.removeFromSlot(interact.selectedSlot(), 1);
+        if (favoriteFeed) {
+            recordFavoriteFeed(creature.orElseThrow());
+        }
         return true;
     }
 
+    private boolean canAcceptFavoriteFeed(CreatureDesign design) {
+        long currentDay = currentWorldDay();
+        long currentTick = world.dayTimeTicks();
+        PlayerSave.CreatureFriendshipState state = creatureFriendships.get(design.entityKey());
+        if (state == null) {
+            return true;
+        }
+        int acceptedFeedsToday = state.feedDay() == currentDay ? state.acceptedFeedsToday() : 0;
+        if (!CreatureFriendshipRules.canAcceptFeedToday(acceptedFeedsToday)) {
+            return false;
+        }
+        long lastFeedWorldTick = state.lastFeedWorldTick();
+        return currentTick < lastFeedWorldTick
+                || currentTick - lastFeedWorldTick >= FRIENDSHIP_FEED_COOLDOWN_TICKS;
+    }
+
+    private void recordFavoriteFeed(CreatureDesign design) {
+        long currentDay = currentWorldDay();
+        long currentTick = world.dayTimeTicks();
+        creatureFriendships.compute(design.entityKey(), (entityKey, previous) -> {
+            int previousTotal = previous == null ? 0 : previous.acceptedFeedsTotal();
+            int previousToday = previous != null && previous.feedDay() == currentDay
+                    ? previous.acceptedFeedsToday()
+                    : 0;
+            return new PlayerSave.CreatureFriendshipState(
+                    entityKey,
+                    previousTotal + 1,
+                    previousToday + 1,
+                    currentDay,
+                    currentTick
+            );
+        });
+    }
+
+    private long currentWorldDay() {
+        return world.dayTimeTicks() / ServerWorld.DAY_LENGTH_TICKS;
+    }
+
     private boolean tryAttackEntity(ChannelHandlerContext ctx, GamePacket.EntityInteract interact, EntitySnapshot target, double now) {
+        ItemStack selected = inventory.slot(interact.selectedSlot());
+        int damage = entityAttackDamage(selected);
+        double knockbackMultiplier = selected.isEmpty() ? 0.5 : (1.0 + (items.requireById(selected.itemId()).toolLevel() * 0.3));
         DamageResult result = entityTracker.damageAmbient(
                 interact.entityId(),
-                entityAttackDamage(inventory.slot(interact.selectedSlot())),
+                damage,
                 DamageSource.playerMelee(playerId),
-                now
+                now,
+                knockbackMultiplier
         );
         if (!result.accepted()) {
             sendInventory(ctx);
@@ -1419,6 +1524,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         journalEntries = List.copyOf(save.journalEntries());
         achievedMilestones = List.copyOf(save.achievedMilestones());
         completedGoals = List.copyOf(save.completedGoals());
+        creatureFriendships.clear();
+        for (PlayerSave.CreatureFriendshipState friendship : save.creatureFriendships()) {
+            creatureFriendships.put(friendship.entityKey(), friendship);
+        }
         lastWorldKey = save.lastWorldKey();
         inventory.clear();
         for (int i = 0; i < Math.min(inventory.size(), save.inventory().size()); i++) {
@@ -1428,7 +1537,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 save.survival().health(),
                 save.survival().hunger(),
                 save.survival().stamina(),
-                save.survival().breath()
+                save.survival().breath(),
+                save.statusEffects()
         );
     }
 
@@ -1436,11 +1546,28 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         if (playerSaveDirectory == null || playerId == null) {
             return;
         }
+        PlayerSave snapshot = playerSaveSnapshot();
+        if (saveQueue != null) {
+            PlayerSaveStore.saveQueued(saveQueue, playerSaveDirectory, snapshot)
+                    .exceptionally(exception -> {
+                        System.err.println("Failed to save Adventura player " + playerId + ": " + saveFailureMessage(exception));
+                        return null;
+                    });
+            return;
+        }
         try {
-            PlayerSaveStore.save(playerSaveDirectory, playerSaveSnapshot());
+            PlayerSaveStore.save(playerSaveDirectory, snapshot);
         } catch (IOException exception) {
             System.err.println("Failed to save Adventura player " + playerId + ": " + exception.getMessage());
         }
+    }
+
+    private static String saveFailureMessage(Throwable exception) {
+        Throwable cause = exception;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
     }
 
     private PlayerSave playerSaveSnapshot() {
@@ -1468,8 +1595,16 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 journalEntries,
                 achievedMilestones,
                 completedGoals,
+                survivalState.statusEffectSaveStates(),
+                creatureFriendshipSnapshots(),
                 lastWorldKey
         );
+    }
+
+    private List<PlayerSave.CreatureFriendshipState> creatureFriendshipSnapshots() {
+        return creatureFriendships.values().stream()
+                .sorted(Comparator.comparing(PlayerSave.CreatureFriendshipState::entityKey))
+                .toList();
     }
 
     private LoadedPosition safeLoadedPosition(double x, double y, double z, String modeKey) {
@@ -1849,10 +1984,15 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         long tick = survivalTick++;
         PlayerWaterState waterState = world.playerWaterState(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds());
         boolean sprinting = sprintingFromAcceptedMove(waterState);
+        Set<StatusEffectType> beforeEffects = survivalState.activeStatusTypes();
+        int healthBefore = survivalState.health();
+        int hungerBefore = survivalState.hunger();
+        int staminaBefore = survivalState.stamina();
+        int breathBefore = survivalState.breath();
         if (!Double.isFinite(lastSurvivalUpdateTime)) {
             survivalState.updateComfort(world.comfortAt(playerX, playerY, playerZ), tick);
             lastSurvivalUpdateTime = now;
-            applyEnvironmentHazard(now);
+            applyEnvironmentEffects(now, waterState);
             return;
         }
         if (survivalState.shouldScanComfort(tick)) {
@@ -1861,15 +2001,31 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             survivalState.tick(now - lastSurvivalUpdateTime, moving, waterState.headUnderwater(), sprinting);
         }
         lastSurvivalUpdateTime = now;
-        applyEnvironmentHazard(now);
+        emitExpiredStatusEffects(beforeEffects, survivalState.activeStatusTypes(), now);
+        applyEnvironmentEffects(now, waterState);
+        if (statsChanged(healthBefore, hungerBefore, staminaBefore, breathBefore)) {
+            ChannelHandlerContext ctx = context;
+            if (ctx != null) {
+                sendPlayerStats(ctx, now, true);
+            }
+        }
     }
 
-    private void applyEnvironmentHazard(double now) {
-        if (!loggedIn || now < nextEnvironmentDamageTime) {
+    private void applyEnvironmentEffects(double now, PlayerWaterState waterState) {
+        if (!loggedIn) {
             return;
         }
         EnvironmentHazardRules.Hazard hazard = world.environmentHazardAtPlayer(playerX, playerY, playerZ, PLAYER_PHYSICS.bounds());
-        if (hazard.damagePerPulse() <= 0) {
+        for (StatusEffectType type : StatusEffectEnvironmentRules.effectsFor(new StatusEffectEnvironmentRules.EnvironmentContext(
+                waterState.movementAffected(),
+                hazard.hot(),
+                hazard.cold(),
+                world.biomeKeyAt(playerX, playerZ),
+                survivalState.comfort()
+        ))) {
+            emitStatusEffectChange(survivalState.applyStatusEffect(type), type, now, false);
+        }
+        if (now < nextEnvironmentDamageTime || hazard.damagePerPulse() <= 0 || hazard.hot()) {
             return;
         }
         int damage = survivalState.applyEnvironmentalDamage(hazard.damagePerPulse());
@@ -1879,8 +2035,66 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         nextEnvironmentDamageTime = now + EnvironmentHazardRules.DAMAGE_COOLDOWN_SECONDS;
         ChannelHandlerContext ctx = context;
         if (ctx != null) {
+            sendGameplayEvent(new GameplayEvent.Damage(gameplayEventSequence++, 0L, damage, hazard.key()));
             sendPlayerStats(ctx, now, true);
         }
+    }
+
+    private boolean statsChanged(int healthBefore, int hungerBefore, int staminaBefore, int breathBefore) {
+        return healthBefore != survivalState.health()
+                || hungerBefore != survivalState.hunger()
+                || staminaBefore != survivalState.stamina()
+                || breathBefore != survivalState.breath();
+    }
+
+    private void emitExpiredStatusEffects(Set<StatusEffectType> beforeEffects, Set<StatusEffectType> afterEffects, double now) {
+        for (StatusEffectType type : beforeEffects) {
+            if (!afterEffects.contains(type)) {
+                sendStatusEffectEvent(type, "expired", 1);
+            }
+        }
+    }
+
+    private void emitStatusEffectChange(
+            ServerPlayerSurvivalState.StatusEffectChange change,
+            StatusEffectType type,
+            double now,
+            boolean includeRefresh
+    ) {
+        if (change == ServerPlayerSurvivalState.StatusEffectChange.UNCHANGED) {
+            return;
+        }
+        if (change == ServerPlayerSurvivalState.StatusEffectChange.REFRESHED && !includeRefresh) {
+            return;
+        }
+        String changeKey = change == ServerPlayerSurvivalState.StatusEffectChange.APPLIED ? "applied" : "refreshed";
+        int intensity = survivalState.statusEffects()
+                .find(type)
+                .map(effect -> effect.intensity())
+                .orElse(1);
+        sendStatusEffectEvent(type, changeKey, intensity);
+    }
+
+    private void sendStatusEffectEvent(StatusEffectType type, String changeKey, int intensity) {
+        if (playerId == null) {
+            return;
+        }
+        sendGameplayEvent(new GameplayEvent.StatusEffectChanged(
+                gameplayEventSequence++,
+                playerId,
+                type.key(),
+                changeKey,
+                Math.max(1, intensity)
+        ));
+    }
+
+    private void sendGameplayEvent(GameplayEvent event) {
+        ChannelHandlerContext ctx = context;
+        if (ctx == null) {
+            return;
+        }
+        ctx.writeAndFlush(new GamePacket.GameplayEvents(List.of(event)));
+        recordSentPacket(64L);
     }
 
     private boolean sprintingFromAcceptedMove(PlayerWaterState waterState) {
@@ -1932,6 +2146,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private void sendServerStats(ChannelHandlerContext ctx) {
         InterestStats stats = interestStats();
+        SaveQueue.SaveQueueStats saveStats = saveQueue == null ? SaveQueue.SaveQueueStats.empty() : saveQueue.stats();
         GamePacket.ServerStatsSnapshot packet = new GamePacket.ServerStatsSnapshot(
                 stats.chunkSubscriptions(),
                 stats.sentEntitySnapshotPackets(),
@@ -1944,10 +2159,23 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 stats.sentPackets(),
                 stats.estimatedPacketBytes(),
                 stats.averagePacketBytes(),
-                stats.packetRatePerSecond()
+                stats.packetRatePerSecond(),
+                saveStats.pendingWrites(),
+                saveStats.runningWrites(),
+                saveStats.enqueuedWrites(),
+                saveStats.completedWrites(),
+                saveStats.failedWrites(),
+                saveStats.rejectedWrites(),
+                saveStats.writtenBytes(),
+                saveStats.totalWriteMilliseconds(),
+                saveStats.averageWriteMilliseconds(),
+                saveStats.enqueuedWritesPerSecond(),
+                saveStats.writtenBytesPerSecond(),
+                saveStats.writeMillisecondsPerSecond(),
+                saveStats.failedWritesPerSecond()
         );
         ctx.writeAndFlush(packet);
-        recordSentPacket(96L);
+        recordSentPacket(192L);
     }
 
     private static void markEntitySnapshotsDirty(ServerWorld world) {
@@ -2048,7 +2276,8 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             if (ctx == null || !handler.loggedIn || handler.world != world) {
                 continue;
             }
-            if (packet instanceof GamePacket.BlockUpdate update && !handler.hasSeenChunk(update)) {
+            GamePacket outbound = packet;
+            if (outbound instanceof GamePacket.BlockUpdate update && !handler.hasSeenChunk(update)) {
                 handler.discardedUpdatesOutsideInterest.incrementAndGet();
                 ChunkPos chunk = ChunkPos.fromBlock(update.x(), update.z());
                 handler.recordInterestDebug("filter block_update outside_chunk_interest "
@@ -2056,16 +2285,77 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                         + " chunk=" + chunk.x() + "," + chunk.z());
                 continue;
             }
-            ctx.writeAndFlush(packet);
-            if (packet instanceof GamePacket.BlockUpdate) {
+            if (outbound instanceof GamePacket.ProjectileImpact impact && !handler.isProjectileImpactRelevant(impact)) {
+                handler.discardedUpdatesOutsideInterest.incrementAndGet();
+                ChunkPos chunk = ChunkPos.fromBlock((int) Math.floor(impact.x()), (int) Math.floor(impact.z()));
+                handler.recordInterestDebug("filter projectile_impact outside_event_interest "
+                        + impact.projectileId()
+                        + " chunk=" + chunk.x() + "," + chunk.z());
+                continue;
+            }
+            if (outbound instanceof GamePacket.GameplayEvents events) {
+                GamePacket.GameplayEvents filtered = handler.filterGameplayEvents(events);
+                int discarded = events.events().size() - filtered.events().size();
+                if (discarded > 0) {
+                    handler.discardedUpdatesOutsideInterest.addAndGet(discarded);
+                    handler.recordInterestDebug("filter gameplay_event outside_event_interest discarded=" + discarded);
+                }
+                if (filtered.events().isEmpty()) {
+                    continue;
+                }
+                outbound = filtered;
+            }
+            ctx.writeAndFlush(outbound);
+            if (outbound instanceof GamePacket.BlockUpdate) {
                 handler.sentBlockUpdates.incrementAndGet();
                 handler.recordSentPacket(16L);
+            } else if (outbound instanceof GamePacket.ProjectileImpact) {
+                handler.recordSentPacket(128L);
+            } else if (outbound instanceof GamePacket.GameplayEvents events) {
+                handler.recordSentPacket(32L + events.events().size() * 64L);
             }
         }
     }
 
     private boolean hasSeenChunk(GamePacket.BlockUpdate update) {
         return sentChunks.contains(ChunkPos.fromBlock(update.x(), update.z()));
+    }
+
+    private boolean isProjectileImpactRelevant(GamePacket.ProjectileImpact impact) {
+        return ServerGameplayEventInterest.isRelevant(impact, gameplayEventViewer());
+    }
+
+    private GamePacket.GameplayEvents filterGameplayEvents(GamePacket.GameplayEvents events) {
+        ServerGameplayEventInterest.Viewer viewer = gameplayEventViewer();
+        List<GameplayEvent> relevantEvents = events.events().stream()
+                .filter(event -> ServerGameplayEventInterest.isRelevant(event, viewer))
+                .toList();
+        if (relevantEvents.size() == events.events().size()) {
+            return events;
+        }
+        return new GamePacket.GameplayEvents(relevantEvents);
+    }
+
+    private ServerGameplayEventInterest.Viewer gameplayEventViewer() {
+        return new ServerGameplayEventInterest.Viewer(playerId, this::canSeeEntityEvent, this::canSeeEventPosition);
+    }
+
+    private boolean canSeeEntityEvent(long entityId) {
+        return entityTracker.snapshots().stream()
+                .filter(snapshot -> snapshot.entityId() == entityId)
+                .anyMatch(this::isEntitySnapshotRelevant);
+    }
+
+    private boolean canSeeEventPosition(double x, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(z)) {
+            return false;
+        }
+        double dx = x - playerX;
+        double dz = z - playerZ;
+        if (dx * dx + dz * dz > EVENT_INTEREST_RADIUS * EVENT_INTEREST_RADIUS) {
+            return false;
+        }
+        return sentChunks.contains(ChunkPos.fromBlock((int) Math.floor(x), (int) Math.floor(z)));
     }
 
     private void broadcastToLoggedInWorld(GamePacket packet) {

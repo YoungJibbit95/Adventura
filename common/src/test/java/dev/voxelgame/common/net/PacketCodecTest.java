@@ -365,9 +365,10 @@ class PacketCodecTest {
                 new GameplayEvent.ProjectileImpact(7L, -1_000_000L, "voxel:arrow_projectile", 1.25, 80.5, -3.75, GameplayEvent.ProjectileImpact.NO_TARGET_ENTITY),
                 new GameplayEvent.Sleep(8L, playerId, true),
                 new GameplayEvent.WeatherThunder(9L, 2.5, 90.0, -8.5),
-                new GameplayEvent.JournalEntryDiscovered(10L, playerId, "journal:first_campfire"),
-                new GameplayEvent.RecipeUnlocked(11L, playerId, "voxel:stone_pickaxe"),
-                new GameplayEvent.StructureDiscovered(12L, playerId, "voxel:old_ruin")
+                new GameplayEvent.StatusEffectChanged(10L, playerId, "voxel:burning", "applied", 2),
+                new GameplayEvent.JournalEntryDiscovered(11L, playerId, "journal:first_campfire"),
+                new GameplayEvent.RecipeUnlocked(12L, playerId, "voxel:stone_pickaxe"),
+                new GameplayEvent.StructureDiscovered(13L, playerId, "voxel:old_ruin")
         ));
 
         GamePacket.GameplayEvents decoded = (GamePacket.GameplayEvents) PacketCodec.decode(PacketCodec.encode(packet));
@@ -443,7 +444,33 @@ class PacketCodecTest {
     @Test
     void roundTripsServerStatsSnapshot() {
         GamePacket.ServerStatsSnapshot decoded = (GamePacket.ServerStatsSnapshot) PacketCodec.decode(PacketCodec.encode(
-                new GamePacket.ServerStatsSnapshot(9, 3L, 42L, 18L, 7L, 2L, 1L, 4L, 64L, 8192L, 128L, 12.5)
+                new GamePacket.ServerStatsSnapshot(
+                        9,
+                        3L,
+                        42L,
+                        18L,
+                        7L,
+                        2L,
+                        1L,
+                        4L,
+                        64L,
+                        8192L,
+                        128L,
+                        12.5,
+                        6,
+                        1,
+                        11L,
+                        10L,
+                        2L,
+                        3L,
+                        4096L,
+                        17L,
+                        1.7,
+                        0.5,
+                        2048.0,
+                        3.25,
+                        0.1
+                )
         ));
 
         assertEquals(9, decoded.chunkSubscriptions());
@@ -458,6 +485,19 @@ class PacketCodecTest {
         assertEquals(8192L, decoded.estimatedPacketBytes());
         assertEquals(128L, decoded.averagePacketBytes());
         assertEquals(12.5, decoded.packetRatePerSecond(), 0.0001);
+        assertEquals(6, decoded.savePendingWrites());
+        assertEquals(1, decoded.saveRunningWrites());
+        assertEquals(11L, decoded.saveQueuedWrites());
+        assertEquals(10L, decoded.saveCompletedWrites());
+        assertEquals(2L, decoded.saveFailedWrites());
+        assertEquals(3L, decoded.saveRejectedWrites());
+        assertEquals(4096L, decoded.saveWrittenBytes());
+        assertEquals(17L, decoded.saveWriteMilliseconds());
+        assertEquals(1.7, decoded.saveAverageWriteMilliseconds(), 0.0001);
+        assertEquals(0.5, decoded.saveQueuedWritesPerSecond(), 0.0001);
+        assertEquals(2048.0, decoded.saveWrittenBytesPerSecond(), 0.0001);
+        assertEquals(3.25, decoded.saveWriteMillisecondsPerSecond(), 0.0001);
+        assertEquals(0.1, decoded.saveFailedWritesPerSecond(), 0.0001);
     }
 
     @Test

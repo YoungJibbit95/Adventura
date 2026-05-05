@@ -41,7 +41,7 @@ public sealed interface GamePacket permits
         GamePacket.CraftRequest,
         GamePacket.Chat {
 
-    int PROTOCOL_VERSION = 24;
+    int PROTOCOL_VERSION = 25;
     int MAX_CLIENT_NAME_LENGTH = 64;
     int MAX_USERNAME_LENGTH = 32;
     int MAX_AUTH_TOKEN_LENGTH = 128;
@@ -490,8 +490,64 @@ public sealed interface GamePacket permits
             long sentPackets,
             long estimatedPacketBytes,
             long averagePacketBytes,
-            double packetRatePerSecond
+            double packetRatePerSecond,
+            int savePendingWrites,
+            int saveRunningWrites,
+            long saveQueuedWrites,
+            long saveCompletedWrites,
+            long saveFailedWrites,
+            long saveRejectedWrites,
+            long saveWrittenBytes,
+            long saveWriteMilliseconds,
+            double saveAverageWriteMilliseconds,
+            double saveQueuedWritesPerSecond,
+            double saveWrittenBytesPerSecond,
+            double saveWriteMillisecondsPerSecond,
+            double saveFailedWritesPerSecond
     ) implements GamePacket {
+        public ServerStatsSnapshot(
+                int chunkSubscriptions,
+                long sentEntitySnapshotPackets,
+                long sentEntitySnapshots,
+                long sentChunkPackets,
+                long sentBlockUpdates,
+                long discardedUpdatesOutsideInterest,
+                long rejectedChunkRequests,
+                long failedChunkRequests,
+                long sentPackets,
+                long estimatedPacketBytes,
+                long averagePacketBytes,
+                double packetRatePerSecond
+        ) {
+            this(
+                    chunkSubscriptions,
+                    sentEntitySnapshotPackets,
+                    sentEntitySnapshots,
+                    sentChunkPackets,
+                    sentBlockUpdates,
+                    discardedUpdatesOutsideInterest,
+                    rejectedChunkRequests,
+                    failedChunkRequests,
+                    sentPackets,
+                    estimatedPacketBytes,
+                    averagePacketBytes,
+                    packetRatePerSecond,
+                    0,
+                    0,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0L,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+            );
+        }
+
         public ServerStatsSnapshot {
             if (chunkSubscriptions < 0
                     || sentEntitySnapshotPackets < 0L
@@ -505,9 +561,31 @@ public sealed interface GamePacket permits
                     || estimatedPacketBytes < 0L
                     || averagePacketBytes < 0L
                     || !Double.isFinite(packetRatePerSecond)
-                    || packetRatePerSecond < 0.0) {
+                    || packetRatePerSecond < 0.0
+                    || savePendingWrites < 0
+                    || saveRunningWrites < 0
+                    || saveQueuedWrites < 0L
+                    || saveCompletedWrites < 0L
+                    || saveFailedWrites < 0L
+                    || saveRejectedWrites < 0L
+                    || saveWrittenBytes < 0L
+                    || saveWriteMilliseconds < 0L
+                    || !Double.isFinite(saveAverageWriteMilliseconds)
+                    || saveAverageWriteMilliseconds < 0.0
+                    || !Double.isFinite(saveQueuedWritesPerSecond)
+                    || saveQueuedWritesPerSecond < 0.0
+                    || !Double.isFinite(saveWrittenBytesPerSecond)
+                    || saveWrittenBytesPerSecond < 0.0
+                    || !Double.isFinite(saveWriteMillisecondsPerSecond)
+                    || saveWriteMillisecondsPerSecond < 0.0
+                    || !Double.isFinite(saveFailedWritesPerSecond)
+                    || saveFailedWritesPerSecond < 0.0) {
                 throw new IllegalArgumentException("Server stats cannot contain negative or non-finite values");
             }
+        }
+
+        public static ServerStatsSnapshot empty() {
+            return new ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0);
         }
 
         @Override

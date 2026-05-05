@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -55,6 +56,21 @@ class PlayerSaveStoreTest {
         assertEquals("Ada", readProperties(savePath).getProperty("player.name"));
     }
 
+    @Test
+    void queuedPlayerSaveWritesThroughSaveQueue() throws Exception {
+        UUID playerId = UUID.fromString("00000000-0000-0000-0000-000000000654");
+        try (SaveQueue queue = new SaveQueue("test-player-save-queue", 4)) {
+            SaveQueue.SaveResult result = PlayerSaveStore.saveQueued(queue, tempDir, playerSave(playerId, "Queued Ada"))
+                    .get(2, TimeUnit.SECONDS);
+            queue.flush();
+
+            assertTrue(result.bytesWritten() > 0L);
+        }
+
+        PlayerSave loaded = PlayerSaveStore.load(tempDir, playerId).orElseThrow();
+        assertEquals("Queued Ada", loaded.playerName());
+    }
+
     private static void writeProperties(Path path, Properties properties) throws Exception {
         try (var output = Files.newOutputStream(path)) {
             properties.store(output, "test save");
@@ -67,5 +83,27 @@ class PlayerSaveStoreTest {
             properties.load(input);
         }
         return properties;
+    }
+
+    private static PlayerSave playerSave(UUID playerId, String playerName) {
+        return new PlayerSave(
+                SaveMetadata.CURRENT_SAVE_VERSION,
+                playerId,
+                playerName,
+                1.0,
+                80.0,
+                2.0,
+                0.0f,
+                0.0f,
+                List.of(),
+                0,
+                PlayerSave.SurvivalStats.defaults(),
+                PlayerSave.SpawnPoint.empty(),
+                "survival",
+                List.of(),
+                List.of(),
+                List.of(),
+                "overworld"
+        );
     }
 }

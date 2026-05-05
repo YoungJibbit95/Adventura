@@ -216,7 +216,8 @@ public final class BiomeResourceProfiles {
     }
 
     public static short detailResourceFor(String biomeKey, double roll) {
-        return forBiome(biomeKey).detailResource(roll);
+        short featureTableBlock = WorldFeatureTables.detailResourceFor(biomeKey, roll);
+        return featureTableBlock == Blocks.AIR ? forBiome(biomeKey).detailResource(roll) : featureTableBlock;
     }
 
     private static Map.Entry<String, BiomeResourceProfile> entry(BiomeResourceProfile profile) {

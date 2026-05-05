@@ -60,6 +60,11 @@ public final class GameplayEventFeedback {
                     FeedbackLog.Kind.WARNING,
                     Optional.of(AudioCue.THUNDER)
             ));
+            case GameplayEvent.StatusEffectChanged status -> Optional.of(new Entry(
+                    statusEffectMessage(status, safeLabeler),
+                    statusEffectKind(status),
+                    Optional.empty()
+            ));
             case GameplayEvent.JournalEntryDiscovered journal -> Optional.of(new Entry(
                     "Journal updated: " + label(safeLabeler, journal.entryKey()),
                     FeedbackLog.Kind.DISCOVERY,
@@ -101,6 +106,27 @@ public final class GameplayEventFeedback {
             case "stamina" -> "Low stamina";
             case "breath" -> "Air running out";
             default -> "Critical " + fallbackLabel(critical.statKey());
+        };
+    }
+
+    private static String statusEffectMessage(GameplayEvent.StatusEffectChanged status, Function<String, String> labeler) {
+        String effect = label(labeler, status.effectKey());
+        return switch (status.changeKey()) {
+            case "applied" -> "Status: " + effect;
+            case "refreshed" -> "Status refreshed: " + effect;
+            case "expired" -> "Status ended: " + effect;
+            default -> "Status " + status.changeKey() + ": " + effect;
+        };
+    }
+
+    private static FeedbackLog.Kind statusEffectKind(GameplayEvent.StatusEffectChanged status) {
+        if ("expired".equals(status.changeKey())) {
+            return FeedbackLog.Kind.INFO;
+        }
+        return switch (status.effectKey()) {
+            case "voxel:rested", "voxel:cozy" -> FeedbackLog.Kind.COMFORT;
+            case "voxel:wet" -> FeedbackLog.Kind.INFO;
+            default -> FeedbackLog.Kind.WARNING;
         };
     }
 

@@ -19,7 +19,7 @@ public final class BlockCollisionShapes {
 
     public static BlockCollisionShape collisionShape(short blockId) {
         return switch (blockId) {
-            case Blocks.AIR, Blocks.WATER,
+            case Blocks.AIR, Blocks.WATER, Blocks.LAVA,
                  Blocks.TORCH, Blocks.WILD_GRASS, Blocks.SUN_BLOOM, Blocks.RED_MUSHROOM,
                  Blocks.FLOWER_POT, Blocks.LANTERN, Blocks.WOVEN_RUG, Blocks.BERRY_BUSH,
                  Blocks.HERB_PLANTER, Blocks.CAMPFIRE, Blocks.SMALL_STONE, Blocks.MUSHROOM_CLUSTER,

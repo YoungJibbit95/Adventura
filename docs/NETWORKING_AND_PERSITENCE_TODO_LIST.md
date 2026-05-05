@@ -178,6 +178,8 @@ Aktueller Teil:
   - HUD markers.
   - Journal update.
 - Event-Relevanz nach Interest filtern.
+  Fortschritt: 2026-05-02, P4.1 filtert raumbezogene, entity-bezogene und player-spezifische GameplayEvents sowie legacy `ProjectileImpact` nach Event-/Chunk-Interest.
+  Offen: `StatCritical`, `Pickup`, `Craft` und `CookComplete` brauchen fuer strikte Multiplayer-Filterung noch Player- oder Positionsscope im Event-Contract.
 - ~~Replay-/Smoke-Faehigkeit vorbereiten.~~
   Erledigt: 2026-05-01 fuer das Common-Modell durch monotone `sequence`, `debugKey()` und `GameplayEventBatch` Schema-Version.
   Verifikation: `GameplayEventTest`.
@@ -218,6 +220,21 @@ Aktueller Teil:
 ---
 
 # P4 - Interest Management V2
+
+Status 2026-05-02: P4.1 erledigt durch Main Networking Dev - Gameplay-/Projectile-Event-Interest als erster Event-Filter-Slice.
+
+## P4.1 Event-Interest V1
+
+Aktueller Teil:
+
+- ~~🔴 raumbezogene `GameplayEvents` und `ProjectileImpact`-Packets nur an Clients mit passendem Event-/Chunk-Interest senden.~~
+- ~~🔴 player-spezifische GameplayEvents nur an den betroffenen Player senden.~~
+- ~~🟠 Interest-Debug-Log fuer gefilterte Event-Packets ergaenzen, ohne `ServerStatsSnapshot` in diesem Slice erneut zu vergroessern.~~
+
+Erledigt: 2026-05-02 - `ServerGameplayEventInterest` klassifiziert raum-, entity- und player-spezifische Events; `ServerConnectionHandler.broadcast(world, ...)` filtert `GameplayEvents` und `ProjectileImpact` pro Verbindung.
+Verifikation:
+- `./gradlew :server:test --tests dev.voxelgame.server.net.ServerGameplayEventInterestTest --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.gameServerBroadcastsProjectileImpactFromAuthoritativeTick --no-daemon --max-workers=1`
+- `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.blockUpdatesOnlyReachConnectionsThatHaveStreamedTheChunk --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.interestStatsTrackInitialChunkSubscriptionAndPacketEstimate --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.broadcastsServerStatsSnapshotsForClientDebugOverlay --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.entitySnapshotsOnlyContainNearbyEntities --no-daemon --max-workers=1`
 
 ## Offen
 
@@ -279,6 +296,32 @@ Aktueller Teil:
 
 # P6 - Region Storage und Save Queue
 
+Status 2026-05-02: P6.1 erledigt durch Main Networking Dev - Save Queue V1 plus Region-Layout-Contract, Properties-V1 bleibt als kompatibler aktiver Writer erhalten.
+
+## P6.1 Save Queue V1 und Region-Layout-Contract
+
+Aktueller Teil:
+
+- ~~🔴 `save.write` Queue mit max pending writes, Coalescing pro Save-Key, Shutdown-Flush und Fehler-/Dauer-/Byte-Metriken.~~
+- ~~🟠 Player- und World-Saves so anbinden, dass Snapshots synchron erstellt, aber IO im Hintergrund geschrieben werden kann.~~
+- ~~🟠 Region-File-Layout als V2-Contract definieren, ohne bestehende Properties-V1-Saves zu brechen.~~
+
+Erledigt: 2026-05-02 - `SaveQueue` coalesced Pending-Writes pro Key und wird von `PlayerSaveStore`, `WorldSaveStore`, `GameServer` und `GameServerMain` genutzt; `RegionFileLayout` definiert den V2-Region-Pfad-/Index-Contract.
+Ergaenzt 2026-05-02: `SaveQueueStats` liefert Sekundenraten fuer queued writes, written bytes, write milliseconds und failed writes; `SERVER_STATS_SNAPSHOT` Protocol Version 25 transportiert diese Werte fuer Debug-HUD und Engine-Budgets.
+Verifikation:
+- `./gradlew :server:test --tests dev.voxelgame.server.save.SaveQueueTest --tests dev.voxelgame.server.save.RegionFileLayoutTest --tests dev.voxelgame.server.save.PlayerSaveStoreTest --tests dev.voxelgame.server.save.WorldSaveStoreTest --no-daemon --max-workers=1`
+- `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.disconnectCanWritePlayerSaveThroughSaveQueue --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.loginLoadsPlayerSaveAndDisconnectWritesLatestSnapshot --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.gameServerBroadcastsProjectileImpactFromAuthoritativeTick --tests dev.voxelgame.server.net.GameServerPhysicsStatsTest --tests dev.voxelgame.server.GameServerMainTest --no-daemon --max-workers=1`
+- `./gradlew :common:test --tests dev.voxelgame.common.net.PacketCodecTest --tests dev.voxelgame.common.net.PacketCodecGoldenTest --tests dev.voxelgame.common.net.ProtocolContractTest -PadventuraTestRunId=save_stats_codec_2 --no-daemon --max-workers=1`
+- `./gradlew :server:test --tests dev.voxelgame.server.save.SaveQueueTest --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.serverStatsSnapshotIncludesSaveQueueMetrics --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.broadcastsServerStatsSnapshotsForClientDebugOverlay -PadventuraTestRunId=save_stats_server_1 --no-daemon --max-workers=1`
+
+Region-V2-Plan:
+- Root: `<world-save-root>/regions/`.
+- Datei: `r.<regionX>.<regionZ>.advregion`.
+- Region-Groesse: 32x32 Chunks, inklusive floor-division sicherer negativer Chunk-Koordinaten.
+- Geplanter Header: Magic, Format-Version, Region-Koordinaten und Flags fuer Kompression/Light.
+- Geplanter Index: 1024 Chunk-Eintraege mit Offset, Laenge, CRC und Record-Version.
+- Geplanter Chunk Record: Dirty-Deltas gegen Basisterrain, Section Records, Palette/coded Block-IDs, optionale Light-Arrays und BlockEntity-Payloads.
+
 ## Problem
 
 World-Saves sind derzeit Properties mit BlockChanges und BlockEntity-Snapshots. Das ist gut fuer Alpha-Smoke, skaliert aber nicht fuer lange Welten, viele Mutationen, Chunk-Sections, Lichtdaten oder Migrationen.
@@ -286,26 +329,26 @@ World-Saves sind derzeit Properties mit BlockChanges und BlockEntity-Snapshots. 
 ## Offen
 
 - Region-File-Format planen:
-  - Region-Koordinaten.
-  - Chunk/Section records.
-  - palette/coded block ids.
-  - light arrays optional.
-  - block entity payloads.
-  - dirty flags.
-  - compression flag.
+  - ~~Region-Koordinaten.~~
+  - ~~Chunk/Section records.~~ als Formatplan, Writer/Reader offen.
+  - ~~palette/coded block ids.~~ als Formatplan, Writer/Reader offen.
+  - ~~light arrays optional.~~ als Formatplan, Writer/Reader offen.
+  - ~~block entity payloads.~~ als Formatplan, Writer/Reader offen.
+  - ~~dirty flags.~~ als Dirty-Deltas im Chunk-Record-Plan, Writer/Reader offen.
+  - ~~compression flag.~~ als Header-Plan, Implementierung offen.
 - Atomic write und temp-file pattern beibehalten.
 - Async Save Queue:
-  - `save.write` Jobs.
-  - max pending writes.
-  - coalescing pro Region/Player.
-  - shutdown flush.
-  - failure retry/log.
+  - ~~`save.write` Jobs.~~
+  - ~~max pending writes.~~
+  - ~~coalescing pro Region/Player.~~ Region-Key-Contract steht; echter Region-Writer folgt.
+  - ~~shutdown flush.~~
+  - failure retry/log. V1 loggt Fehler und zaehlt sie; Retry bleibt offen.
 - Save-Metriken:
-  - queued writes.
-  - written bytes/sec.
-  - write ms.
-  - failed writes.
-  - last save age.
+  - ~~queued writes.~~
+  - written bytes/sec. V1 zaehlt `writtenBytes`, Fenster/sek bleibt offen.
+  - ~~write ms.~~
+  - ~~failed writes.~~
+  - ~~last save age.~~
 - Crash-Recovery:
   - migration backups.
   - partial temp cleanup.
@@ -368,10 +411,17 @@ World-Saves sind derzeit Properties mit BlockChanges und BlockEntity-Snapshots. 
   - lore pages.
   - map fragments.
 - StatusEffects persistieren:
-  - rested/cozy.
-  - chilled/wet.
-  - burning/poison optional.
-- 🟠 Common-StatusEffect-Contract vorhanden: `StatusEffectState.saveStates()` liefert stabile `effectKey`, `remainingSeconds`, `intensity` und `tickProgressSeconds`; Persistenz/Packet/Server-Anwendung bleiben offen.
+  - ~~rested/cozy in `PlayerSave`.~~
+  - ~~chilled/wet in `PlayerSave`.~~
+  - ~~burning/poison optional in `PlayerSave`.~~
+  Erledigt: 2026-05-02 - `PlayerSave` persistiert `StatusEffectSaveState`-Zeilen mit `effectKey`, `remainingSeconds`, `intensity` und `tickProgressSeconds`; unbekannte Effect-Keys werden beim Decode abgelehnt und `ServerPlayerSurvivalState` rundet geladene StatusEffects in Save-Snapshots weiter.
+  Verifikation: `./gradlew :server:test --tests dev.voxelgame.server.save.PlayerSaveCodecTest -PadventuraTestRunId=status_effect_save_codec_2 --no-daemon --max-workers=1` und `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest.loginLoadsPlayerSaveAndDisconnectWritesLatestSnapshot -PadventuraTestRunId=status_effect_server_snapshot_4 --no-daemon --max-workers=1`.
+- 🟠 Teilweise erledigt: StatusEffect-Packets/GameplayEvents fuer applied/refreshed/expired und echte serverautoritative Anwendung durch Hazards, Biome, Water/Weather und Sleep/Comfort anbinden.
+- ~~🔴 In Arbeit 2026-05-02: `StatusEffectChanged`-Events und serverautoritative Environment-Anwendung gegen Common-Environment-Regeln verifizieren.~~
+  Erledigt: 2026-05-02 - `StatusEffectChanged`-GameplayEvents werden fuer applied/refreshed/expired emittiert; Wasser, Campfire-Hot/Cozy und Sleep/Rested laufen serverautoritativ gegen Common-Regeln.
+  Offen: Weather-spezifische Statusquellen, weitere Biome-Hazard-Smokes und HUD/Client-Darstellung fuer Statuswechsel.
+  Verifikation: `ServerConnectionHandlerTest.playerMoveAppliesWetStatusEventFromAuthoritativeWaterState`, `ServerConnectionHandlerTest.loginAppliesBurningAndCozyStatusEventsFromAuthoritativeEnvironment`, `ServerConnectionHandlerTest.sleepRequestRefreshesExistingRestedStatusEvent`, `ServerConnectionHandlerTest.playerMoveEmitsExpiredStatusEffectEvent`; letzter eigener Rerun wurde durch paralleles `:common:jar --rerun-tasks` mit `NoClassDefFoundError: dev/voxelgame/common/registry/Registry` gestoert.
+- 🟠 Common-StatusEffect-Contract vorhanden: `StatusEffectState.saveStates()` liefert stabile `effectKey`, `remainingSeconds`, `intensity` und `tickProgressSeconds`; Packet/Server-Anwendung bleiben offen.
   Verifikation: `StatusEffectSystemTest.saveStatesRoundTripAndRejectUnknownKeys`.
 - Quest-/Milestone-State vorbereiten.
 - ~~🔴 Braucht Main Networking Dev: Persistenten `AlphaMilestoneKey`-State definieren.~~
@@ -388,10 +438,13 @@ World-Saves sind derzeit Properties mit BlockChanges und BlockEntity-Snapshots. 
   Erledigt: 2026-05-01, `PlayerSave.journalEntries()` bleibt der Entry-State; `PlayerSave.completedGoals()` ergaenzt persistierte Goal-Keys und roundtrippt im Codec.
   Offen: Discovery-/Recipe-/Loot-Server-Producer und idempotente Unlock-Regeln an `GameplayEventStream` anbinden.
   Verifikation: `PlayerSaveCodecTest`, `PlayerSaveStoreTest`.
-- 🔴 Braucht Main Networking Dev: Persistenten `CozyLifeProgression`-/Friendship-State und serverautoritatives Feeding definieren.
+- 🟠 Teilweise erledigt: Persistenten `CozyLifeProgression`-/Friendship-State und serverautoritatives Feeding definieren.
   Kontext: Gameplay P9.5 liefert Creature-Rollen, Feed-Items, Friendship-Limits, Comfort-/Resource-/Danger-Contracts; Client-only Feeding wuerde Friendship, Cooldowns und passive Ressourcen duplizierbar machen.
   Erwarteter Contract: `FeedEntityAction` oder gleichwertiger Intent, PlayerSave/WorldSave-Felder fuer Friendship-Stufe, Tageslimit, Cooldown und optionale passive Shed-Ressourcen, `GameplayEvent` fuer feed accepted/rejected/friendship step.
   Akzeptanz: Feeding/Friendship bleibt nach Neustart/Reconnect erhalten, Tageslimit/Cooldown ist serverseitig, zwei Clients koennen dieselbe Creature nicht doppelt belohnen.
+  Erledigt: 2026-05-02, `PlayerSave.creatureFriendships()` persistiert Lieblingsfutter-Fortschritt pro Creature-Key; `ServerConnectionHandler` akzeptiert Lieblingsfutter serverseitig nur innerhalb Tageslimit/Cooldown und speichert den Stand beim Disconnect.
+  Offen: Passive Shed-Ressourcen, Feed-accepted/rejected-`GameplayEvent`, Friendship-Step-Event und world-/creature-spezifische Locks fuer gemeinsam genutzte Ressourcen.
+  Verifikation: `PlayerSaveCodecTest`, `ServerConnectionHandlerTest.entityInteractFavoriteFeedPersistsFriendshipAndRejectsCooldownDuplicate`.
 - Comfort- und Base-Zonen speichern, sobald eingefuehrt.
 - World time, weather seed/state und one-shot events persistieren.
 - LootTables fuer generated Chests idempotent speichern.

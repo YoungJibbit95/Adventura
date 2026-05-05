@@ -1,7 +1,20 @@
 package dev.voxelgame.server.player;
 
 import dev.voxelgame.common.gameplay.ComfortRules;
+import dev.voxelgame.common.gameplay.status.ActiveStatusEffect;
+import dev.voxelgame.common.gameplay.status.StatusEffectModifiers;
+import dev.voxelgame.common.gameplay.status.StatusEffectPulse;
+import dev.voxelgame.common.gameplay.status.StatusEffectSaveState;
+import dev.voxelgame.common.gameplay.status.StatusEffectState;
+import dev.voxelgame.common.gameplay.status.StatusEffectSystem;
+import dev.voxelgame.common.gameplay.status.StatusEffectTickEffect;
+import dev.voxelgame.common.gameplay.status.StatusEffectTickResult;
+import dev.voxelgame.common.gameplay.status.StatusEffectType;
 import dev.voxelgame.common.net.GamePacket;
+
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
 
 public final class ServerPlayerSurvivalState {
     private static final int MAX_STAT = 20;
@@ -22,6 +35,7 @@ public final class ServerPlayerSurvivalState {
     private float starvationTimer;
     private float regenTimer;
     private long lastComfortScanTick = -1L;
+    private StatusEffectState statusEffects = StatusEffectSystem.empty();
 
     public int health() {
         return health;
@@ -49,6 +63,42 @@ public final class ServerPlayerSurvivalState {
 
     public long lastComfortScanTick() {
         return lastComfortScanTick;
+    }
+
+    public StatusEffectState statusEffects() {
+        return statusEffects;
+    }
+
+    public boolean hasStatusEffect(StatusEffectType type) {
+        return statusEffects.has(type);
+    }
+
+    public Set<StatusEffectType> activeStatusTypes() {
+        EnumSet<StatusEffectType> active = EnumSet.noneOf(StatusEffectType.class);
+        for (ActiveStatusEffect effect : statusEffects.effects()) {
+            active.add(effect.type());
+        }
+        return Set.copyOf(active);
+    }
+
+    public List<StatusEffectSaveState> statusEffectSaveStates() {
+        return statusEffects.saveStates();
+    }
+
+    public StatusEffectChange applyStatusEffect(StatusEffectType type) {
+        return applyStatusEffect(type, -1.0, 1);
+    }
+
+    public StatusEffectChange applyStatusEffect(StatusEffectType type, double durationSeconds, int intensity) {
+        boolean hadEffect = statusEffects.has(type);
+        StatusEffectState previous = statusEffects;
+        statusEffects = durationSeconds > 0.0
+                ? StatusEffectSystem.apply(statusEffects, type, durationSeconds, intensity)
+                : StatusEffectSystem.apply(statusEffects, type);
+        if (previous.equals(statusEffects)) {
+            return StatusEffectChange.UNCHANGED;
+        }
+        return hadEffect ? StatusEffectChange.REFRESHED : StatusEffectChange.APPLIED;
     }
 
     public void updateComfort(int comfort, long tick) {
@@ -87,7 +137,12 @@ public final class ServerPlayerSurvivalState {
             return;
         }
 
-        float hungerMultiplier = ComfortRules.hungerDrainMultiplier(this.comfort);
+        StatusEffectTickResult statusTick = StatusEffectSystem.tick(statusEffects, delta);
+        statusEffects = statusTick.state();
+        applyStatusPulses(statusTick.pulses());
+
+        StatusEffectModifiers statusModifiers = StatusEffectSystem.combinedModifiers(statusEffects);
+        float hungerMultiplier = (float) (ComfortRules.hungerDrainMultiplier(this.comfort) * statusModifiers.hungerDrainMultiplier());
         hungerDrain += delta * 0.08f * hungerMultiplier;
         if (moving) {
             hungerDrain += delta * 0.16f * hungerMultiplier;
@@ -96,7 +151,9 @@ public final class ServerPlayerSurvivalState {
             stamina = Math.max(0.0f, stamina - delta * SPRINT_STAMINA_DRAIN_PER_SECOND);
             hungerDrain += delta * SPRINT_HUNGER_DRAIN_PER_SECOND * hungerMultiplier;
         } else {
-            float staminaRegen = (hunger > 4 ? 3.0f : 1.25f) * ComfortRules.staminaRegenMultiplier(this.comfort);
+            float staminaRegen = (float) ((hunger > 4 ? 3.0f : 1.25f)
+                    * ComfortRules.staminaRegenMultiplier(this.comfort)
+                    * statusModifiers.staminaRegenMultiplier());
             stamina = Math.min(MAX_STAT, stamina + delta * staminaRegen);
         }
         while (hungerDrain >= 1.0f) {
@@ -121,7 +178,8 @@ public final class ServerPlayerSurvivalState {
 
         if (hunger >= 16 && health < MAX_STAT) {
             regenTimer += delta;
-            if (regenTimer >= 4.0f) {
+            float regenInterval = (float) (4.0 / statusModifiers.healthRegenMultiplier());
+            if (regenTimer >= regenInterval) {
                 regenTimer = 0.0f;
                 health = Math.min(MAX_STAT, health + 1);
                 hungerDrain += 0.35f;
@@ -134,6 +192,24 @@ public final class ServerPlayerSurvivalState {
             health = Math.max(0, health - 1);
             breath = 2.0f;
             regenTimer = 0.0f;
+        }
+    }
+
+    private void applyStatusPulses(List<StatusEffectPulse> pulses) {
+        for (StatusEffectPulse pulse : pulses) {
+            StatusEffectTickEffect effect = pulse.effect();
+            if (effect.healthDelta() != 0) {
+                health = clamp(health + effect.healthDelta(), 0, MAX_STAT);
+                if (effect.healthDelta() < 0) {
+                    regenTimer = 0.0f;
+                }
+            }
+            if (effect.hungerDelta() != 0) {
+                hunger = clamp(hunger + effect.hungerDelta(), 0, MAX_STAT);
+            }
+            if (effect.staminaDelta() != 0) {
+                stamina = clamp(Math.round(stamina + effect.staminaDelta()), 0, MAX_STAT);
+            }
         }
     }
 
@@ -184,10 +260,15 @@ public final class ServerPlayerSurvivalState {
     }
 
     public void loadPersistentStats(int health, int hunger, int stamina, int breath) {
+        loadPersistentStats(health, hunger, stamina, breath, List.of());
+    }
+
+    public void loadPersistentStats(int health, int hunger, int stamina, int breath, List<StatusEffectSaveState> statusEffectSaveStates) {
         this.health = clamp(health, 0, MAX_STAT);
         this.hunger = clamp(hunger, 0, MAX_STAT);
         this.stamina = clamp(stamina, 0, MAX_STAT);
         this.breath = clamp(breath, 0, MAX_STAT);
+        statusEffects = StatusEffectSystem.restore(statusEffectSaveStates);
         armor = 0;
         comfort = 0;
         hungerDrain = 0.0f;
@@ -198,5 +279,11 @@ public final class ServerPlayerSurvivalState {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    public enum StatusEffectChange {
+        UNCHANGED,
+        APPLIED,
+        REFRESHED
     }
 }

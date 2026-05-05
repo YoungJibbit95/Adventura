@@ -33,9 +33,9 @@ public final class GameSettings {
 
     private int renderDistanceChunks;
     private int previewRadiusChunks;
-    private int meshBuildBudgetChunks = 2;
-    private double meshBuildBudgetMilliseconds = 3.0;
-    private double gpuUploadBudgetMilliseconds = 2.0;
+    private int meshBuildBudgetChunks = 8;
+    private double meshBuildBudgetMilliseconds = 10.0;
+    private double gpuUploadBudgetMilliseconds = 8.0;
     private int fieldOfViewDegrees = 72;
     private int mouseSensitivityPercent = 100;
     private int uiScalePercent = 100;

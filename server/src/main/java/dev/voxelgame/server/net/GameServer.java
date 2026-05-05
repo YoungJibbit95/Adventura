@@ -6,6 +6,7 @@ import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.server.TickLoop;
 import dev.voxelgame.server.auth.AuthProvider;
 import dev.voxelgame.server.entity.ServerEntityTracker;
+import dev.voxelgame.server.save.SaveQueue;
 import dev.voxelgame.server.world.ServerWorld;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
@@ -30,6 +31,7 @@ public final class GameServer implements AutoCloseable {
     private final ServerEntityTracker entityTracker;
     private final Path playerSaveDirectory;
     private final ServerChunkStreamer chunkStreamer;
+    private final SaveQueue saveQueue;
     private volatile long lastPhysicsTickNanos;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -40,12 +42,23 @@ public final class GameServer implements AutoCloseable {
     }
 
     public GameServer(int port, ServerWorld world, AuthProvider authProvider, Path playerSaveDirectory) {
+        this(port, world, authProvider, playerSaveDirectory, SaveQueue.createDefault());
+    }
+
+    public GameServer(
+            int port,
+            ServerWorld world,
+            AuthProvider authProvider,
+            Path playerSaveDirectory,
+            SaveQueue saveQueue
+    ) {
         this.port = port;
         this.world = world;
         this.authProvider = authProvider;
         this.entityTracker = new ServerEntityTracker(world.seed(), world::entityPlacementClear);
         this.playerSaveDirectory = playerSaveDirectory;
         this.chunkStreamer = ServerChunkStreamer.createDefault();
+        this.saveQueue = saveQueue == null ? SaveQueue.createDefault() : saveQueue;
     }
 
     public void start() throws InterruptedException {
@@ -63,7 +76,7 @@ public final class GameServer implements AutoCloseable {
                                 .addLast(new LengthFieldPrepender(4))
                                 .addLast(new NettyPacketDecoder())
                                 .addLast(new NettyPacketEncoder())
-                                .addLast(new ServerConnectionHandler(world, authProvider, entityTracker, playerSaveDirectory, chunkStreamer));
+                                .addLast(new ServerConnectionHandler(world, authProvider, entityTracker, playerSaveDirectory, chunkStreamer, saveQueue));
                     }
                 });
 
@@ -148,6 +161,10 @@ public final class GameServer implements AutoCloseable {
         ServerConnectionHandler.broadcastServerStats(world);
     }
 
+    public SaveQueue.SaveQueueStats saveQueueStats() {
+        return saveQueue.stats();
+    }
+
     public void tickCooking(double nowSeconds) {
         ServerConnectionHandler.tickCookingJobs(nowSeconds);
     }
@@ -165,6 +182,7 @@ public final class GameServer implements AutoCloseable {
             workerGroup.shutdownGracefully();
         }
         chunkStreamer.close();
+        saveQueue.close();
     }
 
     public record ServerPhysicsStats(

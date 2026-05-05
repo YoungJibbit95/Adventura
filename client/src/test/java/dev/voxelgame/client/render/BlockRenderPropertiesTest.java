@@ -22,7 +22,7 @@ class BlockRenderPropertiesTest {
         assertEquals(BlockRenderProperties.MATERIAL_INDEX_LIMIT * 4, BlockRenderProperties.shaderColorAlphaTable().length);
         assertEquals(BlockRenderProperties.MATERIAL_INDEX_LIMIT * 4, BlockRenderProperties.shaderEffectsTable().length);
         RenderMaterial[] materials = RenderMaterial.fromRegistry(Blocks.createDefaultRegistry());
-        assertTrue(materials.length > Blocks.FORGE);
+        assertTrue(materials.length > Blocks.LAVA);
         assertTrue(materials.length <= BlockRenderProperties.MATERIAL_INDEX_LIMIT);
     }
 
@@ -47,8 +47,10 @@ class BlockRenderPropertiesTest {
     @Test
     void translucentAnimatedBlocksExposeShaderEffects() {
         BlockRenderProperties water = BlockRenderProperties.forBlock(Blocks.WATER);
+        BlockRenderProperties lava = BlockRenderProperties.forBlock(Blocks.LAVA);
         float[] effects = BlockRenderProperties.effectsTable();
         int offset = Blocks.WATER * 4;
+        int lavaOffset = Blocks.LAVA * 4;
 
         assertEquals(0.58f, water.alpha(), 0.0001f);
         assertTrue(water.animatedFluid());
@@ -57,6 +59,13 @@ class BlockRenderPropertiesTest {
         assertTrue((water.materialFlags() & BlockRenderProperties.FLAG_TRANSLUCENT) != 0);
         assertTrue((water.materialFlags() & BlockRenderProperties.FLAG_ANIMATED_FLUID) != 0);
         assertEquals(1.0f, effects[offset + 1], 0.0001f);
+        assertEquals(0.72f, lava.alpha(), 0.0001f);
+        assertEquals(1.0f, lava.emissive(), 0.0001f);
+        assertTrue(lava.animatedFluid());
+        assertTrue((lava.materialFlags() & BlockRenderProperties.FLAG_TRANSLUCENT) != 0);
+        assertTrue((lava.materialFlags() & BlockRenderProperties.FLAG_EMISSIVE) != 0);
+        assertEquals(1.0f, effects[lavaOffset], 0.0001f);
+        assertEquals(1.0f, effects[lavaOffset + 1], 0.0001f);
     }
 
     @Test
@@ -65,6 +74,7 @@ class BlockRenderPropertiesTest {
 
         assertTrue(BlockRenderProperties.fillsTextureGaps(Blocks.STONE));
         assertTrue(BlockRenderProperties.fillsTextureGaps(Blocks.WATER));
+        assertTrue(BlockRenderProperties.fillsTextureGaps(Blocks.LAVA));
         assertTrue(BlockRenderProperties.fillsTextureGaps(Blocks.SMALL_TABLE));
         assertEquals(1.0f, effects[Blocks.STONE * 4 + 3], 0.0001f);
         assertEquals(1.0f, effects[Blocks.WATER * 4 + 3], 0.0001f);

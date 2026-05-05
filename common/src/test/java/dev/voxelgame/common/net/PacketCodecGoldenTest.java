@@ -38,7 +38,7 @@ class PacketCodecGoldenTest {
                 new Fixture(
                         PacketType.HANDSHAKE,
                         new GamePacket.Handshake(GamePacket.PROTOCOL_VERSION, "voxel-client"),
-                        "0000000100000018000c766f78656c2d636c69656e74"
+                        "0000000100000019000c766f78656c2d636c69656e74"
                 ),
                 new Fixture(
                         PacketType.LOGIN_REQUEST,
@@ -52,8 +52,8 @@ class PacketCodecGoldenTest {
                 ),
                 new Fixture(
                         PacketType.LOGIN_REJECTED,
-                        new GamePacket.LoginRejected("Protocol mismatch: server uses 24"),
-                        "00000004002150726f746f636f6c206d69736d617463683a207365727665722075736573203234"
+                        new GamePacket.LoginRejected("Protocol mismatch: server uses 25"),
+                        "00000004002150726f746f636f6c206d69736d617463683a207365727665722075736573203235"
                 ),
                 new Fixture(
                         PacketType.CHUNK_DATA,
@@ -172,8 +172,8 @@ class PacketCodecGoldenTest {
                 ),
                 new Fixture(
                         PacketType.SERVER_STATS_SNAPSHOT,
-                        new GamePacket.ServerStatsSnapshot(9, 3L, 42L, 18L, 7L, 2L, 1L, 4L, 64L, 8192L, 128L, 12.5),
-                        "00000017000000090000000000000003000000000000002a000000000000001200000000000000070000000000000002000000000000000100000000000000040000000000000040000000000000200000000000000000804029000000000000"
+                        new GamePacket.ServerStatsSnapshot(9, 3L, 42L, 18L, 7L, 2L, 1L, 4L, 64L, 8192L, 128L, 12.5, 6, 1, 11L, 10L, 2L, 3L, 4096L, 17L, 1.7, 0.5, 2048.0, 3.25, 0.1),
+                        "00000017000000090000000000000003000000000000002a0000000000000012000000000000000700000000000000020000000000000001000000000000000400000000000000400000000000002000000000000000008040290000000000000000000600000001000000000000000b000000000000000a00000000000000020000000000000003000000000000100000000000000000113ffb3333333333333fe000000000000040a0000000000000400a0000000000003fb999999999999a"
                 ),
                 new Fixture(
                         PacketType.PROJECTILE_SHOOT,

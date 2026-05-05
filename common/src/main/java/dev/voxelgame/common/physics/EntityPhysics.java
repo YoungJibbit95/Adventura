@@ -41,6 +41,44 @@ public final class EntityPhysics {
         return snapshot.withVelocity(velocityX, velocityY, velocityZ);
     }
 
+    public static EntitySnapshot applyFluidForces(
+            EntitySnapshot current,
+            EntityPhysicsProfile profile,
+            FluidPhysics.FluidSample sample,
+            double deltaSeconds
+    ) {
+        Objects.requireNonNull(current, "current");
+        Objects.requireNonNull(sample, "sample");
+        profile = profile == null ? EntityPhysicsProfile.forType(current.typeKey()) : profile;
+        deltaSeconds = PhysicsNumericGuard.requireFiniteNonNegative("Entity fluid delta", deltaSeconds);
+        if (!sample.inFluid()
+                || deltaSeconds == 0.0
+                || profile.waterBehavior() == EntityPhysicsProfile.WaterBehavior.IGNORE
+                || profile.fluidBuoyancyFactor() <= 0.0) {
+            return current;
+        }
+
+        double currentBlend = Math.min(1.0, deltaSeconds * fluidCurrentBlendRate(profile));
+        double currentScale = fluidCurrentScale(profile);
+        double horizontalDrag = Math.min(sample.drag() + fluidHorizontalDragAllowance(profile), 0.96);
+        double verticalDrag = Math.min(sample.drag() + 0.10, 0.94);
+
+        double nextVelocityX = (current.velocityX()
+                + (sample.velocityX() * currentScale - current.velocityX()) * currentBlend) * horizontalDrag;
+        double nextVelocityZ = (current.velocityZ()
+                + (sample.velocityZ() * currentScale - current.velocityZ()) * currentBlend) * horizontalDrag;
+        double nextVelocityY = (current.velocityY()
+                + (sample.velocityY() * currentScale - current.velocityY()) * currentBlend) * verticalDrag;
+        nextVelocityY += sample.buoyancy() * profile.fluidBuoyancyFactor() * deltaSeconds;
+        nextVelocityY = clamp(nextVelocityY, -profile.maxFallSpeed(), fluidMaxRiseSpeed(profile));
+
+        return current.withVelocity(
+                restSmallVelocity(nextVelocityX),
+                restSmallVelocity(nextVelocityY),
+                restSmallVelocity(nextVelocityZ)
+        );
+    }
+
     public static EntitySnapshot applyImpulseMotion(EntitySnapshot current, EntitySnapshot candidate, EntityPhysicsProfile profile) {
         Objects.requireNonNull(current, "current");
         Objects.requireNonNull(candidate, "candidate");
@@ -274,6 +312,53 @@ public final class EntityPhysics {
     private static double damp(double value, double friction) {
         double next = value * friction;
         return Math.abs(next) <= REST_VELOCITY ? 0.0 : next;
+    }
+
+    private static double restSmallVelocity(double value) {
+        return Math.abs(value) <= REST_VELOCITY ? 0.0 : value;
+    }
+
+    private static double fluidCurrentBlendRate(EntityPhysicsProfile profile) {
+        return switch (profile.movementClass()) {
+            case FLYER -> 0.0;
+            case SWIMMER -> 1.6;
+            case HEAVY -> 1.1;
+            case TINY -> 3.0;
+            case GROUND -> 1.8;
+        };
+    }
+
+    private static double fluidCurrentScale(EntityPhysicsProfile profile) {
+        return switch (profile.waterBehavior()) {
+            case IGNORE -> 0.0;
+            case SWIM -> 0.45;
+            case FLOAT -> 1.0;
+            case AVOID -> Math.min(0.85, 0.35 + profile.fluidBuoyancyFactor() * 0.45);
+        };
+    }
+
+    private static double fluidHorizontalDragAllowance(EntityPhysicsProfile profile) {
+        return switch (profile.movementClass()) {
+            case FLYER -> 0.0;
+            case SWIMMER -> 0.16;
+            case HEAVY -> 0.05;
+            case TINY -> 0.12;
+            case GROUND -> 0.08;
+        };
+    }
+
+    private static double fluidMaxRiseSpeed(EntityPhysicsProfile profile) {
+        return switch (profile.movementClass()) {
+            case FLYER -> 0.0;
+            case SWIMMER -> 0.12;
+            case HEAVY -> 0.015;
+            case TINY -> 0.18;
+            case GROUND -> 0.08;
+        };
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static double deterministicAngle(long firstId, long secondId) {

@@ -314,6 +314,7 @@ public record EngineFrameStats(
                         safeRenderStats.triangles(),
                         safeParticleStats.budgetUsage(),
                         safeEntityStats.renderedEntities(),
+                        safeNetworkStats.serverStats().saveWriteMillisecondsPerSecond(),
                         (safeNetworkStats.sentPacketsPerSecond() + safeNetworkStats.receivedPacketsPerSecond())
                                 * safeNetworkStats.averagePacketBytes()
                 )
@@ -412,7 +413,13 @@ public record EngineFrameStats(
                     new JobCounter(EngineJobType.CHUNK_GENERATE, 0, 0, safeBuildQueue.completedGenerationJobs(), 0L),
                     new JobCounter(EngineJobType.CHUNK_LIGHT, 0, 0, safeBuildQueue.completedLightingJobs(), 0L),
                     new JobCounter(EngineJobType.CHUNK_MESH, safeBuildQueue.queuedBuilds(), 0, safeBuildQueue.completedBuilds(), safeBuildQueue.canceledBuilds()),
-                    JobCounter.empty(EngineJobType.SAVE_WRITE),
+                    new JobCounter(
+                            EngineJobType.SAVE_WRITE,
+                            serverStats.savePendingWrites(),
+                            serverStats.saveRunningWrites(),
+                            serverStats.saveCompletedWrites(),
+                            serverStats.saveFailedWrites() + serverStats.saveRejectedWrites()
+                    ),
                     new JobCounter(
                             EngineJobType.NET_ENCODE,
                             safeNetwork.chunkStreamQueueLength(),
@@ -593,7 +600,7 @@ public record EngineFrameStats(
     ) {
         public Network {
             serverStats = serverStats == null
-                    ? new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0)
+                    ? GamePacket.ServerStatsSnapshot.empty()
                     : serverStats;
         }
 
@@ -614,7 +621,7 @@ public record EngineFrameStats(
                     0L,
                     0L,
                     0L,
-                    new GamePacket.ServerStatsSnapshot(0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0.0)
+                    GamePacket.ServerStatsSnapshot.empty()
             );
         }
     }
@@ -672,6 +679,8 @@ public record EngineFrameStats(
             double particleUsage,
             int entityBudget,
             double entityUsage,
+            double saveWriteBudgetMillisecondsPerSecond,
+            double saveWriteUsage,
             double networkBytesPerSecondBudget,
             double networkBytesPerSecondUsage
     ) {
@@ -696,12 +705,14 @@ public record EngineFrameStats(
             particleUsage = nonNegative(particleUsage);
             entityBudget = Math.max(0, entityBudget);
             entityUsage = nonNegative(entityUsage);
+            saveWriteBudgetMillisecondsPerSecond = nonNegative(saveWriteBudgetMillisecondsPerSecond);
+            saveWriteUsage = nonNegative(saveWriteUsage);
             networkBytesPerSecondBudget = nonNegative(networkBytesPerSecondBudget);
             networkBytesPerSecondUsage = nonNegative(networkBytesPerSecondUsage);
         }
 
         static Budgets empty() {
-            return new Budgets("Medium", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0, 0.0, 0, 0.0, 0.0, 0, 0.0, 0.0, 0.0);
+            return new Budgets("Medium", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L, 0.0, 0, 0.0, 0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
 
         static Budgets capture(
@@ -716,6 +727,7 @@ public record EngineFrameStats(
                 int triangles,
                 double particleUsage,
                 int renderedEntities,
+                double saveWriteMillisecondsPerSecond,
                 double networkBytesPerSecond
         ) {
             AlphaBudgetProfile profile = AlphaBudgetProfile.from(settings);
@@ -742,6 +754,8 @@ public record EngineFrameStats(
                     particleUsage,
                     profile.entityBudget(),
                     ratio(renderedEntities, profile.entityBudget()),
+                    profile.saveWriteBudgetMillisecondsPerSecond(),
+                    ratio(saveWriteMillisecondsPerSecond, profile.saveWriteBudgetMillisecondsPerSecond()),
                     profile.networkBytesPerSecondBudget(),
                     ratio(networkBytesPerSecond, profile.networkBytesPerSecondBudget())
             );
@@ -766,18 +780,19 @@ public record EngineFrameStats(
             int drawCallBudget,
             int triangleBudget,
             int entityBudget,
+            double saveWriteBudgetMillisecondsPerSecond,
             double networkBytesPerSecondBudget
     ) {
         static AlphaBudgetProfile from(GameSettings settings) {
             int renderDistance = settings == null ? RenderPreset.MEDIUM.renderDistanceChunks() : settings.renderDistanceChunks();
             String label = settings == null ? RenderPreset.MEDIUM.label() : settings.activePresetLabel();
             if (renderDistance <= RenderPreset.LOW.renderDistanceChunks()) {
-                return new AlphaBudgetProfile(label, 1000.0 / 30.0, 1.0, 1.0, 1.5, 1.0, 1_000_000L, 650, 300_000, 64, 64_000.0);
+                return new AlphaBudgetProfile(label, 1000.0 / 30.0, 1.0, 1.0, 1.5, 1.0, 1_000_000L, 650, 300_000, 64, 8.0, 64_000.0);
             }
             if (renderDistance >= RenderPreset.HIGH.renderDistanceChunks()) {
-                return new AlphaBudgetProfile(label, 1000.0 / 60.0, 2.0, 2.0, 5.0, 4.0, 4_000_000L, 1_800, 1_500_000, 256, 256_000.0);
+                return new AlphaBudgetProfile(label, 1000.0 / 60.0, 2.0, 2.0, 5.0, 4.0, 4_000_000L, 1_800, 1_500_000, 256, 32.0, 256_000.0);
             }
-            return new AlphaBudgetProfile(label, 1000.0 / 60.0, 1.5, 1.5, 3.0, 2.0, 2_000_000L, 1_100, 800_000, 128, 128_000.0);
+            return new AlphaBudgetProfile(label, 1000.0 / 60.0, 1.5, 1.5, 3.0, 2.0, 2_000_000L, 1_100, 800_000, 128, 16.0, 128_000.0);
         }
     }
 }

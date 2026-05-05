@@ -10,25 +10,26 @@ public record EntityPhysicsProfile(
         double recoveryStep,
         double knockbackFriction,
         double knockbackGravity,
-        double maxFallSpeed
+        double maxFallSpeed,
+        double fluidBuoyancyFactor
 ) {
     public static EntityPhysicsProfile forType(String typeKey) {
         if (ItemDropType.isTypeKey(typeKey)) {
-            return new EntityPhysicsProfile(MovementClass.TINY, WaterBehavior.FLOAT, 0.05, 0.10, 0.08, 0.72, 0.05, 0.26);
+            return new EntityPhysicsProfile(MovementClass.TINY, WaterBehavior.FLOAT, 0.05, 0.10, 0.08, 0.72, 0.05, 0.26, 0.90);
         }
         return switch (typeKey) {
             case "voxel:firefly_swarm", "voxel:mire_wisp" ->
-                    new EntityPhysicsProfile(MovementClass.FLYER, WaterBehavior.IGNORE, 0.06, 0.12, 0.12, 0.86, 0.0, 0.0);
+                    new EntityPhysicsProfile(MovementClass.FLYER, WaterBehavior.IGNORE, 0.06, 0.12, 0.12, 0.86, 0.0, 0.0, 0.0);
             case "voxel:forest_bunny", "voxel:snow_hare" ->
-                    new EntityPhysicsProfile(MovementClass.TINY, WaterBehavior.AVOID, 0.07, 0.16, 0.12, 0.82, 0.04, 0.24);
+                    new EntityPhysicsProfile(MovementClass.TINY, WaterBehavior.AVOID, 0.07, 0.16, 0.12, 0.82, 0.04, 0.24, 0.90);
             case "voxel:moss_snail" ->
-                    new EntityPhysicsProfile(MovementClass.HEAVY, WaterBehavior.AVOID, 0.06, 0.06, 0.06, 0.55, 0.02, 0.12);
+                    new EntityPhysicsProfile(MovementClass.HEAVY, WaterBehavior.AVOID, 0.06, 0.06, 0.06, 0.55, 0.02, 0.12, 0.15);
             case "voxel:little_boar", "voxel:dune_crawler" ->
-                    new EntityPhysicsProfile(MovementClass.HEAVY, WaterBehavior.AVOID, 0.09, 0.11, 0.10, 0.68, 0.05, 0.22);
+                    new EntityPhysicsProfile(MovementClass.HEAVY, WaterBehavior.AVOID, 0.09, 0.11, 0.10, 0.68, 0.05, 0.22, 0.15);
             case "voxel:cozy_sheep", "voxel:forest_grazer", "voxel:meadow_grazer" ->
-                    new EntityPhysicsProfile(MovementClass.GROUND, WaterBehavior.AVOID, 0.08, 0.13, 0.10, 0.74, 0.04, 0.20);
+                    new EntityPhysicsProfile(MovementClass.GROUND, WaterBehavior.AVOID, 0.08, 0.13, 0.10, 0.74, 0.04, 0.20, 0.35);
             default ->
-                    new EntityPhysicsProfile(MovementClass.GROUND, WaterBehavior.AVOID, 0.08, 0.12, 0.10, 0.72, 0.04, 0.20);
+                    new EntityPhysicsProfile(MovementClass.GROUND, WaterBehavior.AVOID, 0.08, 0.12, 0.10, 0.72, 0.04, 0.20, 0.35);
         };
     }
 
@@ -41,6 +42,7 @@ public record EntityPhysicsProfile(
         knockbackFriction = PhysicsNumericGuard.requireFiniteNonNegative("Entity knockback friction", knockbackFriction);
         knockbackGravity = PhysicsNumericGuard.requireFiniteNonNegative("Entity knockback gravity", knockbackGravity);
         maxFallSpeed = PhysicsNumericGuard.requireFiniteNonNegative("Entity max fall speed", maxFallSpeed);
+        fluidBuoyancyFactor = PhysicsNumericGuard.requireFiniteNonNegative("Entity fluid buoyancy factor", fluidBuoyancyFactor);
     }
 
     public boolean needsGroundSupport() {

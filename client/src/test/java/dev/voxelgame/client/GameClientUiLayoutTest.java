@@ -1,6 +1,7 @@
 package dev.voxelgame.client;
 
 import dev.voxelgame.client.ui.BitmapFont;
+import dev.voxelgame.client.viewmodel.LoadingScreenViewModel;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -40,6 +41,20 @@ class GameClientUiLayoutTest {
         assertCraftingLayoutFits(1280, 720, 2.0f);
     }
 
+    @Test
+    void loadingLayoutKeepsProgressBarAndTextInsideViewport() {
+        assertLoadingLayoutFits(360, 280, 2.0f);
+        assertLoadingLayoutFits(640, 480, 1.5f);
+        assertLoadingLayoutFits(1280, 720, 2.0f);
+    }
+
+    @Test
+    void loadingBarFillUsesProgressOrIndeterminateAnimation() {
+        assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.streamingSpawn(3, 4), 0.0) >= 0.75);
+        assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.boot(), 0.0) >= 0.18);
+        assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.boot(), 1.0) <= 0.82);
+    }
+
     private static void assertStorageLayoutFits(int width, int height, float uiScale) {
         GameClient.StorageScreenLayout layout = GameClient.storageScreenLayout(width, height, uiScale);
 
@@ -49,6 +64,18 @@ class GameClientUiLayoutTest {
         assertTrue(layout.backpackPanelY() + layout.backpackPanelHeight() < layout.closeY());
         assertTrue(layout.bottom() <= height + 0.01f);
         assertTrue(layout.slot() >= 18.0f);
+    }
+
+    private static void assertLoadingLayoutFits(int width, int height, float uiScale) {
+        GameClient.LoadingScreenLayout layout = GameClient.loadingScreenLayout(width, height, uiScale);
+
+        assertTrue(layout.barX() >= 0.0f);
+        assertTrue(layout.barX() + layout.barWidth() <= width + 0.01f);
+        assertTrue(layout.titleY() >= 0.0f);
+        assertTrue(layout.detailY() > layout.titleY());
+        assertTrue(layout.barY() > layout.detailY());
+        assertTrue(layout.bottom() <= height + 0.01f);
+        assertTrue(layout.border() > 0.0f);
     }
 
     private static void assertSettingsLayoutFits(int width, int height) {

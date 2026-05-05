@@ -119,21 +119,32 @@ Physics soll stabil, vorhersehbar, cozy und multiplayer-sicher bleiben. Server-A
 - ~~Wasseroberflaechen-Transitions weiter testen: Reinfallen, Auftauchen, Springen an Kante.~~
 - ~~Underwater Audio/Tint an echten `headUnderwater`-State binden.~~
 - ~~Tests fuer fallende Items und Projectiles durch Wasser/Luft-Grenzen ergaenzen, sobald Buoyancy/Fluid-Forces existieren.~~
-- 🔴 Buoyancy fuer leichte Ambient-Entities ausbauen.
-- 🔴 Lava als eigener Fluid-/Hazard-Block fehlt noch.
+- ~~🔴 Buoyancy fuer leichte Ambient-Entities ausbauen.~~
+  Erledigt: 2026-05-02 - Ambient-Entities nutzen `EntityPhysics.applyFluidForces(...)` mit profilbasiertem Buoyancy-Faktor vor Sweep/Slide.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.EntityPhysicsTest :server:test --tests dev.voxelgame.server.entity.ServerEntityTrackerTest.ambientEntitiesApplyFluidForcesBeforeSweep :common:physicsRegression :server:physicsRegression -PadventuraTestRunId=p3_entity_fluid_final_1 --no-daemon --max-workers=1`.
+- ~~🔴 Lava als eigener Fluid-/Hazard-Block fehlt noch.~~
+  Erledigt: 2026-05-02 - `voxel:lava` ist als leuchtender, nicht kollidierender Translucent-Fluid-Block mit Item-Key, RenderMaterial/Atlas-Mapping, `FluidPhysics.lava(...)`, ServerWorld-Fluid-Sample und `EnvironmentHazardRules`-Hazard umgesetzt.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.FluidPhysicsTest --tests dev.voxelgame.common.physics.EnvironmentHazardRulesTest --tests dev.voxelgame.common.content.ContentTagRegistryTest --tests dev.voxelgame.common.block.BlockRegistryDataTest --tests dev.voxelgame.common.block.BlockDropRegistryTest --tests dev.voxelgame.common.item.ItemRegistryDataTest :server:test --tests dev.voxelgame.server.world.ServerWorldTest --tests dev.voxelgame.server.entity.DroppedItemEntityTest :client:test --tests dev.voxelgame.client.render.BlockRenderPropertiesTest --tests dev.voxelgame.client.render.assets.BlockTextureAtlasTest -PadventuraTestRunId=p3_lava_contract_3 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression :server:physicsRegression :client:physicsRegression -PadventuraTestRunId=p3_lava_regression_2 --no-daemon --max-workers=1`.
+- 🟡 Lava-Folgepolish: echte Item-Verbrennung/Despawn-Entscheidung braucht ein eigenes Item-Damage-/Destroy-System; dedizierte Kamera-in-Lava-/Audio-Cues gehoeren spaeter in Client/UI-Audio-Polish.
 
 ## Umgesetzt
 
 - `FluidPhysics` modelliert `FluidSample` mit Velocity, Drag und Buoyancy. `ServerWorld.fluidSample` liefert fuer Wasser optionale Current-Vektoren.
 - Projectiles nutzen Fluid-Samples statt reiner `inWater`-Sonderlogik; Items bekommen Buoyancy und Current-Drift ueber `DroppedItemEntity.tick(..., FluidQuery)`.
+- Ambient-Entities bekommen Fluid-Kraefte ueber den gemeinsamen `EntityPhysics`-Pfad. `EntityPhysicsProfile` traegt profilbasierte Buoyancy-Faktoren: tiny/float stark, heavy schwach, swimmer kontrolliert, flyer ignoriert.
+- Lava nutzt denselben Fluid-Sample-Pfad wie Wasser, aber mit hoher Viskositaet, niedriger Buoyancy und autoritativem Hot-Hazard. Player-Water-State bleibt bewusst wasser-spezifisch.
 - `EnvironmentHazardRules` klassifiziert aktive Campfires als Hot-Block, Cactus als Thorn-Hazard und Ice/Snow als Cold-Hazard. Server-Spieler bekommen Umwelt-Damage autoritativ mit Cooldown.
 - Client-Audio bekommt einen echten `underwater`-State aus `headUnderwater`; Render-Tint/Fog bleiben an denselben State gebunden.
 - Tests decken Projectile-Current, Item-Buoyancy, Hot/Cold/Thorn-Hazards und Wasser-Fallimpact ab.
 
 ## 🔴 Braucht Engine/Tool
 
-- `EntityFluidForceStep`: Ambient-Entities brauchen als naechstes Fluid-Forces im gemeinsamen `EntityPhysics`-Pfad. API-Vorschlag: `EntityPhysics.applyFluidForces(EntitySnapshot current, EntityPhysicsProfile profile, FluidSample sample, double deltaSeconds)`. Profile sollten Masse/Buoyancy-Faktor tragen, z.B. `tiny=0.9`, `heavy=0.15`, `swimmer=kontrolliert`, `flyer=ignoriert`. ServerEntityTracker ruft das vor Sweep/Slide auf. Tests: Bunny treibt leicht, Boar kaum, Swimmer bleibt steuerbar, Flyer ignoriert Wasser.
-- `LavaMaterialBlock`: Fuer Lava braucht die Engine einen Block in `Blocks`/`Items`, RenderMaterial mit emissive/animated fluid, `FluidPhysics.lava(...)` mit hoher Viskositaet, `EnvironmentHazardRules` mit Fire-Damage und ServerWorld-FluidSample. Client braucht Tint/Audio getrennt von Wasser. Tests: Player nimmt Damage, Projectiles werden stark gedampft, Items sinken/verbrennen erst spaeter wenn Item-Damage existiert.
+- ~~`EntityFluidForceStep`: Ambient-Entities brauchen als naechstes Fluid-Forces im gemeinsamen `EntityPhysics`-Pfad. API-Vorschlag: `EntityPhysics.applyFluidForces(EntitySnapshot current, EntityPhysicsProfile profile, FluidSample sample, double deltaSeconds)`. Profile sollten Masse/Buoyancy-Faktor tragen, z.B. `tiny=0.9`, `heavy=0.15`, `swimmer=kontrolliert`, `flyer=ignoriert`. ServerEntityTracker ruft das vor Sweep/Slide auf. Tests: Bunny treibt leicht, Boar kaum, Swimmer bleibt steuerbar, Flyer ignoriert Wasser.~~
+  Erledigt: 2026-05-02 - Contract umgesetzt und an `ServerEntityTracker.tickAmbient(..., FluidQuery)` angeschlossen.
+  Verifikation: `EntityPhysicsTest` deckt Bunny/Boar/Swimmer/Flyer ab; `ServerEntityTrackerTest.ambientEntitiesApplyFluidForcesBeforeSweep` prueft den Server-Step.
+- ~~`LavaMaterialBlock`: Fuer Lava braucht die Engine einen Block in `Blocks`/`Items`, RenderMaterial mit emissive/animated fluid, `FluidPhysics.lava(...)` mit hoher Viskositaet, `EnvironmentHazardRules` mit Fire-Damage und ServerWorld-FluidSample. Client braucht Tint/Audio getrennt von Wasser. Tests: Player nimmt Damage, Projectiles werden stark gedampft, Items sinken/verbrennen erst spaeter wenn Item-Damage existiert.~~
+  Erledigt: 2026-05-02 - Core-Contract umgesetzt; Item-Drops werden in Lava stark gebremst und noch nicht verbrannt, bis ein explizites Item-Damage-System existiert.
+  Verifikation: `FluidPhysicsTest`, `EnvironmentHazardRulesTest`, `ServerWorldTest`, `DroppedItemEntityTest`, `BlockRenderPropertiesTest`, `BlockTextureAtlasTest`.
 
 ## Akzeptanz
 
@@ -159,9 +170,10 @@ Diese Punkte sind nicht nur Physics, aber sie wuerden die Base deutlich besser f
 - 🟠 `StatusEffectSystem`: Common-Contract fuer Dauer, Stack-Regel, Tick-Rate, Movement-/Stamina-Modifier und Save-State.
   Status: Common-Regeln erledigt am 2026-05-01 in `common.gameplay.status` mit Definitionen fuer burning, chilled, wet, rested, cozy und poison. Server-State, Save-Felder und Client-Events bleiben Anschlussarbeit.
   Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.gameplay.status.StatusEffectSystemTest -PadventuraTestRunId=status_effect_common_2 --no-daemon --max-workers=1`.
-- 🔴 `PhysicsReplayRecorder`: Tool zum Mitschneiden echter Server-Steps als Golden-Replay. Format: JSONL pro Tick mit Input, World-Sample-Hashes, Entity-Snapshots, Projectile-Hits und Stats. CLI: `./gradlew recordPhysicsReplay --scenario ...` und `./gradlew physicsRegression`.
-  Status: Common-Format/Recorder erledigt am 2026-05-01 mit `PhysicsReplayFrame`, `PhysicsReplayCodec`, `PhysicsReplayRecorder` und JSONL-Testresource. Offen: echte Server-Szenario-Aufzeichnung und `recordPhysicsReplay`-Gradle-Task.
-  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.PhysicsReplayRecorderTest -PadventuraTestRunId=p42a_replay_5 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+- ~~🔴 `PhysicsReplayRecorder`: Tool zum Mitschneiden echter Server-Steps als Golden-Replay. Format: JSONL pro Tick mit Input, World-Sample-Hashes, Entity-Snapshots, Projectile-Hits und Stats. CLI: `./gradlew recordPhysicsReplay --scenario ...` und `./gradlew physicsRegression`.~~
+  Erledigt: 2026-05-02 - Common-Format/Recorder plus serverseitiger `PhysicsReplayScenarioRecorder` fuer das deterministische `projectile-impact`-Szenario. Gradle-Task: `./gradlew recordPhysicsReplay -Pscenario=projectile-impact -Pseed=12345 -Pticks=8 -Pout=build/physics-replays/test-projectile-impact.jsonl`.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.PhysicsReplayRecorderTest -PadventuraTestRunId=p42a_replay_5 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`; `./gradlew :server:test --tests dev.voxelgame.server.physics.PhysicsReplayScenarioRecorderTest -PadventuraTestRunId=p42b_server_replay_1 --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew recordPhysicsReplay -Pscenario=projectile-impact -Pseed=12345 -Pticks=8 -Pout=build/physics-replays/test-projectile-impact.jsonl -PadventuraTestRunId=p42b_record_task_1 --no-daemon --max-workers=1 --rerun-tasks`.
+  Nachverifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.EntityPhysicsTest :server:test --tests dev.voxelgame.server.entity.ServerEntityTrackerTest.ambientEntitiesApplyFluidForcesBeforeSweep :common:physicsRegression :server:physicsRegression -PadventuraTestRunId=p3_entity_fluid_final_1 --no-daemon --max-workers=1` laeuft am 2026-05-02 erfolgreich.
 
 ---
 
@@ -221,6 +233,9 @@ Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Dev
 - ~~🟠 In Arbeit 2026-05-01: `P4.2a PhysicsReplayRecorder` mit versioniertem JSONL-Frame-Format, Common-Recorder/Parser und Regression-Testresource.~~
   Erledigt: 2026-05-01 - JSONL-Schema V1 deckt Tick, Input, Player-State, Entity-State, Projectile-State, Block-Samples, Event-Output und Stats ab; Common-Recorder erzwingt monoton steigende Ticks und liefert `recordStep(...)` als Server-Anschluss.
   Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.PhysicsReplayRecorderTest -PadventuraTestRunId=p42a_replay_5 --no-daemon --max-workers=1`; `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+- ~~🔴 In Arbeit 2026-05-02: `P4.2b ServerPhysicsReplayScenarioRecorder` fuer echte Server-Step-Aufzeichnung und `recordPhysicsReplay`-Gradle-Task.~~
+  Erledigt: 2026-05-02 - Server-Runner zeichnet `projectile-impact` ueber `ServerWorld.projectileImpact`, `ServerWorld.fluidSample` und `ServerEntityTracker.tickProjectiles` auf; Frames enthalten Block-Samples, `worldSampleHash`, Entity-/Projectile-Snapshots und terminale Projectile-Hit-Events.
+  Verifikation: `./gradlew :server:test --tests dev.voxelgame.server.physics.PhysicsReplayScenarioRecorderTest -PadventuraTestRunId=p42b_server_replay_1 --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew recordPhysicsReplay -Pscenario=projectile-impact -Pseed=12345 -Pticks=8 -Pout=build/physics-replays/test-projectile-impact.jsonl -PadventuraTestRunId=p42b_record_task_1 --no-daemon --max-workers=1 --rerun-tasks`.
 
 ### Offen
 
@@ -243,6 +258,9 @@ Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Dev
 - ~~Regression-Task fuer Golden-Replays planen.~~
   Erledigt: 2026-05-01 - Neue Recorder-Tests tragen `@Tag("physicsRegression")` und laufen mit `:common:physicsRegression`.
   Verifikation: `./gradlew :common:physicsRegression -PadventuraTestRunId=p42a_replay_regression_1 --no-daemon --max-workers=1`.
+- ~~Server-Szenario-Aufzeichnung und CLI-Task ergaenzen.~~
+  Erledigt: 2026-05-02 - `recordPhysicsReplay` schreibt serverseitige JSONL-Replays unter `build/physics-replays/`.
+  Verifikation: `PhysicsReplayScenarioRecorderTest`; `./gradlew recordPhysicsReplay -Pscenario=projectile-impact -Pseed=12345 -Pticks=8 -Pout=build/physics-replays/test-projectile-impact.jsonl -PadventuraTestRunId=p42b_record_task_1 --no-daemon --max-workers=1 --rerun-tasks`.
 
 ### Akzeptanz
 

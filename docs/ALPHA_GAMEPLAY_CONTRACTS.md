@@ -11,6 +11,7 @@ Diese Datei ist der Design-/Code-Vertrag fuer die erste Alpha-Progression. Die m
 - `common/src/main/java/dev/voxelgame/common/gameplay/StationProgression.java`
 - `common/src/main/java/dev/voxelgame/common/gameplay/status/StatusEffectSystem.java`
 - `common/src/main/java/dev/voxelgame/common/gameplay/status/StatusEffectState.java`
+- `common/src/main/java/dev/voxelgame/common/gameplay/status/StatusEffectEnvironmentRules.java`
 - `common/src/main/java/dev/voxelgame/common/content/ContentTagRegistry.java`
 - `common/src/main/java/dev/voxelgame/common/content/AlphaItemDesigns.java`
 
@@ -112,6 +113,28 @@ Owner-Contracts:
 - Server/Save persistiert Entry-/Goal-/Milestone-Keys idempotent pro Player und emittiert Discovery/Recipe/Loot Events nur nach autoritativer Welt-, Inventar- oder Station-State-Aenderung.
 - Worldgen/Loot nutzt Structure-/Loot-Marker, um Journal-Events fuer Campsites, Ruinen, Mushroom Circles und rare Finds nur einmal auszugeben.
 
+## World Structure Catalog
+
+Die maschinenlesbaren Builtin-Structure-Metadaten liegen in `common/src/main/java/dev/voxelgame/common/world/structure/StructureCatalog.java`.
+
+Contract-Scope:
+
+- Structure entries haben Template-Key, abgeleitete Bounds, Palette-Key, erlaubte Rotations, LootTableKeys, EncounterTableKey und JournalKey.
+- Feature Tables duerfen nur Structure-Keys referenzieren, die im Catalog vorhanden sind.
+- Loot-Marker muessen durch Catalog-LootTableKeys gedeckt sein; Encounter-Keys muessen registrierte Entity-Keys oder explizite Entity-Marker des Templates sein.
+- JournalKeys muessen in `JournalProgression` existieren, damit Worldgen-Discovery, UI-Notizen und Server/Save denselben Contract teilen.
+
+## Biome Progression
+
+Die maschinenlesbaren Biome-Designkarten liegen in `common/src/main/java/dev/voxelgame/common/world/gen/BiomeProgressionCatalog.java`.
+
+Contract-Scope:
+
+- Jedes Default-Biom hat `biomeKey`, Progression-Tier, Core-Flag, Silhouette, Farb-/Lichtstimmung, Ressourcen, Tiere, Structures, Gefahren, Umwelt-StatusEffects, Milestone-Bezug, Item-Progression, JournalKeys, Return-Reasons und Seed-Robustness-Notiz.
+- Biome-Progression darf nur Blocks, Items, Entities, Structures, JournalEntries und Milestones referenzieren, die in den Common-Registries existieren.
+- `BiomeProgressionCatalog` muss mit `BiomeResourceProfiles`, `WorldFeatureTables`, `StructureCatalog`, `AlphaMilestones` und `JournalProgression` synchron bleiben.
+- Core-Biome muessen zusammen die Alpha-Milestone-Kette von Spawn bis erstem Rare Find abdecken; optionale/seltene Biome duerfen Bonusrouten sein, aber keine Pflicht-Sackgasse.
+
 ## Cozy-Life und Creature-Design
 
 Die maschinenlesbare Creature-Struktur liegt in `common/src/main/java/dev/voxelgame/common/gameplay/CozyLifeProgression.java`; harte Feeding-/Friendship-Grenzen liegen in `CreatureFriendshipRules`.
@@ -148,6 +171,7 @@ Contract-Scope:
 
 - `StatusEffectDefinition` beschreibt Dauer, maximale Dauer, Tick-Intervall, maximale Intensitaet, Stack-Regel, Sichtbarkeit, Tick-Effekt und Modifier.
 - `StatusEffectSystem` ist die schmale Facade fuer Server-/Physics-Callsites; `StatusEffectState` ist der reine Common-State: apply, remove, tick, kombinierte Modifier und `saveStates()`.
+- `StatusEffectEnvironmentRules` mappt autoritative Environment-Fakten auf StatusEffects: Water -> wet, Hot Hazard -> burning, Cold Hazard/Frost Peaks -> chilled und Comfort ab Schwelle -> cozy.
 - `StatusEffectSaveState` persistiert `effectKey`, `remainingSeconds`, `intensity` und `tickProgressSeconds`.
 - Modifier sind reine Multiplikatoren fuer Movement, Jump, Stamina-Regen, Hunger-Drain und Health-Regen.
 
@@ -165,6 +189,7 @@ Core Alpha Effects:
 Owner-Contracts:
 
 - Server applies and ticks effects authoritatively from Hazards, Biomes, Sleep and Comfort.
+- Server consumes `StatusEffectEnvironmentRules` instead of hard-coded per-block or per-biome effect switches.
 - Physics consumes only `StatusEffectModifiers`, never effect-specific block or biome switches.
-- Networking/Save persists `StatusEffectSaveState` and emits applied/refreshed/expired feedback through GameplayEvents once packet semantics are extended.
+- Save persists player-owned `StatusEffectSaveState` rows through `PlayerSave`; Networking emits applied/refreshed/expired feedback through `GameplayEvent.StatusEffectChanged`.
 - HUD explains active effects from stable `effectKey`s and never invents success/failure client-side.

@@ -13,6 +13,7 @@ public sealed interface GameplayEvent permits
         GameplayEvent.ProjectileImpact,
         GameplayEvent.Sleep,
         GameplayEvent.WeatherThunder,
+        GameplayEvent.StatusEffectChanged,
         GameplayEvent.JournalEntryDiscovered,
         GameplayEvent.RecipeUnlocked,
         GameplayEvent.StructureDiscovered {
@@ -198,6 +199,32 @@ public sealed interface GameplayEvent permits
         @Override
         public String debugKey() {
             return "weather.thunder";
+        }
+    }
+
+    record StatusEffectChanged(
+            long sequence,
+            UUID playerId,
+            String effectKey,
+            String changeKey,
+            int intensity
+    ) implements GameplayEvent {
+        public StatusEffectChanged {
+            requireSequence(sequence);
+            Objects.requireNonNull(playerId, "playerId");
+            effectKey = requireKey(effectKey, "effectKey");
+            changeKey = requireKey(changeKey, "changeKey");
+            requirePositive("intensity", intensity);
+        }
+
+        @Override
+        public GameplayEventType type() {
+            return GameplayEventType.STATUS_EFFECT_CHANGED;
+        }
+
+        @Override
+        public String debugKey() {
+            return "status_effect:" + changeKey + ":" + effectKey;
         }
     }
 

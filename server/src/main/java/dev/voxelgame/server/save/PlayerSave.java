@@ -1,5 +1,7 @@
 package dev.voxelgame.server.save;
 
+import dev.voxelgame.common.gameplay.status.StatusEffectSaveState;
+import dev.voxelgame.common.gameplay.status.StatusEffectState;
 import dev.voxelgame.common.item.ItemStack;
 
 import java.util.List;
@@ -25,6 +27,8 @@ public record PlayerSave(
         List<String> journalEntries,
         List<String> achievedMilestones,
         List<String> completedGoals,
+        List<StatusEffectSaveState> statusEffects,
+        List<CreatureFriendshipState> creatureFriendships,
         String lastWorldKey
 ) {
     public PlayerSave(
@@ -65,6 +69,101 @@ public record PlayerSave(
                 journalEntries,
                 List.of(),
                 List.of(),
+                List.of(),
+                List.of(),
+                lastWorldKey
+        );
+    }
+
+    public PlayerSave(
+            int saveVersion,
+            UUID playerId,
+            String playerName,
+            double x,
+            double y,
+            double z,
+            float yaw,
+            float pitch,
+            List<ItemStack> inventory,
+            int hotbarSelection,
+            SurvivalStats survival,
+            SpawnPoint spawnPoint,
+            String gameMode,
+            List<String> discoveredRecipes,
+            List<String> discoveredBiomes,
+            List<String> journalEntries,
+            List<String> achievedMilestones,
+            List<String> completedGoals,
+            String lastWorldKey
+    ) {
+        this(
+                saveVersion,
+                playerId,
+                playerName,
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+                inventory,
+                hotbarSelection,
+                survival,
+                spawnPoint,
+                gameMode,
+                discoveredRecipes,
+                discoveredBiomes,
+                journalEntries,
+                achievedMilestones,
+                completedGoals,
+                List.of(),
+                List.of(),
+                lastWorldKey
+        );
+    }
+
+    public PlayerSave(
+            int saveVersion,
+            UUID playerId,
+            String playerName,
+            double x,
+            double y,
+            double z,
+            float yaw,
+            float pitch,
+            List<ItemStack> inventory,
+            int hotbarSelection,
+            SurvivalStats survival,
+            SpawnPoint spawnPoint,
+            String gameMode,
+            List<String> discoveredRecipes,
+            List<String> discoveredBiomes,
+            List<String> journalEntries,
+            List<String> achievedMilestones,
+            List<String> completedGoals,
+            List<StatusEffectSaveState> statusEffects,
+            String lastWorldKey
+    ) {
+        this(
+                saveVersion,
+                playerId,
+                playerName,
+                x,
+                y,
+                z,
+                yaw,
+                pitch,
+                inventory,
+                hotbarSelection,
+                survival,
+                spawnPoint,
+                gameMode,
+                discoveredRecipes,
+                discoveredBiomes,
+                journalEntries,
+                achievedMilestones,
+                completedGoals,
+                statusEffects,
+                List.of(),
                 lastWorldKey
         );
     }
@@ -85,6 +184,8 @@ public record PlayerSave(
         journalEntries = journalEntries == null ? List.of() : List.copyOf(journalEntries);
         achievedMilestones = copyProgressKeys(achievedMilestones);
         completedGoals = copyProgressKeys(completedGoals);
+        statusEffects = copyStatusEffects(statusEffects);
+        creatureFriendships = copyCreatureFriendships(creatureFriendships);
         lastWorldKey = lastWorldKey == null ? "" : lastWorldKey;
     }
 
@@ -97,6 +198,39 @@ public record PlayerSave(
                 .map(String::strip)
                 .distinct()
                 .toList();
+    }
+
+    private static List<StatusEffectSaveState> copyStatusEffects(List<StatusEffectSaveState> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return StatusEffectState.fromSaveStates(values).saveStates();
+    }
+
+    private static List<CreatureFriendshipState> copyCreatureFriendships(List<CreatureFriendshipState> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    public record CreatureFriendshipState(
+            String entityKey,
+            int acceptedFeedsTotal,
+            int acceptedFeedsToday,
+            long feedDay,
+            long lastFeedWorldTick
+    ) {
+        public CreatureFriendshipState {
+            entityKey = entityKey == null || entityKey.isBlank() ? "unknown" : entityKey.strip();
+            acceptedFeedsTotal = Math.max(0, acceptedFeedsTotal);
+            acceptedFeedsToday = Math.max(0, acceptedFeedsToday);
+            feedDay = Math.max(0L, feedDay);
+            lastFeedWorldTick = Math.max(0L, lastFeedWorldTick);
+        }
     }
 
     public record SurvivalStats(int health, int hunger, int stamina, int breath) {

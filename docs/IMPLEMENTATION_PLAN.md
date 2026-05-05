@@ -188,7 +188,7 @@ Owner: Physics und Engine Worker.
 
 Status 2026-05-01:
 
-- StatusEffectSystem hat einen Common-Contract fuer burning/chilled/wet/rested/cozy/poison, Modifier, Tick-Pulses und Save-State; Server-Anwendung, Save-Felder und Client-Events bleiben offen.
+- StatusEffectSystem hat einen Common-Contract fuer burning/chilled/wet/rested/cozy/poison, Modifier, Tick-Pulses und Save-State; `StatusEffectEnvironmentRules` mappt autoritative Wasser-/Hazard-/Biome-/Comfort-Fakten, `PlayerSave` persistiert diese StatusEffect-SaveStates und `StatusEffectChanged` liefert Client-Feedback.
 
 Aufgaben:
 

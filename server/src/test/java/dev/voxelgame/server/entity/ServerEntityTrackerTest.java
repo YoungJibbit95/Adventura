@@ -6,6 +6,7 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.physics.EntityPhysics;
+import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.ProjectileHit;
 import dev.voxelgame.common.physics.ProjectileState;
 import org.junit.jupiter.api.Tag;
@@ -156,6 +157,20 @@ class ServerEntityTrackerTest {
         assertEquals(1, stats.activeAmbient());
         assertEquals(1, stats.blockedAmbientMoves());
         assertEquals(1, stats.emittedSnapshots());
+    }
+
+    @Test
+    @Tag("physicsRegression")
+    void ambientEntitiesApplyFluidForcesBeforeSweep() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot bunny = new EntitySnapshot(501L, "voxel:forest_bunny", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        tracker.addAmbient(bunny);
+
+        tracker.tickAmbient(80L, (current, candidate) -> true, (x, y, z) -> FluidPhysics.water(0.30, 0.04, 0.0));
+
+        EntitySnapshot moved = tracker.snapshot(bunny.entityId()).orElseThrow();
+        assertTrue(moved.velocityY() > 0.0);
+        assertTrue(moved.y() > bunny.y());
     }
 
     @Test

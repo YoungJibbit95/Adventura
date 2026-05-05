@@ -18,6 +18,10 @@ public final class JournalProgression {
     public static final String OLD_RUINS = "voxel:journal_biome_old_ruins";
     public static final String SMALL_RUIN = "voxel:journal_structure_small_ruin";
     public static final String MUSHROOM_CIRCLE = "voxel:journal_structure_mushroom_circle";
+    public static final String SIMPLE_HOUSE = "voxel:journal_structure_simple_house";
+    public static final String WATCHTOWER = "voxel:journal_structure_watchtower";
+    public static final String COMPACT_VILLAGE = "voxel:journal_structure_village";
+    public static final String DESERT_WELL = "voxel:journal_structure_desert_well";
     public static final String ANCIENT_FRAGMENT = "voxel:journal_lore_ancient_fragment";
     public static final String RUIN_KEY = "voxel:journal_lore_ruin_key";
     public static final String RUIN_SEAL = "voxel:journal_lore_ruin_seal";
@@ -385,6 +389,78 @@ public final class JournalProgression {
                     "player.journal.entries.first_ruin_map",
                     "Map tab shows discovered marker only after server-confirmed structure discovery.",
                     "Server emits map fragment events from generated structure metadata, no client-only map reveal."
+            ),
+            entry(
+                    SIMPLE_HOUSE,
+                    JournalEntryKind.STRUCTURE_NOTE,
+                    21,
+                    "Simple House",
+                    "A small furnished shelter that teaches home-building parts without turning the biome into a town.",
+                    List.of("discovery.structure.voxel:simple_house"),
+                    List.of("voxel:skyroot_planks", "voxel:resin", "voxel:bark_strip", "voxel:tool_handle"),
+                    List.of("voxel:skyroot_planks", "voxel:small_table", "voxel:wooden_chair", "voxel:flower_pot", "voxel:woven_rug"),
+                    List.of("voxel:cozy_meadow", "voxel:pine_forest", "voxel:skyroot_forest"),
+                    List.of("voxel:simple_house"),
+                    List.of(),
+                    List.of("voxel:workbench", "voxel:small_table", "voxel:wooden_chair"),
+                    List.of(AlphaMilestoneKey.WORKBENCH_READY, AlphaMilestoneKey.FIRST_COMFORT),
+                    "player.journal.entries.simple_house",
+                    "Journal note points from found shelter pieces to player-built comfort.",
+                    "Server emits structure discovery from generated structure metadata and keeps comfort recipes milestone-backed."
+            ),
+            entry(
+                    WATCHTOWER,
+                    JournalEntryKind.STRUCTURE_NOTE,
+                    22,
+                    "Watchtower",
+                    "A vertical landmark for highlands and old ruins that helps orientation before deeper ruin content exists.",
+                    List.of("discovery.structure.voxel:watchtower"),
+                    List.of("voxel:skyroot_log", "voxel:skyroot_planks", "voxel:glow_crystal"),
+                    List.of("voxel:skyroot_log", "voxel:skyroot_planks", "voxel:torch", "voxel:glow_crystal_node"),
+                    List.of("voxel:highlands", "voxel:old_ruins"),
+                    List.of("voxel:watchtower"),
+                    List.of("voxel:little_boar", "voxel:forest_bunny"),
+                    List.of("voxel:forge"),
+                    List.of(AlphaMilestoneKey.FORGE_READY, AlphaMilestoneKey.FIRST_RUIN_DISCOVERED),
+                    "player.journal.entries.watchtower",
+                    "Journal adds an orientation note and can later feed map markers.",
+                    "Server emits discovery from structure bounds/marker authority, not from client-only camera checks."
+            ),
+            entry(
+                    COMPACT_VILLAGE,
+                    JournalEntryKind.STRUCTURE_NOTE,
+                    23,
+                    "Compact Village",
+                    "A cozy settlement template that gives Worldgen a social landmark, storage loot anchors and future NPC spawn markers.",
+                    List.of("discovery.structure.voxel:compact_village"),
+                    List.of("voxel:berries", "voxel:wild_herbs", "voxel:cloth"),
+                    List.of("voxel:mossy_path", "voxel:storage_crate", "voxel:herb_planter", "voxel:berry_bush", "voxel:water"),
+                    List.of("voxel:cozy_meadow", "voxel:flower_fields", "voxel:skyroot_forest"),
+                    List.of("voxel:compact_village"),
+                    List.of(),
+                    List.of("voxel:storage_crate", "voxel:woven_rug", "voxel:garden_fence"),
+                    List.of(AlphaMilestoneKey.STORAGE_READY, AlphaMilestoneKey.FIRST_COMFORT),
+                    "player.journal.entries.compact_village",
+                    "Journal shows a gentle settlement note and leaves NPC behavior to future server contracts.",
+                    "Server emits discovery and loot-marker events idempotently per generated village instance."
+            ),
+            entry(
+                    DESERT_WELL,
+                    JournalEntryKind.STRUCTURE_NOTE,
+                    24,
+                    "Desert Well",
+                    "A sun-dunes landmark that ties sand, water access and future desert encounters together.",
+                    List.of("discovery.structure.voxel:desert_well"),
+                    List.of("voxel:cactus", "voxel:water_container", "voxel:clay_lump"),
+                    List.of("voxel:sand", "voxel:water", "voxel:stone", "voxel:cactus"),
+                    List.of("voxel:sun_dunes"),
+                    List.of("voxel:desert_well"),
+                    List.of("voxel:dune_crawler"),
+                    List.of("voxel:water_container"),
+                    List.of(AlphaMilestoneKey.FIRST_SUPPLY, AlphaMilestoneKey.COOKING_POT_READY),
+                    "player.journal.entries.desert_well",
+                    "Journal frames the well as a landmark and resource clue, not a survival timer.",
+                    "Server emits structure discovery from generated structure metadata and encounter hooks stay authoritative."
             )
     );
 

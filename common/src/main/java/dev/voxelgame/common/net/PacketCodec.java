@@ -183,6 +183,19 @@ public final class PacketCodec {
                     out.writeLong(stats.estimatedPacketBytes());
                     out.writeLong(stats.averagePacketBytes());
                     out.writeDouble(stats.packetRatePerSecond());
+                    out.writeInt(stats.savePendingWrites());
+                    out.writeInt(stats.saveRunningWrites());
+                    out.writeLong(stats.saveQueuedWrites());
+                    out.writeLong(stats.saveCompletedWrites());
+                    out.writeLong(stats.saveFailedWrites());
+                    out.writeLong(stats.saveRejectedWrites());
+                    out.writeLong(stats.saveWrittenBytes());
+                    out.writeLong(stats.saveWriteMilliseconds());
+                    out.writeDouble(stats.saveAverageWriteMilliseconds());
+                    out.writeDouble(stats.saveQueuedWritesPerSecond());
+                    out.writeDouble(stats.saveWrittenBytesPerSecond());
+                    out.writeDouble(stats.saveWriteMillisecondsPerSecond());
+                    out.writeDouble(stats.saveFailedWritesPerSecond());
                 }
                 case GamePacket.StorageOpenRequest storage -> {
                     out.writeInt(storage.x());
@@ -384,6 +397,19 @@ public final class PacketCodec {
                         in.readLong(),
                         in.readLong(),
                         in.readLong(),
+                        in.readDouble(),
+                        in.readInt(),
+                        in.readInt(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readLong(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readDouble(),
+                        in.readDouble(),
                         in.readDouble()
                 );
                 case STORAGE_OPEN_REQUEST -> new GamePacket.StorageOpenRequest(in.readInt(), in.readInt(), in.readInt(), in.readInt());
@@ -521,6 +547,12 @@ public final class PacketCodec {
                 out.writeDouble(thunder.y());
                 out.writeDouble(thunder.z());
             }
+            case GameplayEvent.StatusEffectChanged status -> {
+                writeUuid(out, status.playerId());
+                out.writeUTF(status.effectKey());
+                out.writeUTF(status.changeKey());
+                out.writeInt(status.intensity());
+            }
             case GameplayEvent.JournalEntryDiscovered journal -> {
                 writeUuid(out, journal.playerId());
                 out.writeUTF(journal.entryKey());
@@ -557,6 +589,7 @@ public final class PacketCodec {
             );
             case SLEEP -> new GameplayEvent.Sleep(sequence, readUuid(in), in.readBoolean());
             case WEATHER_THUNDER -> new GameplayEvent.WeatherThunder(sequence, in.readDouble(), in.readDouble(), in.readDouble());
+            case STATUS_EFFECT_CHANGED -> new GameplayEvent.StatusEffectChanged(sequence, readUuid(in), in.readUTF(), in.readUTF(), in.readInt());
             case JOURNAL_ENTRY_DISCOVERED -> new GameplayEvent.JournalEntryDiscovered(sequence, readUuid(in), in.readUTF());
             case RECIPE_UNLOCKED -> new GameplayEvent.RecipeUnlocked(sequence, readUuid(in), in.readUTF());
             case STRUCTURE_DISCOVERED -> new GameplayEvent.StructureDiscovered(sequence, readUuid(in), in.readUTF());

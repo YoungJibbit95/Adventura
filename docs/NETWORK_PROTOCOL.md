@@ -2,7 +2,7 @@
 
 Stand: 2026-05-01
 
-Aktuelle Protocol Version: `24`
+Aktuelle Protocol Version: `25`
 
 Dieser Contract beschreibt die transport-unabhaengigen `GamePacket`-Payloads aus `common`.
 Netty rahmt jedes Packet mit einem 4-Byte-Length-Prefix; die Payload beginnt mit der 4-Byte-`PacketType`-ID.
@@ -17,6 +17,11 @@ Der Server bleibt autoritativ: Client-Packets sind Intents und duerfen nie als f
   - diesen Changelog unter der neuen Version ergaenzen.
   - `ProtocolContract` und Golden-Codec-Tests aktualisieren.
 - Login-Rejects fuer Protocol-Mismatch muessen die Server-Version und die gesendete Client-Version nennen.
+
+## Version 25
+
+- `SERVER_STATS_SNAPSHOT` meldet zusaetzlich Save-Queue-Telemetrie fuer `save.write`: pending/running/completed/failed/rejected, Bytes, Gesamt-/Durchschnittszeit und Sekundenraten.
+- Debug-HUD und Engine-Budgets koennen damit Save-IO-Spikes sichtbar machen, ohne Save-Dateien selbst in den Client zu spiegeln.
 
 ## Version 24
 
@@ -55,7 +60,7 @@ Der Server bleibt autoritativ: Client-Packets sind Intents und duerfen nie als f
 | `COOK_REQUEST` | 20 | `CLIENT_TO_SERVER` | `CLIENT_INTENT` | `UNTRUSTED_CLIENT` | intent.cook | 512 B | `REPLAY_RELEVANT` | Cooking intent with recipe, slots and transaction id. |
 | `CAMPFIRE_STATUS` | 21 | `SERVER_TO_CLIENT` | `SERVER_AUTHORITATIVE` | `SERVER_CONFIRMED` | after campfire mutation | 256 B | `SAVE_AND_REPLAY_RELEVANT` | Public campfire/cooking station state. |
 | `PLAYER_POSITION_SNAPSHOT` | 22 | `SERVER_TO_CLIENT` | `SERVER_AUTHORITATIVE` | `SERVER_CONFIRMED` | movement correction | 96 B | `REPLAY_RELEVANT` | Authoritative player position and correction class. |
-| `SERVER_STATS_SNAPSHOT` | 23 | `SERVER_TO_CLIENT` | `SERVER_TELEMETRY` | `SERVER_CONFIRMED` | diagnostic tick | 128 B | `NONE` | Debug/diagnostic network counters. |
+| `SERVER_STATS_SNAPSHOT` | 23 | `SERVER_TO_CLIENT` | `SERVER_TELEMETRY` | `SERVER_CONFIRMED` | diagnostic tick | 256 B | `NONE` | Debug/diagnostic network/save queue counters. |
 | `PROJECTILE_SHOOT` | 24 | `CLIENT_TO_SERVER` | `CLIENT_INTENT` | `UNTRUSTED_CLIENT` | intent.projectile_shoot | 32 B | `REPLAY_RELEVANT` | Projectile launch intent; server validates item, cooldown and durability. |
 | `PROJECTILE_IMPACT` | 25 | `SERVER_TO_CLIENT` | `SERVER_AUTHORITATIVE` | `SERVER_CONFIRMED` | interest event | 256 B | `REPLAY_RELEVANT` | Authoritative projectile hit event. |
 | `STORAGE_CLOSE` | 26 | `SERVER_TO_CLIENT` | `SERVER_AUTHORITATIVE` | `SERVER_CONFIRMED` | after close/reject | 32 B | `NONE` | Server closes a storage UI target. |

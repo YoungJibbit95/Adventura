@@ -2,6 +2,8 @@ import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.file.StandardOpenOption
 import java.util.UUID
+import java.util.zip.ZipFile
+import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.services.BuildService
@@ -9,6 +11,7 @@ import org.gradle.api.services.BuildServiceParameters
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.jvm.application.tasks.CreateStartScripts
+import org.gradle.jvm.tasks.Jar
 import org.gradle.language.jvm.tasks.ProcessResources
 
 plugins {
@@ -39,6 +42,19 @@ abstract class WorkspaceMutationLockService : BuildService<WorkspaceMutationLock
     override fun close() {
         lock?.release()
         channel?.close()
+    }
+}
+
+fun archiveContainsClassFile(file: File): Boolean {
+    if (!file.isFile) {
+        return false
+    }
+    return try {
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence().any { entry -> !entry.isDirectory && entry.name.endsWith(".class") }
+        }
+    } catch (_: Exception) {
+        false
     }
 }
 
@@ -201,6 +217,24 @@ tasks.register<JavaExec>("runServer") {
     args("--port", "25565", "--seed", "1337")
 }
 
+tasks.register<JavaExec>("recordPhysicsReplay") {
+    group = "verification"
+    description = "Records a deterministic server-side physics replay JSONL. Use -Pscenario=projectile-impact, -Pseed=424242, -Pticks=8, -Pout=build/physics-replays/projectile-impact.jsonl."
+    dependsOn(":server:classes")
+    classpath = project(":server").sourceSets.main.get().runtimeClasspath
+    mainClass.set("dev.voxelgame.server.physics.PhysicsReplayScenarioRecorder")
+    usesService(workspaceMutationLock)
+    doFirst {
+        val scenario = providers.gradleProperty("scenario").orElse("projectile-impact").get()
+        val seed = providers.gradleProperty("seed").orElse("424242").get()
+        val ticks = providers.gradleProperty("ticks").orElse("8").get()
+        val output = providers.gradleProperty("out")
+            .orElse(layout.buildDirectory.file("physics-replays/$scenario.jsonl").map { it.asFile.absolutePath })
+            .get()
+        args("--scenario", scenario, "--seed", seed, "--ticks", ticks, "--out", output)
+    }
+}
+
 tasks.register<JavaExec>("joinLocal") {
     group = "voxel"
     description = "Runs the client and auto-joins a local server on port 25565."
@@ -256,6 +290,18 @@ subprojects {
     tasks.withType<JavaCompile>().configureEach {
         options.encoding = "UTF-8"
         options.release.set(21)
+    }
+
+    tasks.withType<Jar>().configureEach {
+        outputs.upToDateWhen {
+            archiveContainsClassFile(archiveFile.get().asFile)
+        }
+        doLast {
+            val archive = archiveFile.get().asFile
+            if (!archiveContainsClassFile(archive)) {
+                throw GradleException("Archive ${archive.absolutePath} contains no class files; refusing stale or incomplete jar output.")
+            }
+        }
     }
 
     dependencies {
