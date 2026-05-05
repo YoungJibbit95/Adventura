@@ -21,6 +21,8 @@ export default function App() {
             summary={launcher.summary}
             settings={launcher.settings}
             busyMode={launcher.busyMode}
+            processStatus={launcher.processStatus}
+            preflight={launcher.preflight}
             onLaunch={launcher.launch}
           />
         )}

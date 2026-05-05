@@ -5,9 +5,12 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.Chunk;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.ChunkSection;
 import dev.voxelgame.common.world.DimensionSettings;
 import dev.voxelgame.common.world.InMemoryWorld;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -226,6 +229,108 @@ class LightEngineTest {
     }
 
     @Test
+    void batchRebuildLightsMergedChunkRegionOnce() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0)).setBlockId(15, 8, 8, Blocks.TORCH);
+        world.getOrCreateChunk(new ChunkPos(1, 0));
+        world.getOrCreateChunk(new ChunkPos(2, 0));
+
+        LightEngine lightEngine = new LightEngine();
+        lightEngine.rebuildChunkLighting(world, List.of(new ChunkPos(0, 0), new ChunkPos(1, 0)));
+
+        assertEquals(14, world.blockLight(15, 8, 8));
+        assertEquals(13, world.blockLight(16, 8, 8));
+        assertEquals(12, world.blockLight(17, 8, 8));
+        assertTrue(world.findChunk(new ChunkPos(3, 0)).isEmpty());
+        assertEquals(2, lightEngine.lastWorkStats().requestedCenters());
+        assertEquals(3, lightEngine.lastWorkStats().affectedChunks());
+        assertEquals(3 * ChunkPos.SIZE * ChunkPos.SIZE, lightEngine.lastWorkStats().skyColumnsSeeded());
+        assertEquals(3 * ChunkPos.SIZE * ChunkPos.SIZE * world.dimension().height(), lightEngine.lastWorkStats().skyCellsSeeded());
+    }
+
+    @Test
+    void affectedChunkLookupIgnoresFarLoadedChunksWithoutScanningTheWorld() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
+        world.getOrCreateChunk(new ChunkPos(0, 0)).setBlockId(8, 8, 8, Blocks.TORCH);
+        Chunk far = world.getOrCreateChunk(new ChunkPos(24, -19));
+        far.setBlockId(24 * ChunkPos.SIZE + 8, 8, -19 * ChunkPos.SIZE + 8, Blocks.LANTERN);
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildChunkLighting(world, new ChunkPos(0, 0));
+
+        assertEquals(1, lightEngine.lastWorkStats().requestedCenters());
+        assertEquals(1, lightEngine.lastWorkStats().affectedChunks());
+        assertEquals(14, world.blockLight(8, 8, 8));
+        assertEquals(0, world.blockLight(24 * ChunkPos.SIZE + 8, 8, -19 * ChunkPos.SIZE + 8));
+    }
+
+    @Test
+    void openSkyLightSeedingAvoidsPropagationQueueForTallAirChunks() {
+        DimensionSettings dimension = new DimensionSettings(-64, 192);
+        InMemoryWorld world = new InMemoryWorld(dimension, Blocks.createDefaultRegistry());
+        Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildSkyLightColumn(world, chunk);
+
+        LightEngine.WorkStats stats = lightEngine.lastWorkStats();
+        assertEquals(chunkColumnCount(), stats.skyColumnsSeeded());
+        assertEquals(chunkColumnCount() * dimension.height(), stats.skyCellsSeeded());
+        assertEquals(0, stats.skyBoundarySeeds());
+        assertEquals(0L, stats.skyPropagationNodes());
+        assertEquals(15, world.skyLight(8, dimension.minY(), 8));
+        assertEquals(15, world.skyLight(8, dimension.maxYExclusive() - 1, 8));
+    }
+
+    @Test
+    void skyLightBoundarySeedingTargetsOnlyColumnsThatCanImproveNeighbors() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 64), Blocks.createDefaultRegistry());
+        Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
+        buildRoof(chunk, 4, 11, 4, 11, 32);
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildSkyLightColumn(world, chunk);
+
+        LightEngine.WorkStats stats = lightEngine.lastWorkStats();
+        assertTrue(stats.skyBoundarySeeds() > 0);
+        assertTrue(stats.skyPropagationNodes() > 0);
+        assertTrue(stats.skyPropagationNodes() < stats.skyCellsSeeded());
+        assertEquals(14, world.skyLight(4, 31, 8));
+        assertTrue(world.skyLight(8, 31, 8) < world.skyLight(4, 31, 8));
+    }
+
+    @Test
+    void lateralSkyLightPropagationAppliesTransparentBlockAttenuation() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 64), Blocks.createDefaultRegistry());
+        Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
+        buildRoof(chunk, 4, 11, 4, 11, 32);
+        chunk.setBlockId(4, 31, 8, Blocks.WATER);
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildSkyLightColumn(world, chunk);
+
+        assertEquals(14, world.skyLight(4, 31, 8));
+        assertEquals(12, world.skyLight(5, 31, 8));
+    }
+
+    @Test
+    void blockLightEmitterScanSkipsEmptySectionsInTallChunks() {
+        InMemoryWorld world = new InMemoryWorld(new DimensionSettings(-64, 192), Blocks.createDefaultRegistry());
+        Chunk chunk = world.getOrCreateChunk(new ChunkPos(0, 0));
+        chunk.setBlockId(8, 8, 8, Blocks.TORCH);
+        LightEngine lightEngine = new LightEngine();
+
+        lightEngine.rebuildBlockLight(world, new ChunkPos(0, 0));
+
+        LightEngine.WorkStats stats = lightEngine.lastWorkStats();
+        assertEquals(1, stats.affectedChunks());
+        assertEquals(1, stats.blockEmitterSectionsScanned());
+        assertEquals(ChunkSection.VOLUME, stats.blockEmitterBlocksVisited());
+        assertEquals(1, stats.blockEmittersSeeded());
+        assertEquals(14, world.blockLight(8, 8, 8));
+    }
+
+    @Test
     void fullRebuildFallbackClearsStaleBoundaryBlockLight() {
         InMemoryWorld world = new InMemoryWorld(new DimensionSettings(0, 16), Blocks.createDefaultRegistry());
         world.getOrCreateChunk(new ChunkPos(0, 0)).setBlockId(15, 8, 8, Blocks.TORCH);
@@ -328,5 +433,9 @@ class LightEngineTest {
         new LightEngine().rebuildChunkLighting(world, new ChunkPos(0, 0));
 
         assertEquals(expectedLight, world.blockLight(8, 8, 8));
+    }
+
+    private static int chunkColumnCount() {
+        return ChunkPos.SIZE * ChunkPos.SIZE;
     }
 }

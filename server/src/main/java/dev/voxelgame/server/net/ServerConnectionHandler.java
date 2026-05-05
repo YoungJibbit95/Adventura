@@ -14,6 +14,7 @@ import dev.voxelgame.common.gameplay.CraftingStationRules;
 import dev.voxelgame.common.gameplay.EntityDrops;
 import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.gameplay.MeleeAttackRules;
 import dev.voxelgame.common.gameplay.status.StatusEffectEnvironmentRules;
 import dev.voxelgame.common.gameplay.status.StatusEffectType;
 import dev.voxelgame.common.item.CraftingRecipe;
@@ -26,6 +27,7 @@ import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.item.RecipeUnlock;
 import dev.voxelgame.common.item.StarterInventory;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
 import dev.voxelgame.common.physics.EnvironmentHazardRules;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.physics.PlayerMovementRules;
@@ -910,6 +912,7 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             sendInventory(ctx);
             return;
         }
+        boolean useDefaultCooldown = true;
         switch (interact.action()) {
             case FEED -> {
                 if (!tryFeedEntity(ctx, interact, target.get())) {
@@ -920,11 +923,14 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 if (!tryAttackEntity(ctx, interact, target.get(), now)) {
                     return;
                 }
+                useDefaultCooldown = false;
             }
             case OBSERVE -> {
             }
         }
-        nextEntityInteractTime = now + 0.35;
+        if (useDefaultCooldown) {
+            nextEntityInteractTime = now + 0.35;
+        }
         markEntitySnapshotsDirty(world);
         sendInventory(ctx);
     }
@@ -1004,23 +1010,30 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
 
     private boolean tryAttackEntity(ChannelHandlerContext ctx, GamePacket.EntityInteract interact, EntitySnapshot target, double now) {
         ItemStack selected = inventory.slot(interact.selectedSlot());
-        int damage = entityAttackDamage(selected);
-        double knockbackMultiplier = selected.isEmpty() ? 0.5 : (1.0 + (items.requireById(selected.itemId()).toolLevel() * 0.3));
+        MeleeAttackRules.AttackProfile attack = MeleeAttackRules.profileFor(selected, items);
+        if (!MeleeAttackRules.canAttack(playerId, target).accepted() || !canReachEntity(target, attack.range())) {
+            sendInventory(ctx);
+            return false;
+        }
+        DamageSource source = DamageSource.playerMelee(playerId);
         DamageResult result = entityTracker.damageAmbient(
                 interact.entityId(),
-                damage,
-                DamageSource.playerMelee(playerId),
+                attack.damage(),
+                source,
                 now,
-                knockbackMultiplier
+                attack.knockbackStrength()
         );
         if (!result.accepted()) {
             sendInventory(ctx);
             return false;
         }
+        nextEntityInteractTime = now + attack.cooldownSeconds();
         if (result.killed()) {
             spawnEntityDrops(target);
         }
-        inventory.damageSlot(interact.selectedSlot(), 1, items);
+        if (attack.durabilityDamage() > 0) {
+            inventory.damageSlot(interact.selectedSlot(), attack.durabilityDamage(), items);
+        }
         return true;
     }
 
@@ -1037,16 +1050,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
     }
 
-    private int entityAttackDamage(ItemStack selected) {
-        if (selected.isEmpty()) {
-            return 1;
-        }
-        ItemType item = items.requireById(selected.itemId());
-        return item.isTool() ? 2 + item.toolLevel() : 1;
-    }
-
     private boolean canReachEntity(EntitySnapshot snapshot) {
         return InteractionRules.canReachEntity(playerX, playerY, playerZ, snapshot, ENTITY_INTERACT_RANGE);
+    }
+
+    private boolean canReachEntity(EntitySnapshot snapshot, double range) {
+        return InteractionRules.canReachEntity(playerX, playerY, playerZ, snapshot, range);
     }
 
     private void handleCraftRequest(ChannelHandlerContext ctx, GamePacket.CraftRequest craft) {
@@ -1750,6 +1759,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return MovementRejectReason.UPWARD;
         }
         double deltaSeconds = now - lastAcceptedMoveTime;
+        BlockSurfacePhysics.SurfaceMaterial previousSurface = movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                ? world.playerSurface(playerX, playerY, playerZ, PLAYER_PHYSICS)
+                : BlockSurfacePhysics.DEFAULT;
+        BlockSurfacePhysics.SurfaceMaterial currentSurface = movementMode == PlayerMovementRules.MovementMode.SURVIVAL
+                ? world.playerSurface(move.x(), move.y(), move.z(), PLAYER_PHYSICS)
+                : BlockSurfacePhysics.DEFAULT;
         if (!PlayerMovementRules.isPlausibleModeDelta(
                 playerX,
                 playerY,
@@ -1760,7 +1775,9 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
                 deltaSeconds,
                 PLAYER_PHYSICS,
                 waterState,
-                movementMode
+                movementMode,
+                previousSurface,
+                currentSurface
         )) {
             return MovementRejectReason.SPEED;
         }

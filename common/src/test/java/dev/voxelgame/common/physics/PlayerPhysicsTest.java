@@ -68,6 +68,31 @@ class PlayerPhysicsTest {
     }
 
     @Test
+    void movementRulesUseSurfaceSpeedForServerDeltas() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        assertTrue(PlayerMovementRules.isPlausibleSurvivalDelta(
+                8.0, 64.0, 8.0,
+                12.7, 64.0, 8.0,
+                0.5,
+                config,
+                dry,
+                BlockSurfacePhysics.DEFAULT,
+                BlockSurfacePhysics.DEFAULT
+        ));
+        assertFalse(PlayerMovementRules.isPlausibleSurvivalDelta(
+                8.0, 64.0, 8.0,
+                12.7, 64.0, 8.0,
+                0.5,
+                config,
+                dry,
+                BlockSurfacePhysics.SNOW,
+                BlockSurfacePhysics.SNOW
+        ));
+    }
+
+    @Test
     void movementRulesApplyModeSpecificSpeedEnvelopes() {
         PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
         PlayerWaterState dry = new PlayerWaterState(false, false, false);
@@ -215,6 +240,27 @@ class PlayerPhysicsTest {
     }
 
     @Test
+    void survivalStepUsesLandingSurfaceForBufferedJump() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerInput jump = new PlayerInput(0.0f, 0.0f, true, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+        PlayerState falling = new PlayerState(8.0, 64.2, 8.0, 0.0f, -5.0f, 0.0f, false, false, 0.0f);
+
+        PlayerState next = PlayerPhysics.stepSurvival(
+                falling,
+                jump,
+                dry,
+                0.1f,
+                config,
+                (x, y, z) -> y <= 64.0,
+                (x, y, z) -> BlockSurfacePhysics.SNOW
+        );
+
+        assertEquals(config.jumpSpeed() * BlockSurfacePhysics.SNOW.jumpMultiplier(), next.velocityY(), 0.001f);
+        assertFalse(next.onGround());
+    }
+
+    @Test
     void survivalStepSlidesAlongBlockedHorizontalAxis() {
         PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
         PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
@@ -250,6 +296,47 @@ class PlayerPhysicsTest {
 
         assertTrue(next.velocityX() > 0.0f);
         assertTrue(next.velocityX() < config.walkSpeed());
+    }
+
+    @Test
+    void survivalStepUsesSurfaceFrictionForIceSliding() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState sliding = new PlayerState(0.0, 65.0, 0.0, config.walkSpeed(), 0.0f, 0.0f, true, false, 0.0f);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState normal = PlayerPhysics.stepSurvival(
+                sliding,
+                PlayerInput.idle(),
+                dry,
+                0.016f,
+                config,
+                (x, y, z) -> false,
+                (x, y, z) -> BlockSurfacePhysics.DEFAULT
+        );
+        PlayerState ice = PlayerPhysics.stepSurvival(
+                sliding,
+                PlayerInput.idle(),
+                dry,
+                0.016f,
+                config,
+                (x, y, z) -> false,
+                (x, y, z) -> BlockSurfacePhysics.ICE
+        );
+
+        assertTrue(ice.velocityX() > normal.velocityX());
+    }
+
+    @Test
+    void survivalStepUsesSurfaceSpeedForSnowAndPaths() {
+        PlayerPhysicsConfig config = PlayerPhysicsConfig.defaults();
+        PlayerState state = new PlayerState(0.0, 65.0, 0.0, 0.0f, 0.0f, 0.0f, true, false, 0.0f);
+        PlayerInput forward = new PlayerInput(1.0f, 0.0f, false, false, false);
+        PlayerWaterState dry = new PlayerWaterState(false, false, false);
+
+        PlayerState snow = PlayerPhysics.stepSurvival(state, forward, dry, 0.1f, config, (x, y, z) -> false, (x, y, z) -> BlockSurfacePhysics.SNOW);
+        PlayerState path = PlayerPhysics.stepSurvival(state, forward, dry, 0.1f, config, (x, y, z) -> false, (x, y, z) -> BlockSurfacePhysics.PATH);
+
+        assertTrue(path.velocityX() > snow.velocityX());
     }
 
     @Test

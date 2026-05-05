@@ -278,7 +278,13 @@ Structures können mehrere Chunks betreffen und dürfen nicht halb fehlen.
 - alle betroffenen Chunks kennen Structure-Plan.
 - keine doppelten Loot Marker.
 - Structure State speichern.
-- Clearance und Ground-Fit vor Platzierung prüfen.
+- ~~Clearance und Ground-Fit vor Platzierung prüfen.~~
+
+### Erreicht 2026-05-05
+
+- `OverworldGenerator` berechnet Structure-Origin-Y jetzt ueber Template-Bounds, mittlere Footprint-Hoehe und Clamp gegen Hoehen-Ausreisser.
+- Vor Template-Placement werden Footprint-Spalten mit biomepassendem Foundation-Block gestuetzt und der Platz bis ueber die Template-Bounds freigeraeumt; das stabilisiert besonders `voxel:compact_village`.
+- Verifikation: `OverworldGeneratorTest.compactVillagePreparesSupportedAndClearedFootprint`.
 
 ### Akzeptanz
 
@@ -324,6 +330,15 @@ Structures können mehrere Chunks betreffen und dürfen nicht halb fehlen.
 
 ## P4.1 Ore Distribution
 
+### Status 2026-05-05
+
+- ~~Neue Mineral-Ores fuer Gold, Platin, Rubin, Saphir und Titan in Registry, Render-Material, Asset-Atlas und Underground-Generation integrieren.~~
+  Erledigt: `Blocks`/`Items` registrieren Ore-Blocks und Mineral-Drops; `OverworldGenerator.oreOrStone(...)` platziert die Ores deterministisch nach Tiefe und Vein-Roll.
+  Verifikation: `OverworldContentTest.expandedMineralOresAppearInUndergroundGeneration`, `BiomeResourceProfilesTest` und Atlas-Tests.
+- ~~Ore-Assets aus `assets/game/blocks/` und Mineral-Icons aus `assets/game/minerals/` bevorzugen.~~
+  Erledigt: Block-Atlas, Item-Sprite-Loader und `AssetAtlasReport` kennen beide Drop-Ordner.
+  Verifikation: `BlockTextureAtlasTest`, `GameSpritesAssetPathTest`, `AssetAtlasReportTest`.
+
 ### Offen
 
 - Copper in Highlands/Caves.
@@ -366,18 +381,25 @@ Structures können mehrere Chunks betreffen und dürfen nicht halb fehlen.
 
 ### Offen
 
-- ringförmiges Chunk-Set um Kamera/Spieler.
-- Hysterese für Laden/Entladen.
-- aktive Chunk-Liste im Debug.
-- dirty chunks bleiben gepinnt.
-- unloaded chunks geben Runtime-Daten frei.
-- Rückkehr in Gebiet lädt korrekt neu.
+- ~~ringförmiges Chunk-Set um Kamera/Spieler.~~ `ChunkStreamingRings` steuert Simulation, Render, Preview und Retain.
+- ~~Hysterese für Laden/Entladen.~~ Client-Retention bleibt `preview + 2` Chunks.
+- ~~aktive Chunk-Liste im Debug.~~ HUD zeigt geladene, sichtbare, entladene und Queue-Chunks.
+- ~~dirty chunks bleiben gepinnt.~~ Lokal modifizierte Chunks werden beim Client-Unload ausgelassen.
+- ~~unloaded chunks geben Runtime-Daten frei.~~ `ClientWorld.unloadOutside(...)` räumt Runtime-Daten auf und `WorldRenderer.releaseChunks(...)` gibt GPU-Meshes budgetiert frei.
+- ~~Rückkehr in Gebiet lädt korrekt neu.~~ Retain-/Preview-Streaming lädt nahe Chunks deterministisch nach.
+- ~~Singleplayer-Spawn blockiert nicht den kompletten Preview-Ring.~~ Der Start lädt nur den kleinen Spawn-/Simulation-Ring und streamt weitere Chunks im Spiel nach.
 
 ### Akzeptanz
 
 - langes Erkunden wächst nicht unbegrenzt.
 - Blockänderungen bleiben lokal erhalten.
 - keine Mesh-Leaks.
+
+### Erreicht 2026-05-05
+
+- Singleplayer-Start lädt initial maximal 25 Spawn-Chunks und übergibt die fertige `ClientWorld` erst nach dem Hintergrund-Load an den Render-Thread.
+- `ClientWorld.generatePreview(radius, maxNewChunks)` erlaubt kleine Worldgen-Batches für echte Fortschrittsanzeige.
+- Verifikation: `ClientWorldSpawnTest.spawnPreviewCanGenerateInSmallBatches`, `GameClientUiLayoutTest.singleplayerInitialLoadUsesSmallSpawnRing`.
 
 ---
 
@@ -576,3 +598,223 @@ Owner: Lead Game Design Engineer und Project Manager, mit Engine-Schnittstellen 
 
 - Agenten können neue Biome/Structures schnell prüfen.
 - Smoke-Tests finden Randfälle ohne manuelle Suche.
+
+---
+
+# P8 - Finished World And Exploration Roadmap 2026-05-05
+
+Owner: Lead Game Design Engineer und Project Manager. Engine-Schnittstellen: Lead Engine Developer fuer Performance/Debug, Main Networking Dev fuer discovery/save/streaming.
+
+Die Welt hat bereits Biome, Feature Tables, StructureCatalog, Progression Cards und sichere Spawnplanung. Fuer ein fertiges Spiel fehlen vor allem Route-Garantien, tiefere Exploration, Discoveries als Server-Events und Produktionswerkzeuge, damit mehr Content nicht wieder in `OverworldGenerator` landet.
+
+## P8.1 Route Guarantees
+
+### Ziel
+
+Core progression darf nicht vom Glueck eines Seeds abhaengen.
+
+### Aufgaben
+
+- Define route guarantees around spawn:
+  - starter supplies within short radius.
+  - first food within short radius.
+  - campfire/storage route near campsite or meadow.
+  - pine/workbench route within early exploration range.
+  - lakeside/cooking route within mid exploration range.
+  - highlands/forge route within mid exploration range.
+  - old ruins or mushroom grove route within adventure range.
+- Add `ProgressionRouteReport`:
+  - nearest biome by key.
+  - nearest required resource cluster.
+  - nearest relevant structure.
+  - distance bands.
+  - missing route warnings.
+- Add seed-table checks:
+  - at least 10 fixed smoke seeds.
+  - at least 100 generated route-report seeds in unit/integration suite if runtime allows.
+- Add debug command or report output:
+  - `/routeprogression`.
+  - route report in worldgen tool.
+  - links to `WORLD_SMOKE_TESTS.md`.
+
+### Akzeptanz
+
+- A valid seed can always reach campfire, workbench, cooking pot, forge and first ruin without unreasonable wandering.
+- Optional biomes may be rare, but required systems have alternate routes.
+
+## P8.2 Worldgen Pass Extraction
+
+### Ziel
+
+Future caves, sealed ruins, villages and events must not make `OverworldGenerator` larger.
+
+### Aufgaben
+
+- Extract pure services:
+  - `ClimateSampler`.
+  - `BiomeResolver`.
+  - `HeightmapSampler`.
+  - `TerrainFiller`.
+  - `SurfaceDecorator`.
+  - ~~`FluidSurfacePlanner` fuer Shore-/Depth-/Foam-Daten.~~
+  - `OrePlanner`.
+  - `CavePlanner`.
+  - `StructurePlanner`.
+  - `SpawnPlanner`.
+  - `GenerationMetricsCollector`.
+- Preserve deterministic output with before/after tests:
+  - biome at fixed points.
+  - height at fixed points.
+  - chunk hash for smoke chunks.
+  - safe spawn result.
+  - structure placement result.
+- Keep each pass read-only or mutation-only by contract:
+  - samplers return facts.
+  - planners return placements.
+  - fillers apply placements.
+
+### Akzeptanz
+
+- Adding a new feature table entry does not require touching unrelated terrain code.
+- Pass services can be tested without generating full client worlds.
+
+### Erreicht 2026-05-05
+
+- `FluidSurfacePlanner` ist als erster kleiner Worldgen-Pass aus der Terrain-Cache-Fuellung geschnitten.
+- Der Pass berechnet Fluid-Depth-Hints, Shore-Masks und Foam-Flags ohne volle Chunk-Blockgenerierung und sampelt externe Hoehen nur an Chunk-Grenzen.
+- Verifikation: `FluidSurfacePlannerTest` und `OverworldGeneratorTest.terrainCacheIncludesFluidSurfaceMetadataForWaterRenderingAndPhysics`.
+
+## P8.3 Caves, Underground And Ore Routes
+
+### Ziel
+
+Mining and ruin exploration need an underground layer that is readable, finite enough for alpha and tied to progression.
+
+### Aufgaben
+
+- Cave pockets:
+  - small pockets first, not endless cave networks.
+  - safe exits or obvious return paths.
+  - glow resource landmarks.
+  - optional water/lava hazards.
+- Ore progression:
+  - coal/copper/iron common enough for station routes.
+  - gold/platin/ruby/sapphire/titan clearly rare and optional until late game.
+  - ore depth bands documented.
+  - tool-level requirements visible in content report.
+- Underground structures:
+  - small shrine/locked cache.
+  - mine pocket or old cellar.
+  - sealed ruin entrance hook.
+- Debug:
+  - ore distribution report.
+  - cave pocket locator.
+  - chunk cross-section debug view or export.
+
+### Akzeptanz
+
+- Underground exploration supports forge/ruin progression without becoming mandatory grind.
+- Ore routes are testable and documented.
+
+## P8.4 Structures As Gameplay Anchors
+
+### Ziel
+
+Structures should produce gameplay events, not only blocks.
+
+### Aufgaben
+
+- Extend structure metadata:
+  - discovery radius.
+  - journal key.
+  - map fragment key.
+  - loot markers.
+  - encounter markers.
+  - station hints.
+  - route role.
+  - one-shot flags.
+- Add structure types:
+  - starter campsite.
+  - simple shelter.
+  - compact village.
+  - watchtower.
+  - mushroom circle.
+  - small ruin.
+  - sealed ruin entrance.
+  - ancient altar/shrine.
+  - cave cache.
+  - desert well optional.
+- Add server discovery producer:
+  - first enter bounds.
+  - first open loot marker.
+  - first activate marker.
+  - first encounter defeated/calmed/observed.
+- Add persistence:
+  - generated structure id.
+  - consumed loot markers.
+  - discovered markers.
+  - activated ancient lights.
+
+### Akzeptanz
+
+- A structure can be discovered, looted, saved and reloaded exactly once where needed.
+- Journal and map updates come from server/world facts.
+
+## P8.5 Settlements, NPC Hooks And Optional Social Content
+
+### Ziel
+
+The `compact_village` marker suggests future social gameplay. Plan the hooks without committing to a huge NPC system too early.
+
+### Aufgaben
+
+- Define minimal `SettlementMarker`:
+  - center.
+  - house markers.
+  - market marker.
+  - storage/loot markers.
+  - future NPC spawn markers.
+  - safe radius.
+- First optional NPC scope:
+  - static trader or note-board.
+  - no complex schedules until entity brains are ready.
+  - trade tables must use same content validation as loot.
+- Settlement gameplay:
+  - resource hint.
+  - decor inspiration.
+  - map clue.
+  - optional trade.
+  - no mandatory daily chores.
+
+### Akzeptanz
+
+- ~~Villages can exist as meaningful landmarks before full NPC simulation.~~ Terrain-fit, support foundation and cleared compact-village footprint are deterministic now; deeper SettlementMarker/NPC hooks remain open.
+- Future NPCs have spawn/interaction hooks that do not break saves.
+
+## P8.6 Worldgen QA And Tooling
+
+### Aufgaben
+
+- Add generated reports:
+  - biome distribution.
+  - structure frequency.
+  - resource density.
+  - ore density by depth.
+  - route guarantee results.
+  - spawn safety facts.
+- Add commands:
+  - `/tpbiome`.
+  - `/tpstructure`.
+  - `/spawnstructure` for debug worlds only.
+  - `/worldreport`.
+- Add visual QA:
+  - biome overlay.
+  - feature density overlay.
+  - structure bounds.
+  - loot/encounter marker overlay.
+  - cave/ore slice view.
+
+### Akzeptanz
+
+- QA can find and verify every planned biome/structure without wandering blindly.
+- Worldgen regressions produce actionable reports.

@@ -275,16 +275,16 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 ## Bestehend / erweitern
 
-- Render Distance
-- Preview Radius
-- FOV
-- Mouse Sensitivity
-- Water
-- AO
-- Shadows
-- Bloom/Glow
-- VSync
-- UI Scale
+- ~~Render Distance~~
+- ~~Preview Radius~~
+- ~~FOV~~
+- ~~Mouse Sensitivity~~
+- ~~Water~~
+- ~~AO~~
+- ~~Shadows~~
+- ~~Bloom/Glow~~
+- ~~VSync~~
+- ~~UI Scale~~
 - Controls Overview
 
 ## Neu
@@ -294,18 +294,18 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - Ambience Volume
 - SFX Volume
 - UI Volume
-- Particle Quality
-- Graphics Presets:
-  - Low
-  - Medium
-  - High
+- ~~Particle Quality~~
+- ~~Graphics Presets:~~
+  - ~~Low~~
+  - ~~Medium~~
+  - ~~High~~
 - Keybind Screen
 - Graphics Advanced:
-  - Water Quality
-  - Particle Density
+  - ~~Water Quality~~
+  - ~~Particle Density~~
   - Lighting Quality
-  - Bloom Strength
-  - Fog Distance
+  - ~~Bloom Strength~~
+  - ~~Fog Distance~~
 - Worldgen Settings nur für neue Welten:
   - seed
   - preview radius
@@ -314,8 +314,13 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 ## Akzeptanz
 
 - Settings sind nicht überladen.
-- wichtige Grafikoptionen helfen Low-End-PCs.
+- ~~wichtige Grafikoptionen helfen Low-End-PCs.~~ Settings zeigen jetzt Chunk-/Mesh-/GPU-Budgets, Render Debug, AO, Soft Shadows, Fog, Bloom, Water, Simple Water, Greedy Meshing, Particles und Presets kompakt in zwei Spalten.
 - Keybinds sind auffindbar.
+
+### Erreicht 2026-05-05
+
+- Settings-Layout verdichtet und um Performance-/Grafiksteuerung fuer Chunkgen-Zeit, Mesh-Zeit, GPU-Upload, Render-Debug, Wasser, HUD/Debug und Greedy Meshing erweitert.
+- Verifikation: `GameClientUiLayoutTest.settingsLayoutKeepsPresetControlsAndBackButtonSeparated`.
 
 ---
 
@@ -338,8 +343,8 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
   Akzeptanz: Vor dem Hauptmenü und während Singleplayer-/Server-Entry erscheint eine nicht blockierende Ladeanimation; Fehler führen sauber zurück ins Menü.
   Erledigt: 2026-05-01 fuer den Contract, `LoadingScreenViewModel` deckt `BOOT`, `LOADING_WORLD`, `JOINING_SERVER`, `STREAMING_SPAWN` und `ERROR` inklusive Progress, Cancel und Error-State ab.
   Erledigt: 2026-05-02 fuer sichtbares Rendering, `GameClient` rendert Boot-, Singleplayer-Load-, Server-Join-, Streaming-Spawn- und Error-Frames ueber `LoadingScreenViewModel`; Progressbar und indeterminierte Animation haben Viewport-Layout-Tests.
-  Offen: Echte Hintergrund-Phasen fuer komplett nicht-blockierende Worldgen-/Connect-Schritte bleiben ein spaeterer Async-Loader-Slice.
-  Verifikation: `LoadingScreenViewModelTest`, `GameClientUiLayoutTest.loadingLayoutKeepsProgressBarAndTextInsideViewport`, `GameClientUiLayoutTest.loadingBarFillUsesProgressOrIndeterminateAnimation`.
+  Erledigt: 2026-05-05 fuer echte Hintergrund-Phasen: Singleplayer-Worldgen und Server-Connect laufen ausserhalb des Render-Threads, Fortschritt wird per thread-sicherem ViewModel veroeffentlicht und fertige Sessions werden im Main-Thread uebernommen.
+  Verifikation: `LoadingScreenViewModelTest`, `GameClientUiLayoutTest.loadingLayoutKeepsProgressBarAndTextInsideViewport`, `GameClientUiLayoutTest.loadingBarFillUsesProgressOrIndeterminateAnimation`, `GameClientUiLayoutTest.singleplayerInitialLoadUsesSmallSpawnRing`, `ClientWorldSpawnTest.spawnPreviewCanGenerateInSmallBatches`.
 
 ## Pause Menu
 
@@ -395,6 +400,12 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - UI Assets sind konsistent.
 - Fallback Code-Drawing bleibt möglich.
 - fehlende Assets werden gemeldet.
+
+### Erreicht 2026-05-05
+
+- Einzelne Item-/Block-/Mineral-Icon-PNGs nutzen jetzt `EDGE_CHECKER_TRIM`: verbundene neutrale/weisse Randpixel werden vor dem UI-Sprite-Upload entfernt und transparente Leerflaeche wird getrimmt.
+- Inventory- und Crafting-Icons koennen dadurch die neuen Einzelassets aus `assets/game/blocks/` und `assets/game/minerals/` anzeigen, ohne die hellen Export-Raender mitzublenden.
+- Verifikation: `UiSpriteSheetTest.edgeCheckerTrimRemovesConnectedWhiteBackgroundWithoutEatingInteriorHighlights`, `GameSpritesAssetPathTest`.
 
 ---
 
@@ -465,19 +476,27 @@ Dieser Block ergänzt die vorhandenen UI-Featurelisten um die Architektur, die n
 
 - Wiederverwendbare Komponenten bauen:
   - IconButton.
-  - TextButton.
-  - Panel.
+  - ~~TextButton.~~
+    Erledigt: 2026-05-05, `GameClient.drawModernButton(...)` und `drawModernButtonSurface(...)` liefern moderne Pixel-Buttons mit Hover/Disabled/Shadow-Fallback.
+  - ~~Panel.~~
+    Erledigt: 2026-05-05, `drawModernPanel(...)` und `drawModernInsetPanel(...)` rendern runde Panel-/Inset-Flaechen fuer Settings, Crafting, Inventory und Hotbar.
   - SlotGrid.
   - TabBar.
   - Tooltip.
   - ScrollList.
   - ProgressBar.
-  - TextInput.
+  - ~~TextInput.~~
+    Erledigt: 2026-05-05, Crafting-Search nutzt die neue Inset-/Focus-Flaeche inklusive Clear-Button.
   - Modal.
   - Toast/FeedbackLine.
 - Focus, hover, pressed, disabled und selected zentral behandeln.
 - Komponenten sollen Sprite-Skins nutzen können, aber fallback drawing behalten.
 - Kein UI-Text darf aus seinem Container laufen.
+
+### Erreicht 2026-05-05
+
+- ~~Settings, Inventory und Crafting auf einen gemeinsamen Modern-Pixel-Look anheben.~~ Settings-Sektionen, Presets, Toggles, Inventory-Panels/Slots, Crafting-Filter, Suche und Rezeptzeilen verwenden jetzt dieselben runden Fallback-Primitives mit Schatten, Inset-Layern und Pixel-Highlights.
+- Verifikation: `./gradlew.bat :client:test --tests dev.voxelgame.client.GameClientUiLayoutTest --tests dev.voxelgame.client.GameSettingsTest --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=platform_ui_2`; `./gradlew.bat buildGame --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=platform_ui_build_1`.
 
 ### Akzeptanz
 
@@ -512,9 +531,12 @@ Dieser Block ergänzt die vorhandenen UI-Featurelisten um die Architektur, die n
 - Launcher-Electron und Ingame-UI stilistisch angleichen:
   - Farben.
   - Typografie-Anmutung.
-  - Buttons.
-  - Panels.
-  - Status/Terminal/Preflight.
+  - ~~Buttons.~~
+    Erledigt: 2026-05-05, Launcher bleibt React/Electron, Ingame-Buttons nutzen jetzt dieselbe dunkle Gruen-/Moss-Pixel-Anmutung.
+  - ~~Panels.~~
+    Erledigt: 2026-05-05, Ingame-Panels wurden auf runde, schattierte Modern-Pixel-Surfaces gebracht.
+  - ~~Status/Terminal/Preflight.~~
+    Erledigt: 2026-05-05, Preflight zeigt Plattform und Java-Quelle; Sidebar zeigt Plattform/Runtime.
 - Launcher bleibt Desktop-Frontend, aber kein zweites Design-System ohne Bezug zum Spiel.
 - Packaging-/Update-Status nutzerfreundlicher anzeigen.
 
@@ -540,3 +562,159 @@ Dieser Block ergänzt die vorhandenen UI-Featurelisten um die Architektur, die n
 
 - Alpha-Spieler können ohne Entwickler-Erklärung starten.
 - UI unterstützt Game Design, statt das Spiel zu erklären müssen.
+
+---
+
+# P10 - Finished Game UI/UX Roadmap 2026-05-05
+
+Owner: Lead UI/UX Frontend Developer, mit Main Networking Dev fuer transaction replies und Lead Game Design Engineer fuer progression language.
+
+Die UI hat bereits Inventory/Crafting/Journal/Settings/Storage-Ansaetze, Sprite-Icons und HUD-Layout. Fuer ein fertiges Spiel fehlen eine echte Screen-Architektur, transaction-aware Screens, first-session guidance, save/session flows und Progression-Views, die aus serverbestaetigten Daten leben.
+
+## P10.1 Screen Architecture Completion
+
+### Aufgaben
+
+- Extract screens from `GameClient`:
+  - Main menu.
+  - Pause menu.
+  - Settings.
+  - Inventory/Crafting.
+  - Storage.
+  - Campfire/CookingPot/Forge.
+  - Journal/Map.
+  - Death/Respawn.
+  - Connection/Login.
+  - Confirm dialogs.
+- Shared screen services:
+  - `ScreenContext`.
+  - focus/navigation stack.
+  - modal layer.
+  - tooltip manager.
+  - input text handling.
+  - UI animation/low-motion toggle.
+  - audio cue hooks.
+
+### Akzeptanz
+
+- New screens do not add large render/input branches to `GameClient`.
+- Navigation flows are testable.
+
+## P10.2 Transaction-Aware Gameplay Screens
+
+### Aufgaben
+
+- For Storage/Crafting/Cooking/Forge:
+  - pending state.
+  - accepted state.
+  - rejected state.
+  - stale revision state.
+  - output blocked state.
+  - inventory full state.
+  - out-of-range state.
+- Show server reject reasons using stable keys:
+  - missing item.
+  - wrong station.
+  - no fuel.
+  - no heat.
+  - no water/container.
+  - cooldown.
+  - stale revision.
+- Avoid unsafe optimistic UI:
+  - no item removal until server confirms, unless rollback is fully implemented.
+  - output appears only from authoritative station snapshot.
+
+### Akzeptanz
+
+- Multiplayer station use cannot visually lie to the player.
+- UI can explain every server reject in one short line.
+
+## P10.3 Journal, Map And Progression UI
+
+### Aufgaben
+
+- Journal tabs:
+  - goals.
+  - notes.
+  - recipes.
+  - creatures.
+  - structures.
+  - lore.
+  - map fragments.
+- All entries come from server-owned progression state.
+- Next-hint presentation:
+  - one small current suggestion.
+  - no quest spam.
+  - hide completed noise.
+  - link hints to discovered sources only.
+- Map:
+  - discovered structures.
+  - rough biome clues.
+  - home/camp marker.
+  - first ruin sketch.
+  - no exact omniscient map unless debug.
+
+### Akzeptanz
+
+- Journal helps the player remember, not obey.
+- Progression survives reconnect and does not duplicate badges.
+
+## P10.4 First-Session UX
+
+### Aufgaben
+
+- First-session route:
+  - identify starter resources.
+  - pick up food.
+  - craft first tool.
+  - craft/place/light campfire.
+  - open storage.
+  - understand next route.
+- Use minimal guidance:
+  - interaction hints.
+  - journal nudge.
+  - feedback log.
+  - selected item tooltip.
+  - station missing hints.
+- Add UX smoke checklist:
+  - 1280x720, 1920x1080, small window.
+  - UI scale 1x/1.5x/2x.
+  - keyboard/mouse only.
+  - online reject cases.
+  - offline singleplayer.
+
+### Akzeptanz
+
+- A new player can progress without external docs.
+- Guidance stays calm and does not cover the playfield.
+
+## P10.5 Save, Session And Exit Flow
+
+### Aufgaben
+
+- Main menu:
+  - singleplayer worlds.
+  - join server.
+  - settings.
+  - quit.
+- Pause menu:
+  - resume.
+  - settings.
+  - save status.
+  - return to menu.
+  - quit confirmation.
+- Save state UI:
+  - saving.
+  - saved.
+  - save failed.
+  - reconnect warning.
+  - server shutdown message.
+- Death/respawn:
+  - show cause.
+  - respawn at safe spawn/sleeping mat.
+  - no inventory-loss policy until explicitly designed.
+
+### Akzeptanz
+
+- Players do not accidentally lose progress through unclear exit flows.
+- Save failures are visible and actionable.

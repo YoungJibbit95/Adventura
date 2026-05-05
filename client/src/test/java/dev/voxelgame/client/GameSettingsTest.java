@@ -19,6 +19,8 @@ class GameSettingsTest {
         settings.adjustMouseSensitivity(-1000);
         settings.adjustUiScale(1000);
         settings.setMeshBuildBudgetChunks(99);
+        settings.setChunkGenerationBudgetChunks(99);
+        settings.setChunkGenerationBudgetMilliseconds(99.0);
         settings.setMeshBuildBudgetMilliseconds(99.0);
         settings.setGpuUploadBudgetMilliseconds(99.0);
         settings.setParticleQuality(99.0);
@@ -27,6 +29,8 @@ class GameSettingsTest {
         assertEquals(40, settings.mouseSensitivityPercent());
         assertEquals(150, settings.uiScalePercent());
         assertEquals(12, settings.meshBuildBudgetChunks());
+        assertEquals(6, settings.chunkGenerationBudgetChunks());
+        assertEquals(6.0, settings.chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(24, settings.chunkUnloadBudgetChunks());
         assertEquals(24, settings.gpuReleaseBudgetChunks());
         assertEquals(16.0, settings.meshBuildBudgetMilliseconds(), 0.001);
@@ -35,11 +39,13 @@ class GameSettingsTest {
 
         settings.adjustUiScale(-1000);
         settings.adjustMeshBuildBudgetMilliseconds(-1000.0);
+        settings.adjustChunkGenerationBudgetMilliseconds(-1000.0);
         settings.adjustGpuUploadBudgetMilliseconds(-1000.0);
         settings.adjustParticleQuality(-1000.0);
 
         assertEquals(80, settings.uiScalePercent());
         assertEquals(0.5, settings.meshBuildBudgetMilliseconds(), 0.001);
+        assertEquals(0.5, settings.chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(0.5, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(0.25, settings.particleQuality(), 0.001);
     }
@@ -111,6 +117,8 @@ class GameSettingsTest {
         assertEquals(4, settings.renderDistanceChunks());
         assertEquals(3, settings.previewRadiusChunks());
         assertEquals(1, settings.meshBuildBudgetChunks());
+        assertEquals(1, settings.chunkGenerationBudgetChunks());
+        assertEquals(1.0, settings.chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(1.5, settings.meshBuildBudgetMilliseconds(), 0.001);
         assertEquals(1.0, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertTrue(settings.fogEnabled());
@@ -127,6 +135,8 @@ class GameSettingsTest {
         assertEquals(12, settings.renderDistanceChunks());
         assertEquals(6, settings.previewRadiusChunks());
         assertEquals(4, settings.meshBuildBudgetChunks());
+        assertEquals(3, settings.chunkGenerationBudgetChunks());
+        assertEquals(2.0, settings.chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(5.0, settings.meshBuildBudgetMilliseconds(), 0.001);
         assertEquals(4.0, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertTrue(settings.ambientOcclusionEnabled());
@@ -179,9 +189,26 @@ class GameSettingsTest {
         settings.setGpuUploadBudgetMilliseconds(2.0);
 
         assertEquals(4.0, settings.effectiveMeshBuildBudgetMilliseconds(16.0), 0.001);
+        assertEquals(2, settings.effectiveChunkGenerationBudgetChunks(16.0));
+        assertEquals(1.5, settings.effectiveChunkGenerationBudgetMilliseconds(16.0), 0.001);
         assertEquals(2.0, settings.effectiveGpuUploadBudgetMilliseconds(16.0), 0.001);
+        assertEquals(1, settings.effectiveChunkGenerationBudgetChunks(26.0));
+        assertEquals(0.975, settings.effectiveChunkGenerationBudgetMilliseconds(26.0), 0.001);
         assertEquals(2.6, settings.effectiveMeshBuildBudgetMilliseconds(26.0), 0.001);
         assertEquals(0.9, settings.effectiveGpuUploadBudgetMilliseconds(32.0), 0.001);
+    }
+
+    @Test
+    void particleQualityAlsoBudgetsAmbientSourceScans() {
+        GameSettings settings = GameSettings.fromOptions(new ConnectionOptions(false, null, 25565, "Player", 1L, 3, 8, false, false));
+
+        assertEquals(0.35, settings.ambientParticleSourceScanIntervalSeconds(), 0.001);
+
+        settings.setParticleQuality(0.55);
+        assertEquals(0.65, settings.ambientParticleSourceScanIntervalSeconds(), 0.001);
+
+        settings.setParticleQuality(0.25);
+        assertEquals(0.95, settings.ambientParticleSourceScanIntervalSeconds(), 0.001);
     }
 
     @Test

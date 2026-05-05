@@ -7,6 +7,9 @@ import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.ChunkSection;
 import dev.voxelgame.common.world.WorldView;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public final class ChunkMesher {
     /**
      * Chunk vertex format, GL location order:
@@ -70,17 +73,19 @@ public final class ChunkMesher {
     public synchronized ChunkMesh buildSectionLayerMesh(WorldView world, Chunk chunk, int sectionY, BlockRenderLayer layer, boolean ambientOcclusion) {
         vertices.reset();
         indices.reset();
-        appendSimpleFaces(vertices, indices, world, chunk, true, layer, ambientOcclusion, false, sectionY, true);
+        List<ChunkMesh.SectionPart> parts = new ArrayList<>(1);
+        appendSectionPart(vertices, indices, parts, world, chunk, true, layer, ambientOcclusion, false, sectionY, true);
         float[] vertexArray = vertices.toArray();
         int[] indexArray = indices.toArray();
-        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray);
+        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray, parts);
         lastBuildStats = new MeshBuildStats(
                 mesh.vertexCount(),
                 mesh.indexCount(),
                 mesh.estimatedBytes(),
                 vertices.growthBytesSinceReset() + indices.growthBytesSinceReset(),
                 vertices.capacityBytes() + indices.capacityBytes(),
-                false
+                false,
+                mesh.partCount()
         );
         return mesh;
     }
@@ -89,24 +94,68 @@ public final class ChunkMesher {
         vertices.reset();
         indices.reset();
         boolean usedGreedyMeshing = layer == BlockRenderLayer.SOLID && greedyMeshingEnabled;
-        if (usedGreedyMeshing) {
-            appendGreedySolidFaces(vertices, indices, world, chunk, ambientOcclusion);
-            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, ambientOcclusion, true, 0, false);
-        } else {
-            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, false, 0, false);
+        List<ChunkMesh.SectionPart> parts = new ArrayList<>();
+        for (int sectionIndex = 0; sectionIndex < chunk.sectionCount(); sectionIndex++) {
+            ChunkSection section = chunk.sectionByIndex(sectionIndex);
+            if (section.isEmpty()) {
+                continue;
+            }
+            appendSectionPart(
+                    vertices,
+                    indices,
+                    parts,
+                    world,
+                    chunk,
+                    filterLayer,
+                    layer,
+                    ambientOcclusion,
+                    usedGreedyMeshing,
+                    section.sectionY(),
+                    true
+            );
         }
         float[] vertexArray = vertices.toArray();
         int[] indexArray = indices.toArray();
-        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray);
+        ChunkMesh mesh = new ChunkMesh(vertexArray, indexArray, parts);
         lastBuildStats = new MeshBuildStats(
                 mesh.vertexCount(),
                 mesh.indexCount(),
                 mesh.estimatedBytes(),
                 vertices.growthBytesSinceReset() + indices.growthBytesSinceReset(),
                 vertices.capacityBytes() + indices.capacityBytes(),
-                usedGreedyMeshing
+                usedGreedyMeshing,
+                mesh.partCount()
         );
         return mesh;
+    }
+
+    private static void appendSectionPart(
+            FloatMeshBuffer vertices,
+            IntMeshBuffer indices,
+            List<ChunkMesh.SectionPart> parts,
+            WorldView world,
+            Chunk chunk,
+            boolean filterLayer,
+            BlockRenderLayer layer,
+            boolean ambientOcclusion,
+            boolean useGreedyMeshing,
+            int sectionY,
+            boolean restrictSection
+    ) {
+        int startVertex = vertices.vertexCount();
+        int startIndex = indices.size();
+        if (useGreedyMeshing) {
+            appendGreedySolidFaces(vertices, indices, world, chunk, ambientOcclusion, sectionY, true);
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, BlockRenderLayer.SOLID, ambientOcclusion, true, sectionY, true);
+        } else {
+            appendSimpleFaces(vertices, indices, world, chunk, filterLayer, layer, ambientOcclusion, false, sectionY, restrictSection);
+        }
+        int indexCount = indices.size() - startIndex;
+        if (indexCount <= 0) {
+            return;
+        }
+        ChunkMesh.Bounds bounds = vertices.bounds(startVertex, vertices.vertexCount());
+        parts.add(new ChunkMesh.SectionPart(sectionY, layer, startIndex, indexCount, bounds));
     }
 
     private static void appendSimpleFaces(
@@ -123,59 +172,105 @@ public final class ChunkMesher {
     ) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
+        if (restrictSection) {
+            ChunkSection section = findSection(chunk, onlySectionY);
+            if (section != null && !section.isEmpty()) {
+                appendSimpleFacesInSection(vertices, indices, world, chunk, section, baseX, baseZ, filterLayer, layer, ambientOcclusion, skipGreedyBlocks);
+            }
+            return;
+        }
         for (int sectionIndex = 0; sectionIndex < chunk.sectionCount(); sectionIndex++) {
             ChunkSection section = chunk.sectionByIndex(sectionIndex);
-            if (restrictSection && section.sectionY() != onlySectionY) {
-                continue;
-            }
             if (section.isEmpty()) {
                 continue;
             }
-            int sectionBaseY = section.sectionY() * ChunkSection.SIZE;
-            for (int localY = 0; localY < ChunkSection.SIZE; localY++) {
-                int y = sectionBaseY + localY;
-                if (!chunk.dimension().containsY(y)) {
-                    continue;
-                }
-                for (int z = baseZ; z < baseZ + ChunkPos.SIZE; z++) {
-                    int localZ = ChunkPos.localCoord(z);
-                    for (int x = baseX; x < baseX + ChunkPos.SIZE; x++) {
-                        int localX = ChunkPos.localCoord(x);
-                        BlockType block = world.blockType(section.blockId(localX, localY, localZ));
-                        if (block.id() == 0 || (!filterLayer && block.renderLayer() == BlockRenderLayer.TRANSLUCENT)) {
+            appendSimpleFacesInSection(vertices, indices, world, chunk, section, baseX, baseZ, filterLayer, layer, ambientOcclusion, skipGreedyBlocks);
+        }
+    }
+
+    private static ChunkSection findSection(Chunk chunk, int sectionY) {
+        for (int sectionIndex = 0; sectionIndex < chunk.sectionCount(); sectionIndex++) {
+            ChunkSection section = chunk.sectionByIndex(sectionIndex);
+            if (section.sectionY() == sectionY) {
+                return section;
+            }
+        }
+        return null;
+    }
+
+    private static void appendSimpleFacesInSection(
+            FloatMeshBuffer vertices,
+            IntMeshBuffer indices,
+            WorldView world,
+            Chunk chunk,
+            ChunkSection section,
+            int baseX,
+            int baseZ,
+            boolean filterLayer,
+            BlockRenderLayer layer,
+            boolean ambientOcclusion,
+            boolean skipGreedyBlocks
+    ) {
+        int sectionBaseY = section.sectionY() * ChunkSection.SIZE;
+        for (int localY = 0; localY < ChunkSection.SIZE; localY++) {
+            int y = sectionBaseY + localY;
+            if (!chunk.dimension().containsY(y)) {
+                continue;
+            }
+            for (int z = baseZ; z < baseZ + ChunkPos.SIZE; z++) {
+                int localZ = ChunkPos.localCoord(z);
+                for (int x = baseX; x < baseX + ChunkPos.SIZE; x++) {
+                    int localX = ChunkPos.localCoord(x);
+                    BlockType block = world.blockType(section.blockId(localX, localY, localZ));
+                    if (block.id() == 0 || (!filterLayer && block.renderLayer() == BlockRenderLayer.TRANSLUCENT)) {
+                        continue;
+                    }
+                    if (filterLayer && block.renderLayer() != layer) {
+                        continue;
+                    }
+                    if (skipGreedyBlocks && isGreedyBlock(block)) {
+                        continue;
+                    }
+                    if (block.renderLayer() == BlockRenderLayer.CUTOUT && !block.collidable()) {
+                        addCrossSprite(vertices, indices, world, x, y, z, block.id(), light(world, x, y + 1, z), ambientOcclusion);
+                        continue;
+                    }
+                    for (Face face : FACES) {
+                        BlockType neighbor = world.blockType(world.blockId(x + face.nx, y + face.ny, z + face.nz));
+                        if (neighbor.id() == block.id() && block.renderLayer() == BlockRenderLayer.TRANSLUCENT) {
                             continue;
                         }
-                        if (filterLayer && block.renderLayer() != layer) {
+                        if (neighbor.opaque() && neighbor.renderLayer() == BlockRenderLayer.SOLID) {
                             continue;
                         }
-                        if (skipGreedyBlocks && isGreedyBlock(block)) {
-                            continue;
-                        }
-                        if (block.renderLayer() == BlockRenderLayer.CUTOUT && !block.collidable()) {
-                            addCrossSprite(vertices, indices, world, x, y, z, block.id(), light(world, x, y + 1, z), ambientOcclusion);
-                            continue;
-                        }
-                        for (Face face : FACES) {
-                            BlockType neighbor = world.blockType(world.blockId(x + face.nx, y + face.ny, z + face.nz));
-                            if (neighbor.id() == block.id() && block.renderLayer() == BlockRenderLayer.TRANSLUCENT) {
-                                continue;
-                            }
-                            if (neighbor.opaque() && neighbor.renderLayer() == BlockRenderLayer.SOLID) {
-                                continue;
-                            }
-                            addFace(vertices, indices, world, x, y, z, face, block.id(), light(world, x + face.nx, y + face.ny, z + face.nz), ambientOcclusion);
-                        }
+                        addFace(vertices, indices, world, x, y, z, face, block.id(), light(world, x + face.nx, y + face.ny, z + face.nz), ambientOcclusion);
                     }
                 }
             }
         }
     }
 
-    private static void appendGreedySolidFaces(FloatMeshBuffer vertices, IntMeshBuffer indices, WorldView world, Chunk chunk, boolean ambientOcclusion) {
+    private static void appendGreedySolidFaces(
+            FloatMeshBuffer vertices,
+            IntMeshBuffer indices,
+            WorldView world,
+            Chunk chunk,
+            boolean ambientOcclusion,
+            int onlySectionY,
+            boolean restrictSection
+    ) {
         int baseX = chunk.pos().x() * ChunkPos.SIZE;
         int baseZ = chunk.pos().z() * ChunkPos.SIZE;
-        int minY = chunk.dimension().minY();
-        int height = chunk.dimension().height();
+        int minY = restrictSection
+                ? Math.max(chunk.dimension().minY(), onlySectionY * ChunkSection.SIZE)
+                : chunk.dimension().minY();
+        int maxYExclusive = restrictSection
+                ? Math.min(chunk.dimension().maxYExclusive(), onlySectionY * ChunkSection.SIZE + ChunkSection.SIZE)
+                : chunk.dimension().maxYExclusive();
+        int height = Math.max(0, maxYExclusive - minY);
+        if (height == 0) {
+            return;
+        }
         for (Face face : FACES) {
             int fixedCount = fixedCount(face, height);
             int uCount = ChunkPos.SIZE;
@@ -550,6 +645,40 @@ public final class ChunkMesher {
             return size;
         }
 
+        int vertexCount() {
+            return size / FLOATS_PER_VERTEX;
+        }
+
+        ChunkMesh.Bounds bounds(int startVertex, int endVertex) {
+            int start = Math.max(0, startVertex) * FLOATS_PER_VERTEX;
+            int end = Math.min(vertexCount(), Math.max(startVertex, endVertex)) * FLOATS_PER_VERTEX;
+            if (end - start < FLOATS_PER_VERTEX) {
+                return ChunkMesh.Bounds.empty();
+            }
+            float minX = Float.POSITIVE_INFINITY;
+            float minY = Float.POSITIVE_INFINITY;
+            float minZ = Float.POSITIVE_INFINITY;
+            float maxX = Float.NEGATIVE_INFINITY;
+            float maxY = Float.NEGATIVE_INFINITY;
+            float maxZ = Float.NEGATIVE_INFINITY;
+            for (int offset = start; offset + POSITION_OFFSET + 2 < end; offset += FLOATS_PER_VERTEX) {
+                float x = values[offset + POSITION_OFFSET];
+                float y = values[offset + POSITION_OFFSET + 1];
+                float z = values[offset + POSITION_OFFSET + 2];
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                maxZ = Math.max(maxZ, z);
+            }
+            if (!Float.isFinite(minX) || !Float.isFinite(minY) || !Float.isFinite(minZ)
+                    || !Float.isFinite(maxX) || !Float.isFinite(maxY) || !Float.isFinite(maxZ)) {
+                return ChunkMesh.Bounds.empty();
+            }
+            return new ChunkMesh.Bounds(minX, minY, minZ, maxX, maxY, maxZ);
+        }
+
         float[] toArray() {
             float[] copy = new float[size];
             System.arraycopy(values, 0, copy, 0, size);
@@ -646,10 +775,15 @@ public final class ChunkMesher {
             long outputBytes,
             long temporaryBufferGrowthBytes,
             long retainedBufferBytes,
-            boolean greedyMeshing
+            boolean greedyMeshing,
+            int parts
     ) {
+        public MeshBuildStats {
+            parts = Math.max(0, parts);
+        }
+
         public static MeshBuildStats empty() {
-            return new MeshBuildStats(0, 0, 0L, 0L, 0L, false);
+            return new MeshBuildStats(0, 0, 0L, 0L, 0L, false, 0);
         }
     }
 }

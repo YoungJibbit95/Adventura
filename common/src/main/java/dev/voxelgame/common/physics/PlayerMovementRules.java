@@ -118,6 +118,34 @@ public final class PlayerMovementRules {
             PlayerPhysicsConfig config,
             PlayerWaterState water
     ) {
+        return isPlausibleSurvivalDelta(
+                fromX,
+                fromY,
+                fromZ,
+                toX,
+                toY,
+                toZ,
+                deltaSeconds,
+                config,
+                water,
+                BlockSurfacePhysics.DEFAULT,
+                BlockSurfacePhysics.DEFAULT
+        );
+    }
+
+    public static boolean isPlausibleSurvivalDelta(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double deltaSeconds,
+            PlayerPhysicsConfig config,
+            PlayerWaterState water,
+            BlockSurfacePhysics.SurfaceMaterial fromSurface,
+            BlockSurfacePhysics.SurfaceMaterial toSurface
+    ) {
         if (!Double.isFinite(deltaSeconds) || deltaSeconds < 0.0) {
             return false;
         }
@@ -126,7 +154,8 @@ public final class PlayerMovementRules {
         double dy = toY - fromY;
         double dz = toZ - fromZ;
         double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-        double maxHorizontalDistance = config.sprintSpeed() * seconds + HORIZONTAL_GRACE_BLOCKS;
+        double surfaceSpeedMultiplier = surfaceSpeedMultiplier(water, fromSurface, toSurface);
+        double maxHorizontalDistance = config.sprintSpeed() * surfaceSpeedMultiplier * seconds + HORIZONTAL_GRACE_BLOCKS;
         double maxVerticalSpeed = waterMovementAssist(water) ? config.maxWaterFallSpeed() : config.maxFallSpeed();
         double maxVerticalDistance = maxVerticalSpeed * seconds + VERTICAL_GRACE_BLOCKS;
         return horizontalDistance <= maxHorizontalDistance && Math.abs(dy) <= maxVerticalDistance;
@@ -180,6 +209,41 @@ public final class PlayerMovementRules {
         );
     }
 
+    public static boolean isPlausibleModeDelta(
+            double fromX,
+            double fromY,
+            double fromZ,
+            double toX,
+            double toY,
+            double toZ,
+            double deltaSeconds,
+            PlayerPhysicsConfig config,
+            PlayerWaterState water,
+            MovementMode mode,
+            BlockSurfacePhysics.SurfaceMaterial fromSurface,
+            BlockSurfacePhysics.SurfaceMaterial toSurface
+    ) {
+        if (mode == null) {
+            return false;
+        }
+        return switch (mode) {
+            case SURVIVAL -> isPlausibleSurvivalDelta(
+                    fromX,
+                    fromY,
+                    fromZ,
+                    toX,
+                    toY,
+                    toZ,
+                    deltaSeconds,
+                    config,
+                    water,
+                    fromSurface,
+                    toSurface
+            );
+            case FLYING, SPECTATOR -> isPlausibleDelta(fromX, fromY, fromZ, toX, toY, toZ, deltaSeconds, config);
+        };
+    }
+
     public static boolean isPlausibleHorizontalAcceleration(
             double previousDeltaX,
             double previousDeltaZ,
@@ -219,5 +283,20 @@ public final class PlayerMovementRules {
 
     private static double validationDeltaSeconds(double deltaSeconds) {
         return Math.max(MIN_DELTA_SECONDS, Math.min(deltaSeconds, MAX_DELTA_SECONDS));
+    }
+
+    private static double surfaceSpeedMultiplier(
+            PlayerWaterState water,
+            BlockSurfacePhysics.SurfaceMaterial fromSurface,
+            BlockSurfacePhysics.SurfaceMaterial toSurface
+    ) {
+        if (waterMovementAssist(water)) {
+            return 1.0;
+        }
+        return Math.max(safeSurface(fromSurface).speedMultiplier(), safeSurface(toSurface).speedMultiplier());
+    }
+
+    private static BlockSurfacePhysics.SurfaceMaterial safeSurface(BlockSurfacePhysics.SurfaceMaterial surface) {
+        return surface == null ? BlockSurfacePhysics.DEFAULT : surface;
     }
 }

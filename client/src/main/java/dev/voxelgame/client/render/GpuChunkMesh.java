@@ -17,6 +17,8 @@ import static org.lwjgl.opengl.GL30.glBindVertexArray;
 import static org.lwjgl.opengl.GL30.glDeleteVertexArrays;
 import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 
+import java.util.List;
+
 public final class GpuChunkMesh implements AutoCloseable {
     private final int vao;
     private final int vbo;
@@ -25,6 +27,7 @@ public final class GpuChunkMesh implements AutoCloseable {
     private final int vertexCount;
     private final long estimatedBytes;
     private final ChunkMesh.Bounds bounds;
+    private final List<ChunkMesh.SectionPart> parts;
     private boolean closed;
 
     public GpuChunkMesh(ChunkMesh mesh) {
@@ -32,6 +35,7 @@ public final class GpuChunkMesh implements AutoCloseable {
         this.vertexCount = mesh.vertexCount();
         this.estimatedBytes = mesh.estimatedBytes();
         this.bounds = mesh.bounds();
+        this.parts = List.copyOf(mesh.parts());
         this.vao = glGenVertexArrays();
         this.vbo = glGenBuffers();
         this.ebo = glGenBuffers();
@@ -84,6 +88,14 @@ public final class GpuChunkMesh implements AutoCloseable {
         return bounds;
     }
 
+    public List<ChunkMesh.SectionPart> parts() {
+        return parts;
+    }
+
+    public int partCount() {
+        return parts.size();
+    }
+
     public void draw() {
         if (closed) {
             throw new IllegalStateException("Attempted to draw a closed chunk mesh");
@@ -93,6 +105,22 @@ public final class GpuChunkMesh implements AutoCloseable {
         }
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0L);
+    }
+
+    public void drawParts(List<ChunkMesh.SectionPart> visibleParts) {
+        if (closed) {
+            throw new IllegalStateException("Attempted to draw a closed chunk mesh");
+        }
+        if (visibleParts == null || visibleParts.isEmpty()) {
+            return;
+        }
+        glBindVertexArray(vao);
+        for (ChunkMesh.SectionPart part : visibleParts) {
+            if (part == null || part.isEmpty()) {
+                continue;
+            }
+            glDrawElements(GL_TRIANGLES, part.indexCount(), GL_UNSIGNED_INT, part.byteOffset());
+        }
     }
 
     @Override

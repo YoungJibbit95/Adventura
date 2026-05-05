@@ -7,6 +7,7 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.physics.PlayerBounds;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.gen.OverworldGenerator;
+import dev.voxelgame.common.world.structure.StructureBounds;
 import dev.voxelgame.common.world.structure.Structures;
 import org.junit.jupiter.api.Test;
 
@@ -55,12 +56,55 @@ class OverworldGeneratorTest {
     }
 
     @Test
+    void terrainCacheIncludesFluidSurfaceMetadataForWaterRenderingAndPhysics() {
+        OverworldGenerator generator = new OverworldGenerator(1337L);
+        FluidColumnSample sample = findFluidShore(generator, -968, -1272, 96);
+        ChunkTerrainCache cache = generator.terrainCacheForChunk(ChunkPos.fromBlock(sample.x(), sample.z()));
+
+        ChunkTerrainCache.FluidSurface surface = cache.fluidSurfaceAtWorld(sample.x(), sample.z());
+
+        assertTrue(surface.fluid());
+        assertTrue(surface.shoreline());
+        assertEquals(sample.expectedDepthHint(), surface.depthHint());
+        assertEquals(sample.expectedShoreMask(), surface.shoreMask());
+        assertTrue(surface.depthHint() >= 1 && surface.depthHint() <= ChunkTerrainCache.MAX_FLUID_DEPTH_HINT);
+        assertTrue(surface.flags() == 0 || surface.foam());
+        assertEquals(surface.depthHint(), cache.fluidDepthHintAtWorld(sample.x(), sample.z()));
+        assertEquals(surface.shoreMask(), cache.shoreMaskAtWorld(sample.x(), sample.z()));
+    }
+
+    @Test
     void structuresCanUseChunkTerrainCache() {
         OverworldGenerator generator = new OverworldGenerator(42L);
         ChunkPos pos = new ChunkPos(1, 1);
         ChunkTerrainCache cache = generator.terrainCacheForChunk(pos);
 
         assertEquals(generator.structureAtChunk(pos), generator.structureAtChunk(cache));
+    }
+
+    @Test
+    void compactVillagePreparesSupportedAndClearedFootprint() {
+        OverworldGenerator generator = new OverworldGenerator(42L);
+        ChunkPos pos = new ChunkPos(1, 1);
+        Chunk chunk = new Chunk(pos, DimensionSettings.OVERWORLD);
+        OverworldGenerator.GeneratedStructure structure = generator.planChunk(pos).structure().orElseThrow();
+        StructureBounds bounds = StructureBounds.fromTemplate(structure.template());
+        int baseY = structure.originY() + bounds.minY();
+        int clearY = structure.originY() + bounds.maxY() + 1;
+
+        generator.generate(chunk);
+
+        assertEquals("voxel:compact_village", structure.template().key());
+        assertEquals(Blocks.MOSSY_PATH, chunk.blockId(structure.originX(), structure.originY(), structure.originZ()));
+        assertEquals(Blocks.WATER, chunk.blockId(structure.originX(), structure.originY() + 1, structure.originZ()));
+        for (int dz = bounds.minZ(); dz <= bounds.maxZ(); dz++) {
+            for (int dx = bounds.minX(); dx <= bounds.maxX(); dx++) {
+                int x = structure.originX() + dx;
+                int z = structure.originZ() + dz;
+                assertTrue(chunk.blockId(x, baseY - 1, z) != Blocks.AIR, "village footprint column should have support");
+                assertEquals(Blocks.AIR, chunk.blockId(x, clearY, z), "village footprint should be cleared above the roof line");
+            }
+        }
     }
 
     @Test
@@ -157,7 +201,16 @@ class OverworldGeneratorTest {
         int height = generator.terrainHeight(x, z, biome);
         assertEquals(height, cache.heightAtWorld(x, z));
         assertEquals(chunk.blockId(x, height, z), cache.surfaceBlockAtWorld(x, z));
-        assertEquals(height < 63, cache.hasFluidAtWorld(x, z));
+        assertEquals(height < OverworldGenerator.SEA_LEVEL, cache.hasFluidAtWorld(x, z));
+        ChunkTerrainCache.FluidSurface fluidSurface = cache.fluidSurfaceAtWorld(x, z);
+        assertEquals(cache.hasFluidAtWorld(x, z), fluidSurface.fluid());
+        if (fluidSurface.fluid()) {
+            assertTrue(fluidSurface.depthHint() > 0);
+        } else {
+            assertEquals(0, fluidSurface.depthHint());
+            assertEquals(0, fluidSurface.shoreMask());
+            assertEquals(0, fluidSurface.flags());
+        }
     }
 
     private static InMemoryWorld generatedWorldAround(OverworldGenerator generator, ChunkPos center) {
@@ -232,6 +285,49 @@ class OverworldGeneratorTest {
         throw new AssertionError("Expected at least one biome boundary in scan area");
     }
 
+    private static FluidColumnSample findFluidShore(OverworldGenerator generator, int centerX, int centerZ, int radius) {
+        for (int z = centerZ - radius; z <= centerZ + radius; z++) {
+            for (int x = centerX - radius; x <= centerX + radius; x++) {
+                BiomeType biome = generator.biomeAt(x, z);
+                int height = generator.terrainHeight(x, z, biome);
+                if (height >= OverworldGenerator.SEA_LEVEL) {
+                    continue;
+                }
+                int shoreMask = expectedShoreMask(generator, x, z);
+                if (shoreMask != 0) {
+                    int depthHint = Math.min(ChunkTerrainCache.MAX_FLUID_DEPTH_HINT, OverworldGenerator.SEA_LEVEL - height);
+                    return new FluidColumnSample(x, z, depthHint, shoreMask);
+                }
+            }
+        }
+        throw new AssertionError("Expected a shoreline fluid column near " + centerX + "," + centerZ);
+    }
+
+    private static int expectedShoreMask(OverworldGenerator generator, int x, int z) {
+        int mask = 0;
+        if (isDryColumn(generator, x, z - 1)) {
+            mask |= ChunkTerrainCache.SHORE_NORTH;
+        }
+        if (isDryColumn(generator, x + 1, z)) {
+            mask |= ChunkTerrainCache.SHORE_EAST;
+        }
+        if (isDryColumn(generator, x, z + 1)) {
+            mask |= ChunkTerrainCache.SHORE_SOUTH;
+        }
+        if (isDryColumn(generator, x - 1, z)) {
+            mask |= ChunkTerrainCache.SHORE_WEST;
+        }
+        return mask;
+    }
+
+    private static boolean isDryColumn(OverworldGenerator generator, int x, int z) {
+        BiomeType biome = generator.biomeAt(x, z);
+        return generator.terrainHeight(x, z, biome) >= OverworldGenerator.SEA_LEVEL;
+    }
+
     private record BoundarySample(int x, int z, int neighborX, int neighborZ) {
+    }
+
+    private record FluidColumnSample(int x, int z, int expectedDepthHint, int expectedShoreMask) {
     }
 }

@@ -2,6 +2,7 @@ package dev.voxelgame.server.world;
 
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.FluidBlocks;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.gameplay.CampfireRules;
@@ -16,11 +17,13 @@ import dev.voxelgame.common.loot.LootTable;
 import dev.voxelgame.common.loot.LootTableRegistry;
 import dev.voxelgame.common.loot.LootTables;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
 import dev.voxelgame.common.physics.CollisionShapeCache;
 import dev.voxelgame.common.physics.EnvironmentHazardRules;
 import dev.voxelgame.common.physics.EntityPhysicsProfile;
 import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.PlayerPhysicsConfig;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.PartialShapeImpactResolver;
 import dev.voxelgame.common.physics.ProjectileBounds;
@@ -382,7 +385,7 @@ public final class ServerWorld {
         if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
             return false;
         }
-        return blockIdAt(floor(x), floor(y), floor(z)) == Blocks.WATER;
+        return FluidBlocks.isWater(blockIdAt(floor(x), floor(y), floor(z)));
     }
 
     public synchronized FluidPhysics.FluidSample fluidSample(double x, double y, double z) {
@@ -393,11 +396,12 @@ public final class ServerWorld {
         int blockY = floor(y);
         int blockZ = floor(z);
         short blockId = blockIdAt(blockX, blockY, blockZ);
-        if (blockId != Blocks.WATER && blockId != Blocks.LAVA) {
+        FluidBlocks.FluidKind kind = FluidBlocks.kind(blockId);
+        if (!kind.fluid()) {
             return FluidPhysics.air();
         }
         double phase = (blockX * 0.37) + (blockZ * 0.61) + (blockY * 0.13) + (seed & 0xFFFFL) * 0.0003;
-        if (blockId == Blocks.LAVA) {
+        if (kind == FluidBlocks.FluidKind.LAVA) {
             double velocityX = Math.sin(phase) * 0.045;
             double velocityZ = Math.cos(phase * 0.73) * 0.045;
             return FluidPhysics.lava(velocityX, -0.025, velocityZ);
@@ -443,7 +447,7 @@ public final class ServerWorld {
             for (int z = floor(bounds.minZ(snapshot.z())); z <= floor(bounds.maxZ(snapshot.z())); z++) {
                 for (int x = floor(bounds.minX(snapshot.x())); x <= floor(bounds.maxX(snapshot.x())); x++) {
                     if (bounds.intersectsBlock(snapshot.x(), baseY, snapshot.z(), x, y, z)
-                            && blockIdAt(x, y, z) == Blocks.WATER) {
+                            && FluidBlocks.isWater(blockIdAt(x, y, z))) {
                         return true;
                     }
                 }
@@ -468,10 +472,29 @@ public final class ServerWorld {
         int bodyY = floor(eyeY - bounds.eyeHeight() * 0.35f);
         int feetY = floor(bounds.minY(eyeY) + 0.05);
         return new PlayerWaterState(
-                blockIdAt(x, feetY, z) == Blocks.WATER,
-                blockIdAt(x, bodyY, z) == Blocks.WATER,
-                blockIdAt(x, headY, z) == Blocks.WATER
+                FluidBlocks.isWater(blockIdAt(x, feetY, z)),
+                FluidBlocks.isWater(blockIdAt(x, bodyY, z)),
+                FluidBlocks.isWater(blockIdAt(x, headY, z))
         );
+    }
+
+    public synchronized BlockSurfacePhysics.SurfaceMaterial playerSurface(
+            double eyeX,
+            double eyeY,
+            double eyeZ,
+            PlayerPhysicsConfig config
+    ) {
+        if (config == null) {
+            throw new IllegalArgumentException("Player physics config is required");
+        }
+        return surfaceAt(eyeX, config.bounds().minY(eyeY) - config.groundProbeDistance(), eyeZ);
+    }
+
+    public synchronized BlockSurfacePhysics.SurfaceMaterial surfaceAt(double x, double y, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        return BlockSurfacePhysics.forBlock(blockIdAt(floor(x), floor(y), floor(z)));
     }
 
     private short blockIdAt(int x, int y, int z) {

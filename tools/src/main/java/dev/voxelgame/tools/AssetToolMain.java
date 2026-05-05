@@ -19,11 +19,23 @@ public final class AssetToolMain {
             return;
         }
         if ("atlas-report".equals(args[0])) {
-            Path assetRoot = Path.of(args.length > 1 ? args[1] : AssetAtlasReport.DEFAULT_ASSET_ROOT.toString());
+            Path assetRoot = args.length > 1 ? Path.of(args[1]) : defaultAssetRoot();
             System.out.print(AssetAtlasReport.generate(assetRoot).format());
             return;
         }
         throw new IllegalArgumentException("Unknown tool command: " + args[0]);
+    }
+
+    private static Path defaultAssetRoot() {
+        Path rootRelative = AssetAtlasReport.DEFAULT_ASSET_ROOT;
+        if (Files.isDirectory(rootRelative)) {
+            return rootRelative;
+        }
+        Path parentRelative = Path.of("..").resolve(rootRelative).normalize();
+        if (Files.isDirectory(parentRelative)) {
+            return parentRelative;
+        }
+        return rootRelative;
     }
 
     private static void validateAssetPack(Path pack) throws Exception {

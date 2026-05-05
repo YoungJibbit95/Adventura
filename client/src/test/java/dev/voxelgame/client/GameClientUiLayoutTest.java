@@ -2,8 +2,10 @@ package dev.voxelgame.client;
 
 import dev.voxelgame.client.ui.BitmapFont;
 import dev.voxelgame.client.viewmodel.LoadingScreenViewModel;
+import dev.voxelgame.common.world.ChunkStreamingRings;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +55,16 @@ class GameClientUiLayoutTest {
         assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.streamingSpawn(3, 4), 0.0) >= 0.75);
         assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.boot(), 0.0) >= 0.18);
         assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.boot(), 1.0) <= 0.82);
+    }
+
+    @Test
+    void singleplayerInitialLoadUsesSmallSpawnRing() {
+        ChunkStreamingRings defaultRings = ChunkStreamingRings.client(8, 3);
+        ChunkStreamingRings tinyRings = ChunkStreamingRings.client(1, 1);
+
+        assertTrue(GameClient.initialSingleplayerLoadRadius(defaultRings) <= 2);
+        assertEquals(25, GameClient.loadingChunkTarget(GameClient.initialSingleplayerLoadRadius(defaultRings)));
+        assertEquals(9, GameClient.loadingChunkTarget(GameClient.initialSingleplayerLoadRadius(tinyRings)));
     }
 
     private static void assertStorageLayoutFits(int width, int height, float uiScale) {

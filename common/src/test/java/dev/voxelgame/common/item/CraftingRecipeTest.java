@@ -364,6 +364,58 @@ class CraftingRecipeTest {
     }
 
     @Test
+    void mineralSwordsExtendWorkbenchAndForgeProgression() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+        short ironIngot = items.requireByKey("voxel:iron_ingot").id();
+        short platinIngot = items.requireByKey("voxel:platin_ingot").id();
+        short sapphireShard = items.requireByKey("voxel:sapphire_shard").id();
+        short titanIngot = items.requireByKey("voxel:titan_ingot").id();
+        short toolHandle = items.requireByKey("voxel:tool_handle").id();
+        short leatherStrip = items.requireByKey("voxel:leather_strip").id();
+        short glowCrystal = items.requireByKey("voxel:glow_crystal").id();
+        short ironSword = items.requireByKey("voxel:iron_sword").id();
+        short platinSword = items.requireByKey("voxel:platin_sword").id();
+        short sapphireSword = items.requireByKey("voxel:sapphire_sword").id();
+        short titanSword = items.requireByKey("voxel:titan_sword").id();
+
+        Inventory ironInventory = new Inventory(5);
+        ironInventory.add(ironIngot, 2, items);
+        ironInventory.add(toolHandle, 1, items);
+        ironInventory.add(leatherStrip, 1, items);
+        CraftingRecipe ironRecipe = recipeByKey(recipes, "voxel:iron_sword");
+        assertEquals(CraftingStationType.WORKBENCH, ironRecipe.stationType());
+        assertTrue(ironRecipe.craft(ironInventory, items, CraftingStationType.WORKBENCH));
+        assertEquals(1, ironInventory.count(ironSword));
+
+        Inventory platinInventory = new Inventory(5);
+        platinInventory.add(platinIngot, 2, items);
+        platinInventory.add(ironSword, 1, items);
+        platinInventory.add(leatherStrip, 1, items);
+        CraftingRecipe platinRecipe = recipeByKey(recipes, "voxel:platin_sword");
+        assertEquals(CraftingStationType.FORGE, platinRecipe.stationType());
+        assertEquals(220, platinRecipe.craftingTimeTicks());
+        assertFalse(platinRecipe.craft(platinInventory, items));
+        assertTrue(platinRecipe.craft(platinInventory, items, CraftingStationType.FORGE));
+        assertEquals(1, platinInventory.count(platinSword));
+
+        Inventory sapphireInventory = new Inventory(6);
+        sapphireInventory.add(sapphireShard, 3, items);
+        sapphireInventory.add(ironSword, 1, items);
+        sapphireInventory.add(glowCrystal, 1, items);
+        sapphireInventory.add(leatherStrip, 1, items);
+        assertTrue(recipeByKey(recipes, "voxel:sapphire_sword").craft(sapphireInventory, items, CraftingStationType.FORGE));
+        assertEquals(1, sapphireInventory.count(sapphireSword));
+
+        Inventory titanInventory = new Inventory(6);
+        titanInventory.add(titanIngot, 2, items);
+        titanInventory.add(platinSword, 1, items);
+        titanInventory.add(leatherStrip, 2, items);
+        assertTrue(recipeByKey(recipes, "voxel:titan_sword").craft(titanInventory, items, CraftingStationType.FORGE));
+        assertEquals(1, titanInventory.count(titanSword));
+    }
+
+    @Test
     void workbenchCreatesClothLeatherStripsAndHoneyStaysCookingProgression() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);

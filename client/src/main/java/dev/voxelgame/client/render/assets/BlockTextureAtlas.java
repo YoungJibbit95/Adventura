@@ -48,9 +48,14 @@ public final class BlockTextureAtlas implements AutoCloseable {
     public static final int SHADER_BLOCK_ID_LIMIT = BlockRenderProperties.MATERIAL_INDEX_LIMIT;
     public static final String BLOCK_TEXTURE_ROOT = "assets/game/textures/block/";
     public static final String BLOCKS_TEXTURE_ROOT = "assets/game/textures/blocks/";
+    public static final String ASSET_BLOCKS_TEXTURE_ROOT = "assets/game/blocks/";
+    public static final String ASSET_DROP_TEXTURE_ROOT = "assets/game/";
     public static final int TILE_PADDING_PIXELS = 1;
+    public static final int MAX_TILE_CONTENT_SIZE = 256;
     public static final float UV_INSET_PIXELS = 0.5f;
     public static final String ATLAS_FILTER_MODE = "nearest-no-mip";
+    public static final String ATLAS_RESAMPLE_MODE = "nearest-upscale-bilinear-downscale";
+    public static final String INDIVIDUAL_ASSET_EDGE_CLEANUP_MODE = "edge-neutral-trim";
 
     private final int textureId;
     private final boolean enabled;
@@ -165,6 +170,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
                 layout.paddingPixels(),
                 UV_INSET_PIXELS,
                 ATLAS_FILTER_MODE,
+                INDIVIDUAL_ASSET_EDGE_CLEANUP_MODE,
                 layout.textureCount(),
                 materialTable.materialCount(),
                 MAX_BLOCK_ID,
@@ -210,10 +216,11 @@ public final class BlockTextureAtlas implements AutoCloseable {
         if (imagesByPath.isEmpty()) {
             return AtlasBuild.empty();
         }
-        int tileContentSize = imagesByPath.values().stream()
+        int largestSourceTexture = imagesByPath.values().stream()
                 .mapToInt(image -> Math.max(image.getWidth(), image.getHeight()))
                 .max()
                 .orElse(16);
+        int tileContentSize = Math.min(largestSourceTexture, MAX_TILE_CONTENT_SIZE);
         AtlasLayout layout = AtlasLayout.forTextureCount(imagesByPath.size(), tileContentSize);
         BufferedImage atlas = new BufferedImage(layout.atlasWidth(), layout.atlasHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = atlas.createGraphics();
@@ -248,7 +255,10 @@ public final class BlockTextureAtlas implements AutoCloseable {
         int safePadding = Math.max(0, paddingPixels);
         BufferedImage scaled = new BufferedImage(safeContentSize, safeContentSize, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = scaled.createGraphics();
-        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        graphics.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                interpolationMode(source.getWidth(), source.getHeight(), safeContentSize)
+        );
         graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         graphics.drawImage(source, 0, 0, safeContentSize, safeContentSize, null);
         graphics.dispose();
@@ -361,18 +371,14 @@ public final class BlockTextureAtlas implements AutoCloseable {
 
     public static List<String> textureCandidates(String blockKey, TextureFace face) {
         String name = blockKey.substring(blockKey.indexOf(':') + 1);
-        List<String> baseNames = new ArrayList<>();
-        baseNames.add(name);
-        if ("grass_block".equals(name)) {
-            baseNames.add("grass");
-        }
+        List<String> baseNames = textureBaseNames(name);
 
         List<String> suffixes = switch (face) {
             case TOP -> List.of("_top", "_up", "");
             case BOTTOM -> List.of("_bottom", "_down", "");
             case SIDE -> List.of("_side", "");
         };
-        List<String> roots = List.of(BLOCK_TEXTURE_ROOT, BLOCKS_TEXTURE_ROOT);
+        List<String> roots = List.of(BLOCK_TEXTURE_ROOT, BLOCKS_TEXTURE_ROOT, ASSET_BLOCKS_TEXTURE_ROOT, ASSET_DROP_TEXTURE_ROOT);
         List<String> candidates = new ArrayList<>();
         for (String baseName : baseNames) {
             for (String suffix : suffixes) {
@@ -385,6 +391,51 @@ public final class BlockTextureAtlas implements AutoCloseable {
             }
         }
         return candidates;
+    }
+
+    private static List<String> textureBaseNames(String name) {
+        List<String> baseNames = new ArrayList<>();
+        addUnique(baseNames, name);
+        switch (name) {
+            case "grass_block" -> {
+                addUnique(baseNames, "grass");
+                addUnique(baseNames, "mossy_grass");
+            }
+            case "skyroot_log" -> addUnique(baseNames, "oak_log");
+            case "skyroot_leaves" -> addUnique(baseNames, "oak_leaves");
+            case "pine_log" -> addUnique(baseNames, "spruce_log");
+            case "pine_leaves" -> addUnique(baseNames, "spruce_leaves");
+            case "mossy_stone" -> {
+                addUnique(baseNames, "cobblestone");
+                addUnique(baseNames, "cracked_cobblestone");
+            }
+            case "mossy_path" -> {
+                addUnique(baseNames, "mossy_grass");
+                addUnique(baseNames, "myzelium");
+            }
+            case "ice" -> addUnique(baseNames, "ice_block");
+            case "skyroot_planks" -> addUnique(baseNames, "oak_planks");
+            case "pine_planks" -> addUnique(baseNames, "spruce_planks");
+            case "snowy_grass_block" -> {
+                addUnique(baseNames, "snowy_grass");
+                addUnique(baseNames, "dirt");
+            }
+            case "stone_bricks" -> addUnique(baseNames, "stone_brick_block");
+            case "mossy_stone_bricks" -> addUnique(baseNames, "mossy_stone_brick_block");
+            case "fancy_stone_bricks" -> addUnique(baseNames, "fancy_stone_brick_block");
+            case "mossy_fancy_stone_bricks" -> addUnique(baseNames, "mossy_fancy_stone_brick_block");
+            case "glass" -> addUnique(baseNames, "glass_block");
+            case "tree_stump" -> addUnique(baseNames, "oak_log");
+            default -> {
+            }
+        }
+        return baseNames;
+    }
+
+    private static void addUnique(List<String> values, String value) {
+        if (!values.contains(value)) {
+            values.add(value);
+        }
     }
 
     private static String findTexturePath(BlockType block, TextureFace face) {
@@ -424,10 +475,15 @@ public final class BlockTextureAtlas implements AutoCloseable {
             if (image == null) {
                 throw new IllegalArgumentException("Unsupported block texture: " + path);
             }
-            return image;
+            return shouldSanitizeIndividualTexture(path) ? sanitizeIndividualTexture(image) : image;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read block texture: " + path, e);
         }
+    }
+
+    private static boolean shouldSanitizeIndividualTexture(String path) {
+        return path.startsWith(ASSET_BLOCKS_TEXTURE_ROOT)
+                || path.startsWith(ASSET_DROP_TEXTURE_ROOT) && !path.contains("_sheet");
     }
 
     private static BufferedImage readSheetSlice(String key) {
@@ -483,6 +539,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
         String ores = "assets/game/ores_materials_sheet.png";
         String ui = "assets/game/ui_hud_sheet.png";
         String food = "assets/game/nature_food_sheet.png";
+        boolean oreSheetAvailable = resourceExists(ores);
 
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FLOWER_POT, food, "flower_pot", 1137, 132, 126, 98);
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.COOKING_POT, food, "cooking_pot", 1137, 132, 126, 98);
@@ -512,6 +569,11 @@ public final class BlockTextureAtlas implements AutoCloseable {
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.WATER, blocks, "water", 211, 469, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.LAVA, blocks, "lava", 394, 469, 150, 158);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAND, blocks, "sand", 1123, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.RED_SAND, blocks, "red_sand_fallback", 1123, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FARMLAND, blocks, "farmland_fallback", 211, 50, 150, 158);
+        putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.SNOWY_GRASS, blocks, "snowy_grass_top_fallback", 29, 469, 150, 158);
+        putFullFace(duplicateMappings, imagesByPath, sidePathByBlock, Blocks.SNOWY_GRASS, blocks, "snowy_grass_side_fallback", 29, 49, 150, 158);
+        putFullFace(duplicateMappings, imagesByPath, bottomPathByBlock, Blocks.SNOWY_GRASS, blocks, "snowy_grass_bottom_fallback", 211, 50, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, sidePathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_side", 211, 259, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, topPathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_top", 29, 259, 150, 158);
         putFullFace(duplicateMappings, imagesByPath, bottomPathByBlock, Blocks.SKYROOT_LOG, blocks, "skyroot_log_top", 29, 259, 150, 158);
@@ -542,6 +604,23 @@ public final class BlockTextureAtlas implements AutoCloseable {
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SPORE_BLOSSOM, food, "spore_blossom", 982, 678, 106, 70);
         putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_CRYSTAL_NODE, ores, "glow_crystal_node", 1028, 147, 133, 130);
         putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SKYROOT_PLANKS, blocks, "skyroot_planks", 576, 469, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.PINE_PLANKS, blocks, "pine_planks_fallback", 576, 469, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.STONE_BRICKS, blocks, "stone_bricks_fallback", 576, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_STONE_BRICKS, blocks, "mossy_stone_bricks_fallback", 758, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FANCY_STONE_BRICKS, blocks, "fancy_stone_bricks_fallback", 576, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.MOSSY_FANCY_STONE_BRICKS, blocks, "mossy_fancy_stone_bricks_fallback", 758, 50, 150, 158);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GOLD_ORE, ores, "gold_ore_fallback", 377, 146, 130, 132);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.PLATIN_ORE, ores, "platin_ore_fallback", 377, 146, 130, 132);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.RUBY_ORE, ores, "ruby_ore_fallback", 1028, 147, 133, 130);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.SAPPHIRE_ORE, ores, "sapphire_ore_fallback", 1028, 147, 133, 130);
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.TITAN_ORE, ores, "titan_ore_fallback", 377, 146, 130, 132);
+        if (!oreSheetAvailable) {
+            putAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_MUSHROOM, food, "glow_mushroom_sheet_missing_fallback", 958, 132, 110, 94);
+            putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLOW_CRYSTAL_NODE, blocks, "glow_crystal_node_sheet_missing_fallback", 575, 681, 150, 158);
+            putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.CLAY_DEPOSIT, blocks, "clay_deposit_sheet_missing_fallback", 394, 50, 150, 158);
+            putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.FORGE, blocks, "forge_sheet_missing_fallback", 758, 50, 150, 158);
+        }
+        putFullFaceAllFaces(duplicateMappings, imagesByPath, sidePathByBlock, topPathByBlock, bottomPathByBlock, Blocks.GLASS, blocks, "glass_fallback", 575, 681, 150, 158);
     }
 
     private static void putAllFaces(
@@ -634,7 +713,14 @@ public final class BlockTextureAtlas implements AutoCloseable {
         if (duplicateMappings == null || existing == null || existing.equals(skipped)) {
             return;
         }
+        if (isBundledSheetKey(skipped) && !isBundledSheetKey(existing)) {
+            return;
+        }
         duplicateMappings.add("block " + blockId + " keeps " + existing + ", skipped " + skipped);
+    }
+
+    private static boolean isBundledSheetKey(String key) {
+        return key != null && (key.startsWith("sheet:") || key.startsWith("sheet-full:"));
     }
 
     private static void copyBlockUvs(float[] table, Map<Short, String> pathByBlock, Map<String, float[]> uvByPath) {
@@ -745,6 +831,27 @@ public final class BlockTextureAtlas implements AutoCloseable {
         return filledImage;
     }
 
+    static BufferedImage sanitizeIndividualTexture(BufferedImage image) {
+        BufferedImage cleaned = copyArgb(image);
+        removeEdgeCheckerBackground(cleaned);
+        return trimTransparentPadding(cleaned);
+    }
+
+    private static BufferedImage copyArgb(BufferedImage image) {
+        if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
+            BufferedImage copy = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = copy.createGraphics();
+            graphics.drawImage(image, 0, 0, null);
+            graphics.dispose();
+            return copy;
+        }
+        BufferedImage copy = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        graphics.drawImage(image, 0, 0, null);
+        graphics.dispose();
+        return copy;
+    }
+
     private static int countTransparent(int[] pixels) {
         int count = 0;
         for (int pixel : pixels) {
@@ -780,6 +887,13 @@ public final class BlockTextureAtlas implements AutoCloseable {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static Object interpolationMode(int sourceWidth, int sourceHeight, int targetSize) {
+        if (sourceWidth > targetSize || sourceHeight > targetSize) {
+            return RenderingHints.VALUE_INTERPOLATION_BILINEAR;
+        }
+        return RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR;
     }
 
     private static int alpha(int argb) {
@@ -861,6 +975,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
             int tilePaddingPixels,
             float uvInsetPixels,
             String filterMode,
+            String edgeCleanupMode,
             int textureCount,
             int materialCount,
             int materialCapacity,
@@ -878,6 +993,7 @@ public final class BlockTextureAtlas implements AutoCloseable {
             tilePaddingPixels = Math.max(0, tilePaddingPixels);
             uvInsetPixels = Float.isFinite(uvInsetPixels) ? Math.max(0.0f, uvInsetPixels) : 0.0f;
             filterMode = filterMode == null ? ATLAS_FILTER_MODE : filterMode;
+            edgeCleanupMode = edgeCleanupMode == null ? INDIVIDUAL_ASSET_EDGE_CLEANUP_MODE : edgeCleanupMode;
             textureCount = Math.max(0, textureCount);
             materialCount = Math.max(0, materialCount);
             materialCapacity = Math.max(0, materialCapacity);
@@ -900,7 +1016,8 @@ public final class BlockTextureAtlas implements AutoCloseable {
             return textureCount + " texture(s), " + materialCount + "/" + materialCapacity
                     + " material slot(s), atlas " + atlasWidth + "x" + atlasHeight
                     + ", tile " + tileContentSize + "+" + tilePaddingPixels + "px padding"
-                    + ", filter " + filterMode;
+                    + ", filter " + filterMode
+                    + ", edge cleanup " + edgeCleanupMode;
         }
     }
 

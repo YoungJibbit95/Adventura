@@ -52,9 +52,15 @@ class BiomeResourceProfilesTest {
                 "voxel:watchtower",
                 "voxel:forest_bunny");
         assertProfileContains("voxel:frost_peaks",
-                Set.of(Blocks.SNOW, Blocks.ICE, Blocks.GLOW_CRYSTAL_NODE),
+                Set.of(Blocks.SNOW, Blocks.SNOWY_GRASS, Blocks.ICE, Blocks.GLOW_CRYSTAL_NODE),
                 "voxel:small_ruin",
                 "voxel:forest_bunny");
+        assertProfileOresContain("voxel:frost_peaks", Set.of(Blocks.SAPPHIRE_ORE, Blocks.PLATIN_ORE));
+        assertProfileContains("voxel:sun_dunes",
+                Set.of(Blocks.RED_SAND),
+                "voxel:desert_well",
+                "voxel:little_boar");
+        assertProfileOresContain("voxel:sun_dunes", Set.of(Blocks.GOLD_ORE));
     }
 
     @Test
@@ -71,5 +77,11 @@ class BiomeResourceProfilesTest {
         assertTrue(profile.resourceBlocks().containsAll(resources), biomeKey + " missing expected resources");
         assertTrue(profile.structureKeys().contains(structureKey), biomeKey + " missing expected structure");
         assertTrue(profile.ambientEntityKeys().contains(ambientEntityKey), biomeKey + " missing expected ambient entity");
+    }
+
+    private static void assertProfileOresContain(String biomeKey, Set<Short> ores) {
+        BiomeResourceProfile profile = BiomeResourceProfiles.forBiome(biomeKey);
+
+        assertTrue(profile.oreBlocks().containsAll(ores), biomeKey + " missing expected ores");
     }
 }

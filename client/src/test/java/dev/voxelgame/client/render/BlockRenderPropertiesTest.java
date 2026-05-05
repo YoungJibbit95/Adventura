@@ -122,6 +122,13 @@ class BlockRenderPropertiesTest {
     }
 
     @Test
+    void reflectiveBlocksExposeLowerRoughnessForShaderSheen() {
+        assertTrue(BlockRenderProperties.forBlock(Blocks.GLASS).roughness() < BlockRenderProperties.DEFAULT_ROUGHNESS);
+        assertTrue(BlockRenderProperties.forBlock(Blocks.PLATIN_ORE).roughness() < BlockRenderProperties.forBlock(Blocks.STONE).roughness());
+        assertTrue(BlockRenderProperties.forBlock(Blocks.GLOW_CRYSTAL_NODE).roughness() < BlockRenderProperties.forBlock(Blocks.GRAVEL).roughness());
+    }
+
+    @Test
     void materialLutPacksUvAndRenderMetadataRows() {
         RenderMaterial[] materials = new RenderMaterial[Blocks.WATER + 1];
         Arrays.fill(materials, RenderMaterial.fallback());
@@ -170,6 +177,7 @@ class BlockRenderPropertiesTest {
         assertEquals(BlockRenderProperties.BiomeTintMode.WATER.ordinal(), pixels[style], 0.0001f);
         assertEquals(BlockRenderProperties.FogAffectMode.REDUCED.ordinal(), pixels[style + 1], 0.0001f);
         assertEquals(BlockRenderLayer.TRANSLUCENT.ordinal(), pixels[style + 2], 0.0001f);
+        assertEquals(BlockRenderProperties.DEFAULT_ROUGHNESS, pixels[style + 3], 0.0001f);
     }
 
     private static int offset(int materialCount, short materialIndex, int row) {

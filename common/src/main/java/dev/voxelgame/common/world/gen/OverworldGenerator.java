@@ -10,6 +10,7 @@ import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.ChunkTerrainCache;
 import dev.voxelgame.common.world.DimensionSettings;
 import dev.voxelgame.common.world.structure.BlockPlacement;
+import dev.voxelgame.common.world.structure.StructureBounds;
 import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
 
@@ -19,7 +20,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class OverworldGenerator implements WorldGenerator {
-    private static final int SEA_LEVEL = 63;
+    public static final int SEA_LEVEL = 63;
     private static final int SPAWN_SEARCH_CENTER_X = 8;
     private static final int SPAWN_SEARCH_CENTER_Z = 8;
     private static final int SPAWN_SEARCH_RADIUS_BLOCKS = 48;
@@ -110,6 +111,9 @@ public final class OverworldGenerator implements WorldGenerator {
         short[] surfaceBlocks = new short[ChunkTerrainCache.COLUMN_COUNT];
         boolean[] fluidColumns = new boolean[ChunkTerrainCache.COLUMN_COUNT];
         boolean[] caveColumns = new boolean[ChunkTerrainCache.COLUMN_COUNT];
+        byte[] fluidDepthHints = new byte[ChunkTerrainCache.COLUMN_COUNT];
+        byte[] shoreMasks = new byte[ChunkTerrainCache.COLUMN_COUNT];
+        byte[] fluidSurfaceFlags = new byte[ChunkTerrainCache.COLUMN_COUNT];
         int baseX = pos.x() * ChunkPos.SIZE;
         int baseZ = pos.z() * ChunkPos.SIZE;
         for (int localZ = 0; localZ < ChunkPos.SIZE; localZ++) {
@@ -126,7 +130,18 @@ public final class OverworldGenerator implements WorldGenerator {
                 caveColumns[index] = hasCaveColumn(x, z, height);
             }
         }
-        return new ChunkTerrainCache(pos, heights, chunkBiomes, surfaceBlocks, fluidColumns, caveColumns);
+        FluidSurfacePlanner.fillChunk(
+                SEA_LEVEL,
+                pos,
+                heights,
+                fluidColumns,
+                fluidDepthHints,
+                shoreMasks,
+                fluidSurfaceFlags,
+                this::terrainHeightAt,
+                this::riverStrength
+        );
+        return new ChunkTerrainCache(pos, heights, chunkBiomes, surfaceBlocks, fluidColumns, caveColumns, fluidDepthHints, shoreMasks, fluidSurfaceFlags);
     }
 
     public BiomeType biomeAt(int x, int z) {
@@ -202,6 +217,11 @@ public final class OverworldGenerator implements WorldGenerator {
             base = (int) Math.round(base * (1.0 - river) + riverBed * river);
         }
         return clamp(base, 28, 235);
+    }
+
+    private int terrainHeightAt(int x, int z) {
+        BiomeType biome = biomeAt(x, z);
+        return terrainHeight(x, z, biome);
     }
 
     private void fillColumn(Chunk chunk, int x, int z, int height, BiomeType biome, short surfaceBlock) {
@@ -310,8 +330,10 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     private void decorateChunkStructures(Chunk chunk, Optional<GeneratedStructure> structure) {
-        structure.ifPresent(value -> value.template()
-                .placeIntoChunk(chunk, value.originX(), value.originY(), value.originZ()));
+        structure.ifPresent(value -> {
+            prepareStructureSite(chunk, value);
+            value.template().placeIntoChunk(chunk, value.originX(), value.originY(), value.originZ());
+        });
     }
 
     private void decorateStarterResources(Chunk chunk, ChunkTerrainCache terrainCache, GenerationMetricsBuilder metrics) {
@@ -356,23 +378,22 @@ public final class OverworldGenerator implements WorldGenerator {
         if (pos.x() == 0 && pos.z() == 0) {
             int campX = centerX + 4;
             int campZ = centerZ;
-            int groundY = terrainCache.heightAtWorld(campX, campZ) + 1;
-            return Optional.of(new GeneratedStructure(Structures.campsite(), campX, groundY, campZ));
+            StructureTemplate template = Structures.campsite();
+            return Optional.of(new GeneratedStructure(template, campX, structureOriginY(terrainCache, template, campX, campZ), campZ));
         }
         if (pos.x() == 1 && pos.z() == 1) {
-            int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
-            return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
+            StructureTemplate template = Structures.compactVillage();
+            return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
         }
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, pos.x(), pos.z()));
         double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, pos.x(), pos.z()));
         if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.014) {
-            int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
-            return Optional.of(new GeneratedStructure(Structures.compactVillage(), centerX, groundY, centerZ));
+            StructureTemplate template = Structures.compactVillage();
+            return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
         }
         if (roll > biome.structureChance()) {
             return Optional.empty();
         }
-        int groundY = terrainCache.heightAtWorld(centerX, centerZ) + 1;
         StructureTemplate template;
         if ("voxel:sun_dunes".equals(biome.key())) {
             template = Structures.desertWell();
@@ -391,7 +412,74 @@ public final class OverworldGenerator implements WorldGenerator {
         } else {
             template = Structures.smallRuin();
         }
-        return Optional.of(new GeneratedStructure(template, centerX, groundY, centerZ));
+        return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
+    }
+
+    private int structureOriginY(ChunkTerrainCache terrainCache, StructureTemplate template, int originX, int originZ) {
+        StructureBounds bounds = StructureBounds.fromTemplate(template);
+        int minSurface = Integer.MAX_VALUE;
+        int maxSurface = Integer.MIN_VALUE;
+        int totalSurface = 0;
+        int samples = 0;
+        for (int dz = bounds.minZ(); dz <= bounds.maxZ(); dz++) {
+            for (int dx = bounds.minX(); dx <= bounds.maxX(); dx++) {
+                int x = originX + dx;
+                int z = originZ + dz;
+                if (!ChunkPos.fromBlock(x, z).equals(terrainCache.pos())) {
+                    continue;
+                }
+                int height = terrainCache.heightAtWorld(x, z);
+                minSurface = Math.min(minSurface, height);
+                maxSurface = Math.max(maxSurface, height);
+                totalSurface += height;
+                samples++;
+            }
+        }
+        if (samples == 0) {
+            return terrainCache.heightAtWorld(originX, originZ) + 1;
+        }
+        int averageSurface = Math.round(totalSurface / (float) samples);
+        int centerSurface = terrainCache.heightAtWorld(originX, originZ);
+        int maxLift = Math.min(maxSurface + 1, centerSurface + 3);
+        int maxCut = Math.max(minSurface + 1, centerSurface - 3);
+        return clamp(averageSurface + 1, Math.min(maxCut, maxLift), Math.max(maxCut, maxLift));
+    }
+
+    private void prepareStructureSite(Chunk chunk, GeneratedStructure generated) {
+        StructureBounds bounds = StructureBounds.fromTemplate(generated.template());
+        int baseY = generated.originY() + bounds.minY();
+        int clearTop = generated.originY() + bounds.maxY() + 2;
+        short foundation = foundationBlockFor(generated.template().key());
+        for (int dz = bounds.minZ(); dz <= bounds.maxZ(); dz++) {
+            for (int dx = bounds.minX(); dx <= bounds.maxX(); dx++) {
+                int x = generated.originX() + dx;
+                int z = generated.originZ() + dz;
+                if (!ChunkPos.fromBlock(x, z).equals(chunk.pos())) {
+                    continue;
+                }
+                int surfaceY = terrainHeightAt(x, z);
+                for (int y = surfaceY + 1; y < baseY; y++) {
+                    if (chunk.dimension().containsY(y)) {
+                        chunk.setBlockId(x, y, z, foundation);
+                    }
+                }
+                for (int y = baseY; y <= clearTop; y++) {
+                    if (chunk.dimension().containsY(y)) {
+                        chunk.setBlockId(x, y, z, Blocks.AIR);
+                    }
+                }
+            }
+        }
+    }
+
+    private static short foundationBlockFor(String templateKey) {
+        if ("voxel:desert_well".equals(templateKey)) {
+            return Blocks.SAND;
+        }
+        if ("voxel:watchtower".equals(templateKey) || "voxel:small_ruin".equals(templateKey)) {
+            return Blocks.STONE;
+        }
+        return Blocks.MOSSY_STONE;
     }
 
     public SpawnPoint safeSpawnPoint() {
@@ -824,6 +912,21 @@ public final class OverworldGenerator implements WorldGenerator {
     private short oreOrStone(int x, int y, int z) {
         double ore = normalize(ValueNoise.hashUnit(seed ^ 0xC0A1, x * 31 + y, z * 17 - y));
         double vein = normalize(ValueNoise.fbm(seed ^ 0x0EE5L, x + y * 2.0, z - y * 1.5, 3, 0.055, 0.55));
+        if (y < 18 && vein > 0.88 && ore >= 0.245 && ore < 0.255) {
+            return Blocks.PLATIN_ORE;
+        }
+        if (y < 26 && vein > 0.84 && ore >= 0.255 && ore < 0.267) {
+            return Blocks.TITAN_ORE;
+        }
+        if (y < 42 && vein > 0.82 && ore >= 0.267 && ore < 0.280) {
+            return Blocks.RUBY_ORE;
+        }
+        if (y < 48 && vein > 0.82 && ore >= 0.280 && ore < 0.293) {
+            return Blocks.SAPPHIRE_ORE;
+        }
+        if (y < 54 && vein > 0.80 && ore >= 0.293 && ore < 0.312) {
+            return Blocks.GOLD_ORE;
+        }
         if (y < 28 && vein > 0.82 && ore < 0.055) {
             return Blocks.IRON_ORE;
         }
@@ -838,6 +941,21 @@ public final class OverworldGenerator implements WorldGenerator {
         }
         if (y < 32 && ore < 0.008) {
             return Blocks.IRON_ORE;
+        }
+        if (y < 24 && ore >= 0.034 && ore < 0.038) {
+            return Blocks.PLATIN_ORE;
+        }
+        if (y < 36 && ore >= 0.038 && ore < 0.043) {
+            return Blocks.TITAN_ORE;
+        }
+        if (y < 48 && ore >= 0.043 && ore < 0.049) {
+            return Blocks.RUBY_ORE;
+        }
+        if (y < 56 && ore >= 0.049 && ore < 0.055) {
+            return Blocks.SAPPHIRE_ORE;
+        }
+        if (y < 64 && ore >= 0.055 && ore < 0.062) {
+            return Blocks.GOLD_ORE;
         }
         if (y < 72 && ore >= 0.008 && ore < 0.018) {
             return Blocks.COPPER_ORE;
@@ -854,7 +972,10 @@ public final class OverworldGenerator implements WorldGenerator {
             return river > 0.72 ? Blocks.CLAY : Blocks.GRAVEL;
         }
         if ("voxel:frost_peaks".equals(biome.key()) && height > SEA_LEVEL + 5) {
-            return Blocks.SNOW;
+            return height > SEA_LEVEL + 18 ? Blocks.SNOW : Blocks.SNOWY_GRASS;
+        }
+        if ("voxel:sun_dunes".equals(biome.key()) && normalize(ValueNoise.hashUnit(seed ^ 0x5A11D00DL, x, z)) > 0.68) {
+            return Blocks.RED_SAND;
         }
         if ("voxel:mire".equals(biome.key()) && height <= SEA_LEVEL + 3) {
             return Blocks.CLAY;

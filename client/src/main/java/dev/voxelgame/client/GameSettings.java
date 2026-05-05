@@ -33,6 +33,8 @@ public final class GameSettings {
 
     private int renderDistanceChunks;
     private int previewRadiusChunks;
+    private int chunkGenerationBudgetChunks = 2;
+    private double chunkGenerationBudgetMilliseconds = 1.5;
     private int meshBuildBudgetChunks = 8;
     private double meshBuildBudgetMilliseconds = 10.0;
     private double gpuUploadBudgetMilliseconds = 8.0;
@@ -83,6 +85,14 @@ public final class GameSettings {
         return meshBuildBudgetChunks;
     }
 
+    public int chunkGenerationBudgetChunks() {
+        return chunkGenerationBudgetChunks;
+    }
+
+    public double chunkGenerationBudgetMilliseconds() {
+        return chunkGenerationBudgetMilliseconds;
+    }
+
     public double meshBuildBudgetMilliseconds() {
         return meshBuildBudgetMilliseconds;
     }
@@ -101,6 +111,23 @@ public final class GameSettings {
 
     public double effectiveMeshBuildBudgetMilliseconds(double previousFrameMilliseconds) {
         return adaptiveBudget(meshBuildBudgetMilliseconds, previousFrameMilliseconds);
+    }
+
+    public int effectiveChunkGenerationBudgetChunks(double previousFrameMilliseconds) {
+        if (!Double.isFinite(previousFrameMilliseconds)) {
+            return chunkGenerationBudgetChunks;
+        }
+        if (previousFrameMilliseconds >= 30.0) {
+            return 1;
+        }
+        if (previousFrameMilliseconds >= 22.0) {
+            return Math.max(1, chunkGenerationBudgetChunks - 1);
+        }
+        return chunkGenerationBudgetChunks;
+    }
+
+    public double effectiveChunkGenerationBudgetMilliseconds(double previousFrameMilliseconds) {
+        return adaptiveBudget(chunkGenerationBudgetMilliseconds, previousFrameMilliseconds);
     }
 
     public double effectiveGpuUploadBudgetMilliseconds(double previousFrameMilliseconds) {
@@ -191,6 +218,19 @@ public final class GameSettings {
         return particleQuality;
     }
 
+    public double ambientParticleSourceScanIntervalSeconds() {
+        if (particleQuality <= 0.35) {
+            return 0.95;
+        }
+        if (particleQuality <= 0.60) {
+            return 0.65;
+        }
+        if (particleQuality <= 0.85) {
+            return 0.50;
+        }
+        return 0.35;
+    }
+
     public RenderDebugView renderDebugView() {
         return renderDebugView;
     }
@@ -218,6 +258,19 @@ public final class GameSettings {
         meshBuildBudgetChunks = clamp(value, 1, 12);
     }
 
+    public void setChunkGenerationBudgetChunks(int value) {
+        markPresetCustom();
+        chunkGenerationBudgetChunks = clamp(value, 1, 6);
+    }
+
+    public void setChunkGenerationBudgetMilliseconds(double value) {
+        if (!Double.isFinite(value)) {
+            return;
+        }
+        markPresetCustom();
+        chunkGenerationBudgetMilliseconds = clamp(value, 0.5, 6.0);
+    }
+
     public void setMeshBuildBudgetMilliseconds(double value) {
         if (!Double.isFinite(value)) {
             return;
@@ -241,6 +294,8 @@ public final class GameSettings {
     public void applyPreset(RenderPreset preset) {
         renderDistanceChunks = clamp(preset.renderDistanceChunks(), 2, 18);
         previewRadiusChunks = clamp(preset.previewRadiusChunks(), 1, 8);
+        chunkGenerationBudgetChunks = chunkGenerationChunksForPreset(preset);
+        chunkGenerationBudgetMilliseconds = chunkGenerationMillisecondsForPreset(preset);
         meshBuildBudgetChunks = clamp(preset.meshBuildBudgetChunks(), 1, 12);
         meshBuildBudgetMilliseconds = clamp(preset.meshBuildBudgetMilliseconds(), 0.5, 16.0);
         gpuUploadBudgetMilliseconds = clamp(preset.gpuUploadBudgetMilliseconds(), 0.5, 16.0);
@@ -271,6 +326,15 @@ public final class GameSettings {
     public void adjustMeshBuildBudget(int delta) {
         markPresetCustom();
         meshBuildBudgetChunks = clamp(meshBuildBudgetChunks + delta, 1, 12);
+    }
+
+    public void adjustChunkGenerationBudget(int delta) {
+        markPresetCustom();
+        chunkGenerationBudgetChunks = clamp(chunkGenerationBudgetChunks + delta, 1, 6);
+    }
+
+    public void adjustChunkGenerationBudgetMilliseconds(double delta) {
+        setChunkGenerationBudgetMilliseconds(chunkGenerationBudgetMilliseconds + delta);
     }
 
     public void adjustMeshBuildBudgetMilliseconds(double delta) {
@@ -407,6 +471,26 @@ public final class GameSettings {
             factor = 0.80;
         }
         return clamp(baseMilliseconds * factor, 0.5, baseMilliseconds);
+    }
+
+    private static int chunkGenerationChunksForPreset(RenderPreset preset) {
+        if (preset == RenderPreset.LOW) {
+            return 1;
+        }
+        if (preset == RenderPreset.HIGH) {
+            return 3;
+        }
+        return 2;
+    }
+
+    private static double chunkGenerationMillisecondsForPreset(RenderPreset preset) {
+        if (preset == RenderPreset.LOW) {
+            return 1.0;
+        }
+        if (preset == RenderPreset.HIGH) {
+            return 2.0;
+        }
+        return 1.5;
     }
 
     private void markPresetCustom() {

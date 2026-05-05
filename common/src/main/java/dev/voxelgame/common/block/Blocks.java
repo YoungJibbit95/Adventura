@@ -55,6 +55,20 @@ public final class Blocks {
     public static final short GLOW_MUSHROOM = 49;
     public static final short SPORE_BLOSSOM = 50;
     public static final short LAVA = 51;
+    public static final short RED_SAND = 52;
+    public static final short FARMLAND = 53;
+    public static final short SNOWY_GRASS = 54;
+    public static final short PINE_PLANKS = 55;
+    public static final short STONE_BRICKS = 56;
+    public static final short MOSSY_STONE_BRICKS = 57;
+    public static final short FANCY_STONE_BRICKS = 58;
+    public static final short MOSSY_FANCY_STONE_BRICKS = 59;
+    public static final short GOLD_ORE = 60;
+    public static final short PLATIN_ORE = 61;
+    public static final short RUBY_ORE = 62;
+    public static final short SAPPHIRE_ORE = 63;
+    public static final short TITAN_ORE = 64;
+    public static final short GLASS = 65;
 
     private Blocks() {
     }
@@ -113,6 +127,20 @@ public final class Blocks {
         register(registry, GLOW_MUSHROOM, "voxel:glow_mushroom", 0.0f, ToolType.KNIFE, false, false, false, 8, BlockRenderLayer.CUTOUT, "voxel:glow_mushroom_cap");
         register(registry, SPORE_BLOSSOM, "voxel:spore_blossom", 0.0f, ToolType.KNIFE, false, false, false, 5, BlockRenderLayer.CUTOUT, "voxel:spore_blossom");
         register(registry, LAVA, "voxel:lava", 100.0f, ToolType.NONE, false, false, false, 15, BlockRenderLayer.TRANSLUCENT, null);
+        register(registry, RED_SAND, "voxel:red_sand", 0.5f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:red_sand");
+        register(registry, FARMLAND, "voxel:farmland", 0.6f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:farmland");
+        register(registry, SNOWY_GRASS, "voxel:snowy_grass_block", 0.6f, ToolType.SHOVEL, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:dirt");
+        register(registry, PINE_PLANKS, "voxel:pine_planks", 1.4f, ToolType.AXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:pine_planks");
+        register(registry, STONE_BRICKS, "voxel:stone_bricks", 1.6f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:stone_bricks");
+        register(registry, MOSSY_STONE_BRICKS, "voxel:mossy_stone_bricks", 1.6f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:mossy_stone_bricks");
+        register(registry, FANCY_STONE_BRICKS, "voxel:fancy_stone_bricks", 1.8f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:fancy_stone_bricks");
+        register(registry, MOSSY_FANCY_STONE_BRICKS, "voxel:mossy_fancy_stone_bricks", 1.8f, ToolType.PICKAXE, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:mossy_fancy_stone_bricks");
+        register(registry, GOLD_ORE, "voxel:gold_ore", 3.0f, ToolType.PICKAXE, 2, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:gold_ingot");
+        register(registry, PLATIN_ORE, "voxel:platin_ore", 3.8f, ToolType.PICKAXE, 3, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:platin_ingot");
+        register(registry, RUBY_ORE, "voxel:ruby_ore", 3.4f, ToolType.PICKAXE, 3, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:ruby_shard");
+        register(registry, SAPPHIRE_ORE, "voxel:sapphire_ore", 3.4f, ToolType.PICKAXE, 3, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:sapphire_shard");
+        register(registry, TITAN_ORE, "voxel:titan_ore", 4.0f, ToolType.PICKAXE, 3, true, true, true, 0, BlockRenderLayer.SOLID, "voxel:titan_ingot");
+        register(registry, GLASS, "voxel:glass", 0.3f, ToolType.PICKAXE, true, false, true, 0, BlockRenderLayer.TRANSLUCENT, "voxel:glass");
         aliases(registry);
         return registry;
     }
@@ -121,6 +149,15 @@ public final class Blocks {
         registry.registerAlias("voxel:grass", "voxel:grass_block");
         registry.registerAlias("voxel:planks", "voxel:skyroot_planks");
         registry.registerAlias("voxel:wooden_plank", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:spruce_planks", "voxel:pine_planks");
+        registry.registerAlias("voxel:snowy_grass", "voxel:snowy_grass_block");
+        registry.registerAlias("voxel:stone_brick_block", "voxel:stone_bricks");
+        registry.registerAlias("voxel:mossy_stone_brick_block", "voxel:mossy_stone_bricks");
+        registry.registerAlias("voxel:fancy_stone_brick_block", "voxel:fancy_stone_bricks");
+        registry.registerAlias("voxel:mossy_fancy_stone_brick_block", "voxel:mossy_fancy_stone_bricks");
+        registry.registerAlias("voxel:platinum_ore", "voxel:platin_ore");
+        registry.registerAlias("voxel:titanium_ore", "voxel:titan_ore");
+        registry.registerAlias("voxel:glass_block", "voxel:glass");
         registry.registerAlias("voxel:active_campfire", "voxel:campfire_active");
         registry.registerAlias("voxel:burned_out_campfire", "voxel:campfire_burned_out");
     }

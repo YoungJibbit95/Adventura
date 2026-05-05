@@ -5,11 +5,12 @@ const path = require("node:path");
 const launcherRoot = path.resolve(__dirname, "..");
 const host = "127.0.0.1";
 const preferredPort = Number.parseInt(process.env.ADVENTURA_LAUNCHER_PORT || "5173", 10);
-const viteBin = path.join(
+const viteCli = path.join(
   launcherRoot,
   "node_modules",
-  ".bin",
-  process.platform === "win32" ? "vite.cmd" : "vite"
+  "vite",
+  "bin",
+  "vite.js"
 );
 let viteProcess = null;
 let electronProcess = null;
@@ -24,10 +25,9 @@ async function main() {
   const port = await findOpenPort(preferredPort);
   const rendererUrl = `http://${host}:${port}`;
 
-  viteProcess = spawn(viteBin, ["--host", host, "--port", String(port), "--strictPort"], {
+  viteProcess = spawn(process.execPath, [viteCli, "--host", host, "--port", String(port), "--strictPort"], {
     cwd: launcherRoot,
     env: cleanElectronEnv({ ...process.env }),
-    shell: process.platform === "win32",
     stdio: "inherit"
   });
 
@@ -42,7 +42,6 @@ async function main() {
   electronProcess = spawn(process.execPath, [path.join("scripts", "start-electron.cjs")], {
     cwd: launcherRoot,
     env: cleanElectronEnv({ ...process.env, ELECTRON_RENDERER_URL: rendererUrl }),
-    shell: process.platform === "win32",
     stdio: "inherit"
   });
 

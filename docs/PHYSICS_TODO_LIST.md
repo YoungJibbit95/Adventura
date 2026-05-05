@@ -133,6 +133,8 @@ Physics soll stabil, vorhersehbar, cozy und multiplayer-sicher bleiben. Server-A
 - Projectiles nutzen Fluid-Samples statt reiner `inWater`-Sonderlogik; Items bekommen Buoyancy und Current-Drift ueber `DroppedItemEntity.tick(..., FluidQuery)`.
 - Ambient-Entities bekommen Fluid-Kraefte ueber den gemeinsamen `EntityPhysics`-Pfad. `EntityPhysicsProfile` traegt profilbasierte Buoyancy-Faktoren: tiny/float stark, heavy schwach, swimmer kontrolliert, flyer ignoriert.
 - Lava nutzt denselben Fluid-Sample-Pfad wie Wasser, aber mit hoher Viskositaet, niedriger Buoyancy und autoritativem Hot-Hazard. Player-Water-State bleibt bewusst wasser-spezifisch.
+- `FluidBlocks` zentralisiert Wasser-/Lava-Block-Erkennung fuer Collision-Shapes, ServerWorld-Fluid-Samples, Projectile-Water-Checks, PlayerWaterState und Section-Fluid-Dirtying.
+- `ChunkTerrainCache.FluidSurface` stellt Depth-Hint, Shore-Mask und Foam-Flag als gemeinsamen Terrain-Contract fuer Wasser-Kanten bereit; der Live-Physics-Step liest weiterhin Blockzustand, bekommt aber dieselbe Fluid-Klassifikation.
 - `EnvironmentHazardRules` klassifiziert aktive Campfires als Hot-Block, Cactus als Thorn-Hazard und Ice/Snow als Cold-Hazard. Server-Spieler bekommen Umwelt-Damage autoritativ mit Cooldown.
 - Client-Audio bekommt einen echten `underwater`-State aus `headUnderwater`; Render-Tint/Fog bleiben an denselben State gebunden.
 - Tests decken Projectile-Current, Item-Buoyancy, Hot/Cold/Thorn-Hazards und Wasser-Fallimpact ab.
@@ -193,12 +195,18 @@ Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Dev
 - ~~🟠 In Arbeit 2026-05-01: `P4.1b CollisionShapeCache` fuer gemeinsame Player-/Entity-/Projectile-Shape-Queries und BlockUpdate-Invalidierung.~~
   Erledigt: 2026-05-01 - `CollisionShapeCache` cached Movement- und Projectile-Shapes pro Chunk-Section; Server und Client nutzen ihn fuer Player-/Entity-/Projectile-Kollisionen, Projectile-Impacts und Client-Debug-Bounds.
   Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.CollisionShapeCacheTest --tests dev.voxelgame.common.physics.BlockCollisionShapesTest --tests dev.voxelgame.common.physics.ProjectilePhysicsTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :server:test --tests dev.voxelgame.server.world.ServerWorldTest --tests dev.voxelgame.server.entity.ServerEntityTrackerTest --tests dev.voxelgame.server.net.ServerConnectionHandlerTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldCollisionTest --no-daemon --max-workers=1 --rerun-tasks`; `./gradlew :common:physicsRegression :server:physicsRegression :client:physicsRegression --no-daemon --max-workers=1 --rerun-tasks`.
+- ~~🟠 In Arbeit 2026-05-05: `P4.1c CollisionShapeCache` Retention und Runtime-Diagnose.~~
+  Erledigt: 2026-05-05 - der Section-Shape-Cache ist pro Shape-Set LRU-begrenzt, zaehlt Evictions und zeigt Sections/Shapes/Limit/Evictions im Client-HUD. Lange Explore-Sessions halten dadurch keine unbegrenzt wachsenden Collision-Shape-Maps mehr.
+  Verifikation: `./gradlew :common:test --tests dev.voxelgame.common.physics.CollisionShapeCacheTest :client:test --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.EngineFrameStatsTest --no-daemon --max-workers=1`.
 
 ### Offen
 
 - ~~Collision-Cache pro Chunk/Section planen.~~
   Erledigt: 2026-05-01 - `CollisionShapeCache` speichert Section-Caches getrennt fuer `MOVEMENT` und `PROJECTILE`.
   Verifikation: `CollisionShapeCacheTest.cachesSectionShapesAndInvalidatesChangedBlock`.
+- ~~Collision-Cache-Retention begrenzen und sichtbar machen.~~
+  Erledigt: 2026-05-05 - `CollisionShapeCache` trimmt alte Sections LRU-basiert und meldet `CacheStats` bis in die `PHYS`-HUD-Zeile.
+  Verifikation: `CollisionShapeCacheTest.cacheEvictsLeastRecentlyUsedSectionsWithinBudget`.
 - Partial-Shapes zentral raycast- und sweep-faehig machen.
   - ~~Projectile-Raycasts fuer Full-Cubes, Fence, Table, Chair und Campfire/Decoration-Shape zentralisiert.~~
     Erledigt: 2026-05-01
@@ -216,6 +224,8 @@ Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Dev
   - projectile sweep.
   - block shape.
   - stuck/separation events.
+- ~~Collision-Cache-Debugwerte im Runtime-HUD sichtbar machen.~~
+  Erledigt: 2026-05-05 - `PHYS` zeigt `CSEC`, `SHP` und `EVICT` fuer Retention-/Allocation-Diagnose.
 - ~~Cache-Invalidierung bei BlockUpdate testen.~~
   Erledigt: 2026-05-01 - `ServerWorld.setBlock`, `ClientWorld.applyBlock`, `ClientWorld.applyChunk` und Chunk-Unload invalidieren Shape-Caches.
   Verifikation: `ServerWorldTest.blockUpdatesInvalidateServerCollisionCache`, `ClientWorldCollisionTest.blockUpdatesInvalidateClientCollisionCache`, `CollisionShapeCacheTest.cachesSectionShapesAndInvalidatesChangedBlock`.
@@ -310,3 +320,163 @@ Dieser Block ist fuer parallele Engine-Arbeit gedacht, damit der Lead Engine Dev
 
 - Physics-Features koennen parallel entwickelt werden.
 - Lead Engine Developer wird bei Engine-Oberflaechen entlastet.
+
+---
+
+# P5 - Finished Game Physics And Mechanics Roadmap 2026-05-05
+
+Owner: Physics und Engine Worker, mit Lead Game Design Engineer fuer Spielgefuehl und Main Networking Dev fuer Autoritaet.
+
+Die Physics-Basis ist fuer eine Alpha stark: Player, Entities, Projectiles, Fluids, Partial Shapes, CollisionShapeCache und Replays existieren. Fuer ein fertiges Spiel fehlen vor allem die Kopplung an Core Mechanics, AI, Items, StatusEffects und lange Sessions.
+
+## P5.1 Movement Feel And Traversal
+
+### Aufgaben
+
+- Player movement polish:
+  - coyote time or jump buffering pruefen, falls das Spielgefuehl hakelig bleibt.
+  - slope/step handling fuer partial shapes bewerten.
+  - water edge exits lesbarer machen.
+  - fall damage thresholds gegen cozy adventure pacing balancen.
+- StatusEffect modifiers:
+  - chilled/wet/rested/cozy into movement/stamina in one server-owned path.
+  - avoid duplicate client-only modifiers.
+  - debug line for active movement multipliers.
+- Optional traversal features only after core loop:
+  - ladder/vine equivalent.
+  - simple climbable ruins.
+  - swim polish.
+  - no vehicles/mounts until entity runtime is stable.
+
+### Erreicht 2026-05-05
+
+- `BlockSurfacePhysics` definiert gemeinsame Surface-Materialien fuer Eis, Schnee, Wege, Sand und Farmland mit Reibungs-, Beschleunigungs-, Speed- und Jump-Multiplikatoren.
+- `PlayerPhysics.stepSurvival(...)` kann optional eine `SurfaceQuery` lesen, ohne bestehende Aufrufer zu brechen; grounded acceleration, idle friction, max speed und jump speed nutzen dadurch denselben Common-Contract.
+- `ClientWorld.surfaceAt(...)` und `ServerWorld.surfaceAt(...)` lesen denselben Surface-Contract aus echten World-Blocks; `ClientPlayerController` nutzt ihn fuer lokale Prediction.
+- `PlayerMovementRules` validiert Survival-Speed serverseitig mit Surface-Speed-Multiplikatoren, damit Schnee/Wege/Eis nicht nur Client-Polish bleiben.
+- Das Debug-HUD zeigt in der `PHYS`-Zeile den aktiven Surface-Key, Speed- und Friction-Multiplikator.
+- Verifikation: `BlockSurfacePhysicsTest`, `PlayerPhysicsTest.survivalStepUsesSurfaceFrictionForIceSliding`, `PlayerPhysicsTest.survivalStepUsesSurfaceSpeedForSnowAndPaths`, `PlayerPhysicsTest.survivalStepUsesLandingSurfaceForBufferedJump`, `PlayerPhysicsTest.movementRulesUseSurfaceSpeedForServerDeltas`, `ClientWorldCollisionTest.playerSurfaceUsesLoadedBlockBelowFeet`, `ServerWorldTest.playerSurfaceUsesAuthoritativeBlockBelowFeet`.
+
+### Akzeptanz
+
+- Movement feels forgiving enough for cozy exploration.
+- Server validation still rejects impossible moves.
+- StatusEffects change movement through one tested modifier path.
+
+## P5.2 Item And World Interaction Physics
+
+### Aufgaben
+
+- Item lifecycle:
+  - pickup magnet/claim range.
+  - merge rules already exist; add diagnostics for merge counts.
+  - lava/fire item destruction decision.
+  - water floating/sinking by content tag.
+  - despawn policy for dropped items.
+- Block interaction:
+  - partial-shape selection consistency.
+  - block placement against entities and player.
+  - station break behavior with stored items.
+  - harvest/regrowth collision and interaction rules.
+- Tool impact:
+  - durability damage path through ActionRuntime.
+  - effective-tool speed and drop count diagnostics.
+  - wrong-tool feedback from server.
+
+### Akzeptanz
+
+- Items do not accumulate forever during long sessions.
+- World interactions use the same shape/source as movement and projectiles.
+
+## P5.3 Entity Physics And AI Coupling
+
+### Aufgaben
+
+- Entity profiles:
+  - friendly tiny.
+  - friendly grazer.
+  - heavy neutral.
+  - floaty/emissive.
+  - hostile crawler.
+  - projectile/object.
+- Brain movement requests should pass through:
+  - terrain support.
+  - separation.
+  - fluid forces.
+  - collision sweep.
+  - parking outside active tickets.
+- Add debug overlays:
+  - entity bounds.
+  - desired path.
+  - blocked move.
+  - flee radius.
+  - follow target.
+  - encounter leash.
+- Add tests:
+  - entity cannot move through partial shapes.
+  - water affects small/heavy profiles differently.
+  - parked entity does not tick brain every frame.
+  - rare danger cannot spawn inside starter base.
+
+### Akzeptanz
+
+- AI feels physical and readable.
+- Entity costs remain budgeted in long sessions.
+
+## P5.4 Combat, Damage And Hazard Rules
+
+### Aufgaben
+
+- Damage model:
+  - unify melee, projectile, fall, fire, drowning, thorn, poison and future encounter damage.
+  - expose no-kill/friendly creature rules.
+  - damage cooldown and knockback are diagnostics-visible.
+- Projectile path:
+  - data-driven projectile type.
+  - ammo/charge support if bow lands.
+  - lag compensation window remains explicit.
+  - block face/normal used for particles/decals.
+- Hazards:
+  - lava/campfire/cactus/snow/ice current V1.
+  - future heat/cold/weather sources should map to StatusEffects, not ad hoc damage.
+
+### Akzeptanz
+
+- Combat and hazards are fair, telegraphed and server-authoritative.
+- Friendly cozy creatures cannot become the best resource farm through damage.
+
+### Erreicht 2026-05-05
+
+- `WeaponItemRules` definiert fuer Messer und Schwerter einen ersten Common-Weapon-Contract mit Damage, Cooldown, Knockback und Flags fuer schnelle bzw. kristalline Waffen.
+- Iron/Platin/Sapphire/Titan Swords sind damit als Item-/Recipe-/Weapon-Basis vorhanden; die autoritative `MeleeAttackAction` bleibt Anschlussarbeit in Engine P14.2.
+- Verifikation: `WeaponItemRulesTest`.
+
+## P5.5 Replay And Regression Expansion
+
+### Aufgaben
+
+- Add replay scenarios:
+  - player water edge.
+  - fall damage landing.
+  - projectile partial-shape hit.
+  - entity flee/separation.
+  - dropped item water/lava.
+  - station break with drops when implemented.
+- Add replay metadata:
+  - physics config fingerprint.
+  - content tag version/hash.
+  - world seed.
+  - chunk sample hash.
+  - action sequence id if caused by ActionRuntime.
+- Add regression labels:
+  - `physics-player`.
+  - `physics-entity`.
+  - `physics-projectile`.
+  - `physics-fluid`.
+  - `physics-item`.
+  - `physics-replay`.
+
+### Akzeptanz
+
+- Physics bugs can be captured and kept as permanent regression tests.
+- Gameplay changes that affect movement or damage declare which replay changed and why.

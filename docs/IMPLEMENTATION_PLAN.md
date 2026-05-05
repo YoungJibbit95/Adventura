@@ -189,6 +189,7 @@ Owner: Physics und Engine Worker.
 Status 2026-05-01:
 
 - StatusEffectSystem hat einen Common-Contract fuer burning/chilled/wet/rested/cozy/poison, Modifier, Tick-Pulses und Save-State; `StatusEffectEnvironmentRules` mappt autoritative Wasser-/Hazard-/Biome-/Comfort-Fakten, `PlayerSave` persistiert diese StatusEffect-SaveStates und `StatusEffectChanged` liefert Client-Feedback.
+- Fortschritt 2026-05-05: Surface-Physics V1 ist runtime-angebunden. `ClientWorld` und `ServerWorld` sampeln Surface-Materialien aus echten Blocks, `ClientPlayerController` nutzt die Query fuer Prediction, `ServerConnectionHandler` validiert Survival-Speed mit Surface-Multiplikatoren, und das Debug-HUD zeigt Surface-Key/Speed/Friction.
 
 Aufgaben:
 
@@ -249,6 +250,11 @@ Aufgaben:
 - Journal und Settings als echte Screens mit ViewModels.
 - Launcher und Ingame-UI stilistisch angleichen.
 
+Erreicht 2026-05-05:
+
+- ~~Modern-Pixel-Primitives fuer Button, Panel, Slot und TextInput als erster Component-Library-Slice.~~ `GameClient` hat gemeinsame runde Fallback-Surfaces fuer Settings, Inventory, Crafting und Hotbar; echte Screen-Extraktion bleibt Phase-6-Folgearbeit.
+- ~~Launcher-Runtime-Status an Plattform-/Java-Preflight koppeln.~~ Electron-Main meldet `windows|macos|linux` plus Architektur, Java-Quelle und Startscript-Pfade; Sidebar zeigt die aktive Plattform.
+
 Akzeptanz:
 
 - UI Scale funktioniert.
@@ -295,6 +301,51 @@ Akzeptanz:
 - Alpha-Build startet lokal.
 - Singleplayer und Join Local bleiben nutzbar.
 - Kein neues Feature erzeugt bekannte Dupes, Save-Verlust, Shader-Sonderfaelle oder unbudgetierte Runtime-Arbeit.
+
+---
+
+# Phase 9 - Finished Game Core Systems
+
+Owner: Project Manager mit allen Leads.
+
+Planungsstand 2026-05-05: Der Codebestand hat genug Alpha-Basis, um nicht mehr nur Einzel-Features zu sammeln. Die naechste Planung muss Adventura als fertiges Spiel denken: ein sanfter Survival-Adventure-Loop mit serverautoritativem Progression-State, echten Stationen, lebendigen Kreaturen, belastbarer Weltproduktion, sicheren Saves und einem Debug-/Release-Gate, das lange Spielsessions ernst nimmt.
+
+## Bestehende Basis aus dem Code
+
+- `common.actions` liefert den Startpunkt fuer eine einheitliche ActionPipeline; Projectile Shoot ist der erste serverseitige Slice.
+- `GameplayEvent`/`GameplayEventBatch` und Protocol Version 25 koennen serverbestaetigte Feedback-Events transportieren.
+- `AlphaMilestones`, `StationProgression`, `JournalProgression`, `CozyLifeProgression`, `ContentTagRegistry`, `StatusEffectSystem` und `BiomeProgressionCatalog` beschreiben viele Design-Vertraege bereits in Common.
+- `ServerWorld`, `ServerEntityTracker`, `SaveQueue`, `PlayerSave`, `BlockEntityStore` und `RegionFileLayout` zeigen den Zielpfad fuer Autoritaet, Entity-State und Persistence.
+- `ClientWorld`, `ChunkBuildQueue`, `WorldRenderer`, `RenderPassPlan`, `HudLayout`, ViewModels und UI-Sprite-Loading bilden brauchbare Client-/Engine-Oberflaechen.
+
+## Wichtigste fehlende Runtime-Systeme
+
+- `ProgressionRuntime`: Milestone-, Goal-, Journal-, Recipe-, Biome-, Structure-, Creature- und Rare-Find-Unlocks muessen serverseitig produziert, gespeichert, dedupliziert und als Events gesendet werden. Heute existieren viele Contracts, aber nicht alle Producer.
+- `ActionRuntime V2`: Essen, Fuettern, BlockInteract, Crafting, Cooking, Forge, Sleep, Projectile, spaetere Repair/Upgrade/Ancient-Use sollten aus verstreuten Handlern in registrierte Action-/Transaction-Handler wandern.
+- `StationRuntime V2`: Storage, Campfire, Workbench, CookingPot, Forge und AncientAltar brauchen revisionierte BlockEntity-Snapshots, aktive Jobs, Fuel/Heat, Output-Claims, Reject-Gruende, Save-Payloads und Multiplayer-Tests.
+- `EntityBrainRuntime`: Ambient-Spawner und Wander/Flee/Follow existieren, aber ein fertiges Spiel braucht Behavior States, Perception, Encounter-Marker, Friendship-Cooldowns, rare danger tells, peaceful resource locks und AI-Tick-Budgets.
+- `BaseRuntime`: Comfort ist aktuell ein Scan. Fertig braucht es Base-Zonen/Facts fuer Sleep, Rested/Cozy, Dekor-Wert, Sicherheit, Tierbesuche, Station-Nahe und kurze HUD-Erklaerungen.
+- `ExplorationRuntime`: Biome/Structure/Journals sind geplant, aber Discoveries, map fragments, caves, sealed ruins, one-shot loot and route guarantees muessen als gemeinsame Worldgen/Game-Design/Save-Schicht laufen.
+- `WorldEventRuntime`: Day/Night existiert, Weather/Storms/heat/cold/wet/world events brauchen gespeicherten, synchronisierten Zustand und klare StatusEffect-Quellen.
+- `DiagnosticsRuntime`: Engine, action, station, save, entity, progression, worldgen and render metrics muessen in Debug-HUD/Diagnostics Screen/Release Reports zusammenlaufen.
+
+## Arbeitsreihenfolge fuer Phase 9
+
+1. Progression-State zuerst: `PlayerProgressionState` oder gleichwertiger Service aus PlayerSave-Feldern aufbauen, idempotente Unlock-Methoden und GameplayEvents fuer milestone/journal/goal/recipe/structure discovery ergaenzen.
+2. Station-Transactions danach: gemeinsames `BlockEntitySnapshot`/`StationSnapshot`-Modell fuer Storage/Campfire/CookingPot/Forge, dann ServerConnectionHandler schrittweise nur noch routen lassen.
+3. ActionRuntime erweitern: BlockInteract, Eat, FeedEntity, Craft, Cook, Sleep, Projectile und spaeter Repair/Upgrade als Handler registrieren; Result-Events und Reject-Reasons standardisieren.
+4. EntityBrainRuntime schneiden: kleine Behavior-Services fuer wander/flee/follow/feed/rare-danger, Tick-Budgets, parking rules und tests gegen entity snapshots.
+5. ExplorationRuntime verbinden: Worldgen-StructureMarker -> server discovery producer -> Journal/Map/Rare-Find state -> UI/HUD event.
+6. BaseRuntime aufbauen: Comfort scan in erklaerbare BaseFacts zerlegen, Sleep/Safety/Rested/Cozy und creature visits anschliessen.
+7. Data validation verschärfen: ContentTagRegistry, recipes, loot, structures, biome progression, assets and save aliases in einem Report zusammenfuehren.
+8. Release-Gates erweitern: Long-explore save/load, two-client station contention, first-session progression smoke, ruin discovery smoke, frame/save/entity budget reports.
+
+## Akzeptanz fuer fertiges Spiel
+
+- Eine neue Spielerin kann starten, Ressourcen finden, erste Tools bauen, Feuer/Storage/Workbench nutzen, kochen, Komfort verstehen, eine neue Route finden, eine Ruine entdecken und Fortschritt nach Neustart behalten.
+- Multiplayer erzeugt keine doppelten Items, falschen Journalfortschritt, clientseitige Rare-Finds oder widerspruechliche Station-Outputs.
+- Jede Kernschleife hat eine sichtbare UI/HUD-Erklaerung, aber keine ueberladene Tutorial-Schicht.
+- Welt, Entities und Stationen bleiben auch nach langer Erkundung budgetiert und speicherbar.
 
 ## Sofort empfohlene erste Arbeitspakete
 

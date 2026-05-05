@@ -60,3 +60,43 @@ The client has main, pause, settings, crafting/inventory and chat states plus th
 ## Feedback Hooks
 
 The client has a small no-op `GameAudio` hook with named cues for inventory clicks, block break/place, crafting, eating, footsteps, campfires and ambience. It intentionally does not bind to an audio backend yet, but gameplay code can now fire stable cue names when real sound loading is added.
+
+## Finished Game Architecture Addendum 2026-05-05
+
+This addendum is the planning bridge from the current prototype architecture to a finished Adventura game. The existing code already has useful V1 contracts for blocks, items, recipes, content tags, actions, status effects, physics replay, save queues, feature tables, biome progression, render passes, HUD layout and gameplay events. The missing work is not one huge rewrite; it is a set of runtime pillars that connect those contracts into a complete, server-authoritative game loop.
+
+### Runtime Pillars To Add
+
+- `ProgressionRuntime`: server-owned player progression for alpha milestones, goals, journal entries, recipe history, structure discoveries, creature discoveries and rare-find flags. The client may preview and display, but unlock decisions must be idempotent server events.
+- `ActionRuntime`: the long-term replacement for scattered `ServerConnectionHandler` action methods. It should execute all use/craft/eat/feed/interact/projectile/sleep/station intents through `common.actions`, return typed accept/reject results and emit `GameplayEvent`s.
+- `StationRuntime`: revisioned BlockEntity runtime for storage, campfire, workbench, cooking pot, forge and future ancient altar. It owns slots, fuel, heat, active recipe, output claims, public state, private UI state, transaction ids and save payloads.
+- `EntityBrainRuntime`: server-side creature and encounter scheduler. Ambient movement exists now, but finished gameplay needs perception, threat/flee/follow/feed states, cooldowns, encounter markers, despawn/parking rules, friendship locks and creature-specific event output.
+- `BaseRuntime`: claim-free but measurable home/base zones built from placed comfort sources, storage, campfire, sleeping mat, workbench, decoration, nearby creatures and safety checks. It should produce comfort, sleep, rested/cozy and visit/hint facts without turning the game into a chore loop.
+- `ExplorationRuntime`: discoveries for biomes, structures, caves, ruins, map fragments and rare resources. It connects Worldgen markers, loot tables, journal entries, smoke seeds and route guarantees.
+- `WorldEventRuntime`: day/night, weather, thunder, heat/cold/wet facts, ambient spawns and one-shot world events. It should be saved and synced instead of derived differently by each system.
+- `DiagnosticsRuntime`: a shared surface for frame, render, chunk, light, physics, entity, network, save, action and progression budgets. It should feed the debug HUD, future diagnostics screen and release gate reports.
+
+### Current Architectural Risk
+
+- `GameClient` still owns too much UI, input, local interaction, rendering orchestration and gameplay presentation. New UI screens should be routed through screen/view-model contracts before adding more state flags.
+- `ServerConnectionHandler` still owns too many gameplay responsibilities. Each new server feature should leave behind either an action handler, station service, progression producer or interest filter rather than more handler-local logic.
+- `OverworldGenerator` has strong content now, but still mixes sampling, terrain, structures, spawn safety and feature placement. Future caves, dungeons, villages and sealed ruins should land behind pass services.
+- `CraftingRecipes`, `Items`, `Blocks` and content registries remain code-first. That is acceptable for the alpha, but a finished game needs validation reports and eventually data/codegen boundaries so balancing changes are not Java refactors.
+- The client has useful local previews, but finished multiplayer must treat every inventory, station, progression, loot and entity reward as server-confirmed.
+
+### Finished Game Data Flow
+
+1. Player input becomes an intent packet.
+2. The server maps the packet to an `ActionRequest` or station transaction.
+3. Common rules validate range, tags, cooldowns, costs, station state, inventory and world facts.
+4. Server services mutate world/player/block-entity/entity state.
+5. Mutations produce snapshots, block updates, inventory snapshots, station updates and `GameplayEvent`s.
+6. Interest filters route only relevant data to clients.
+7. Client view-models update HUD, journal, UI, audio, particles and animations from authoritative results.
+8. Save stores persist player state, world diffs, block entities, progression, world events and one-shot loot/discovery markers.
+
+### Acceptance For Future Architecture Work
+
+- Every new core mechanic has a server owner, a common rule or content contract, a client presentation path, a save/sync story and a test or smoke.
+- No finished-game feature should depend on a client-only flag for rewards, unlocks, journal progress, station outputs or creature friendship.
+- Debug output must make hidden state visible enough to diagnose broken progression, missing chunks, duplicate station outputs, stalled saves, runaway entity ticks and render spikes.

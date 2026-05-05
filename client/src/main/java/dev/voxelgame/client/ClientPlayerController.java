@@ -112,7 +112,15 @@ final class ClientPlayerController {
                 coyoteTimeSeconds,
                 jumpBufferSeconds
         );
-        PlayerState next = PlayerPhysics.stepSurvival(state, input, water, deltaSeconds, PHYSICS, world::collidesPlayer);
+        PlayerState next = PlayerPhysics.stepSurvival(
+                state,
+                input,
+                water,
+                deltaSeconds,
+                PHYSICS,
+                world::collidesPlayer,
+                world::surfaceAt
+        );
         applyState(position, next);
         lastFallImpactSpeed = next.fallImpactSpeed();
         if (position.y < world.dimension().minY() - 16.0f) {

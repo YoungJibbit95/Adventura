@@ -45,7 +45,7 @@ export function TerminalPanel({ logs, preflight, preflightBusy, onRunPreflight, 
         <PanelTitle title="Start Check" icon={preflight?.ok ? CheckCircle2 : CircleAlert} />
         <div className="preflight-summary">
           <strong>{preflight?.ok ? "Client kann starten" : "Noch nicht startklar"}</strong>
-          <span>{statusCounts.ok} ok / {statusCounts.warn} hinweise / {statusCounts.error} fehler</span>
+          <span>{statusCounts.ok} ok / {statusCounts.warn} Hinweise / {statusCounts.error} Fehler</span>
         </div>
         <div className="preflight-list">
           {(preflight?.checks || []).map((check) => (

@@ -5,6 +5,7 @@ export const adventuraApi = window.adventura ?? {
     projectRoot: "Browser preview",
     launchMode: "preview",
     java: { ok: true, version: "Browser preview" },
+    platform: "preview",
     settingsPath: "~/.adventura/launcher.properties",
     gradle: "./gradlew",
     packaged: false
@@ -17,6 +18,10 @@ export const adventuraApi = window.adventura ?? {
     window.localStorage.setItem("adventura.launcher.preview", JSON.stringify(settings));
     return settings;
   },
+  getStatus: async () => ({
+    client: { running: false, pid: null },
+    server: { running: false, pid: null }
+  }),
   launch: async () => ({ ok: true }),
   preflight: async () => ({
     ok: true,
@@ -26,5 +31,6 @@ export const adventuraApi = window.adventura ?? {
   }),
   stop: async () => ({ ok: true }),
   openWorkspace: async () => ({ ok: true }),
-  onLog: () => () => {}
+  onLog: () => () => {},
+  onStatus: () => () => {}
 };

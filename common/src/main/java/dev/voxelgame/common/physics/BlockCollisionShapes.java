@@ -1,6 +1,7 @@
 package dev.voxelgame.common.physics;
 
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.FluidBlocks;
 
 public final class BlockCollisionShapes {
     private static final BlockCollisionShape PATH = BlockCollisionShape.box(0.0, 0.0, 0.0, 1.0, 0.125, 1.0);
@@ -18,8 +19,11 @@ public final class BlockCollisionShapes {
     }
 
     public static BlockCollisionShape collisionShape(short blockId) {
+        if (FluidBlocks.isFluid(blockId)) {
+            return BlockCollisionShape.NONE;
+        }
         return switch (blockId) {
-            case Blocks.AIR, Blocks.WATER, Blocks.LAVA,
+            case Blocks.AIR,
                  Blocks.TORCH, Blocks.WILD_GRASS, Blocks.SUN_BLOOM, Blocks.RED_MUSHROOM,
                  Blocks.FLOWER_POT, Blocks.LANTERN, Blocks.WOVEN_RUG, Blocks.BERRY_BUSH,
                  Blocks.HERB_PLANTER, Blocks.CAMPFIRE, Blocks.SMALL_STONE, Blocks.MUSHROOM_CLUSTER,

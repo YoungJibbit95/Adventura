@@ -1,6 +1,6 @@
 import {
-  Gauge,
   Info,
+  LandPlot,
   MonitorPlay,
   Play,
   Server,
@@ -22,7 +22,7 @@ export const defaultSettings = {
 
 export const tabs = [
   { id: "play", label: "Spielen", icon: Play },
-  { id: "settings", label: "Settings", icon: Settings },
+  { id: "settings", label: "Setup", icon: Settings },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "info", label: "Info", icon: Info }
 ];
@@ -34,19 +34,21 @@ export const presets = [
 ];
 
 export const modeLabels = {
+  game: "Adventura",
   singleplayer: "Singleplayer",
   multiplayer: "Multiplayer",
   server: "Server"
 };
 
 export const launchActions = [
-  { mode: "singleplayer", label: "Singleplayer", icon: MonitorPlay, className: "primary-action" },
-  { mode: "multiplayer", label: "Server beitreten", icon: Wifi, className: "secondary-action" },
-  { mode: "server", label: "Server starten", icon: Server, className: "secondary-action amber-action" }
+  { mode: "game", label: "Spiel oeffnen", shortLabel: "Hauptmenue", icon: Play, className: "primary-action main-launch" },
+  { mode: "singleplayer", label: "Singleplayer", icon: MonitorPlay, className: "secondary-action" },
+  { mode: "multiplayer", label: "Beitreten", icon: Wifi, className: "secondary-action" },
+  { mode: "server", label: "Server", icon: Server, className: "secondary-action amber-action" }
 ];
 
 export const questCards = [
-  { icon: Trophy, title: "Starter Quest", text: "Welt laden, Spawn sichern, erste Ressourcen sammeln." },
-  { icon: Gauge, title: "Performance Run", text: "Balanced Preset testen und Render Distance beobachten." },
-  { icon: Wifi, title: "Local Co-op", text: "Server starten und danach mit Auto Server joinen." }
+  { icon: Trophy, title: "Survival", text: "Hauptmenue, Singleplayer und Pause-Menue." },
+  { icon: LandPlot, title: "World Seed", text: "Seed, Preview und Render Distance aktiv." },
+  { icon: Wifi, title: "Co-op", text: "Serverstart und Join laufen getrennt." }
 ];

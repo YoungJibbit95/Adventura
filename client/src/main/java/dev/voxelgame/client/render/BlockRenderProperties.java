@@ -249,6 +249,33 @@ public record BlockRenderProperties(
         set(table, Blocks.ANCIENT_LANTERN, 0.36f, 0.86f, 0.92f, 1.0f, 0.95f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
         set(table, Blocks.WORKBENCH, 0.48f, 0.30f, 0.18f);
         set(table, Blocks.FORGE, 0.34f, 0.31f, 0.30f);
+        set(table, Blocks.RED_SAND, 0.72f, 0.34f, 0.18f);
+        set(table, Blocks.FARMLAND, 0.35f, 0.22f, 0.12f);
+        set(table, Blocks.SNOWY_GRASS, 0.76f, 0.84f, 0.78f, BiomeTintMode.GRASS);
+        set(table, Blocks.PINE_PLANKS, 0.46f, 0.28f, 0.15f);
+        set(table, Blocks.STONE_BRICKS, 0.46f, 0.45f, 0.42f);
+        set(table, Blocks.MOSSY_STONE_BRICKS, 0.34f, 0.42f, 0.32f);
+        set(table, Blocks.FANCY_STONE_BRICKS, 0.50f, 0.49f, 0.46f);
+        set(table, Blocks.MOSSY_FANCY_STONE_BRICKS, 0.36f, 0.45f, 0.34f);
+        set(table, Blocks.GOLD_ORE, 0.86f, 0.66f, 0.20f);
+        set(table, Blocks.PLATIN_ORE, 0.72f, 0.76f, 0.78f);
+        set(table, Blocks.RUBY_ORE, 0.78f, 0.12f, 0.18f);
+        set(table, Blocks.SAPPHIRE_ORE, 0.18f, 0.34f, 0.82f);
+        set(table, Blocks.TITAN_ORE, 0.46f, 0.47f, 0.52f);
+        set(table, Blocks.GLASS, 0.72f, 0.90f, 0.96f, 0.38f, 0.0f, false, BiomeTintMode.NONE, FogAffectMode.REDUCED);
+        roughness(table, Blocks.WATER, 0.28f);
+        roughness(table, Blocks.LAVA, 0.36f);
+        roughness(table, Blocks.ICE, 0.24f);
+        roughness(table, Blocks.GLASS, 0.18f);
+        roughness(table, Blocks.COPPER_ORE, 0.50f);
+        roughness(table, Blocks.IRON_ORE, 0.46f);
+        roughness(table, Blocks.GOLD_ORE, 0.34f);
+        roughness(table, Blocks.PLATIN_ORE, 0.26f);
+        roughness(table, Blocks.RUBY_ORE, 0.30f);
+        roughness(table, Blocks.SAPPHIRE_ORE, 0.28f);
+        roughness(table, Blocks.TITAN_ORE, 0.38f);
+        roughness(table, Blocks.GLOW_CRYSTAL_NODE, 0.22f);
+        roughness(table, Blocks.ANCIENT_LANTERN, 0.24f);
         return table;
     }
 
@@ -303,6 +330,22 @@ public record BlockRenderProperties(
                 biomeTintMode,
                 fogAffectMode,
                 DEFAULT_ROUGHNESS
+        );
+    }
+
+    private static void roughness(BlockRenderProperties[] table, short blockId, float roughness) {
+        BlockRenderProperties properties = table[blockId];
+        table[blockId] = new BlockRenderProperties(
+                properties.tintR(),
+                properties.tintG(),
+                properties.tintB(),
+                properties.alpha(),
+                properties.emissive(),
+                properties.animatedFluid(),
+                properties.cutoutThreshold(),
+                properties.biomeTintMode(),
+                properties.fogAffectMode(),
+                roughness
         );
     }
 

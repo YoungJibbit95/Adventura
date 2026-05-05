@@ -7,6 +7,7 @@ import dev.voxelgame.common.block.BlockRenderLayer;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.world.ChunkPos;
+import dev.voxelgame.common.world.ChunkTerrainCache;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
@@ -106,10 +107,44 @@ class ClientWorldMeshInvalidationTest {
 
         assertEquals(2, world.loadedChunkCount());
         assertTrue(world.dirtyChunkCount() > 0);
+        assertEquals(2, world.buildQueueStats().completedGenerationJobs());
+        assertEquals(1, world.buildQueueStats().completedLightingJobs());
 
         world.ensurePreviewAround(new Vector3f(8.0f, 80.0f, 8.0f), 2, 2);
 
         assertEquals(4, world.loadedChunkCount());
+        assertEquals(4, world.buildQueueStats().completedGenerationJobs());
+        assertEquals(2, world.buildQueueStats().completedLightingJobs());
+    }
+
+    @Test
+    void previewGenerationTimeBudgetStillMakesFrameProgress() {
+        ClientWorld world = new ClientWorld(123L);
+
+        world.ensurePreviewAround(new Vector3f(8.0f, 80.0f, 8.0f), 2, 99, 0.000001);
+
+        assertEquals(1, world.loadedChunkCount());
+        assertEquals(1, world.buildQueueStats().completedGenerationJobs());
+        assertEquals(1, world.buildQueueStats().completedLightingJobs());
+
+        world.ensurePreviewAround(new Vector3f(8.0f, 80.0f, 8.0f), 2, 99, 0.000001);
+
+        assertEquals(2, world.loadedChunkCount());
+    }
+
+    @Test
+    void previewGenerationOnlyQueuesLoadedNeighborChunksForRemesh() {
+        ClientWorld world = new ClientWorld(123L);
+
+        world.ensurePreviewAround(new Vector3f(8.0f, 80.0f, 8.0f), 1, 1);
+
+        assertEquals(1, world.loadedChunkCount());
+        assertEquals(1, world.dirtyChunkCount());
+
+        world.ensurePreviewAround(new Vector3f(8.0f, 80.0f, 8.0f), 1, 1);
+
+        assertEquals(2, world.loadedChunkCount());
+        assertEquals(2, world.dirtyChunkCount());
     }
 
     @Test
@@ -232,12 +267,17 @@ class ClientWorldMeshInvalidationTest {
         int height = world.terrainHeightAt(8, 8);
         short surfaceBlock = world.terrainSurfaceBlockAt(8, 8);
         boolean hasFluid = world.terrainHasFluidAt(8, 8);
+        ChunkTerrainCache.FluidSurface fluidSurface = world.terrainFluidSurfaceAt(8, 8);
         boolean hasCave = world.terrainHasCaveAt(8, 8);
 
         assertEquals(1, world.terrainCacheChunkCount());
         assertTrue(world.terrainCacheBytes() > 0L);
         assertEquals(world.blockIdAt(8, height, 8), surfaceBlock);
         assertEquals(height < 63, hasFluid);
+        assertEquals(hasFluid, fluidSurface.fluid());
+        assertEquals(fluidSurface.depthHint(), world.terrainFluidDepthHintAt(8, 8));
+        assertEquals(fluidSurface.shoreMask(), world.terrainShoreMaskAt(8, 8));
+        assertEquals(fluidSurface.flags(), world.terrainFluidSurfaceFlagsAt(8, 8));
 
         world.applyBlock(new GamePacket.BlockUpdate(8, height, 8, Blocks.STONE));
 
@@ -395,6 +435,19 @@ class ClientWorldMeshInvalidationTest {
 
         assertFalse(hasTransparentMeshWhenDisabled);
         assertTrue(hasTransparentMesh);
+    }
+
+    @Test
+    void layeredBuildsSkipAbsentRenderLayers() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 32, 8, Blocks.STONE));
+
+        ClientWorld.LayeredMeshBuild build = world.buildDirtyLayeredMeshes(new ChunkMesher(), true, true, 1)
+                .getFirst();
+
+        assertTrue(build.opaqueMesh().indexCount() > 0);
+        assertEquals(0, build.cutoutMesh().indexCount());
+        assertEquals(0, build.transparentMesh().indexCount());
     }
 
     @Test

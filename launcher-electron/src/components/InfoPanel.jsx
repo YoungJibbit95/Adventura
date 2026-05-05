@@ -7,6 +7,7 @@ export function InfoPanel({ logs, runtime, settings, onStopAll }) {
       <div className="runtime-panel">
         <PanelTitle title="Runtime" icon={Activity} />
         <InfoRow label="Launch Mode" value={runtimeLabel(runtime?.launchMode)} />
+        <InfoRow label="Platform" value={runtime?.platform || "..."} />
         <InfoRow label="Java" value={runtime?.java?.version || runtime?.java?.message || "..."} />
         <InfoRow label="Workspace" value={runtime?.projectRoot || "..."} />
         <InfoRow label="Settings" value={runtime?.settingsPath || "..."} />

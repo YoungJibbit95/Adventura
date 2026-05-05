@@ -3,6 +3,7 @@ package dev.voxelgame.client.render;
 import dev.voxelgame.common.world.ChunkPos;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -39,6 +40,9 @@ final class TerrainRenderer {
             int triangles = 0;
             int culledByDistance = 0;
             int culledByBounds = 0;
+            int loadedParts = 0;
+            int renderedParts = 0;
+            int culledParts = 0;
             Set<ChunkPos> passCulledPositions = new HashSet<>();
             Iterable<ChunkPos> positions = pass == TerrainPass.TRANSLUCENT
                     ? VisibilityCollector.transparentRenderOrderByMeshBounds(meshes, context.cameraPosition())
@@ -48,9 +52,12 @@ final class TerrainRenderer {
                 if (mesh == null) {
                     continue;
                 }
+                int meshParts = mesh.partCount();
+                loadedParts += meshParts;
                 VisibilityCollector.Culling culling = VisibilityCollector.meshCulling(pos, mesh, context);
                 if (culling != VisibilityCollector.Culling.VISIBLE) {
                     culledMeshes++;
+                    culledParts += meshParts;
                     if (culling == VisibilityCollector.Culling.DISTANCE) {
                         culledByDistance++;
                     } else {
@@ -58,6 +65,26 @@ final class TerrainRenderer {
                     }
                     culledPositions.add(pos);
                     passCulledPositions.add(pos);
+                    continue;
+                }
+                if (!mesh.parts().isEmpty()) {
+                    List<ChunkMesh.SectionPart> visibleParts = VisibilityCollector.visibleParts(mesh, context);
+                    if (visibleParts.isEmpty()) {
+                        culledMeshes++;
+                        culledParts += meshParts;
+                        culledByBounds++;
+                        culledPositions.add(pos);
+                        passCulledPositions.add(pos);
+                        continue;
+                    }
+                    mesh.drawParts(visibleParts);
+                    renderedMeshes++;
+                    renderedParts += visibleParts.size();
+                    culledParts += Math.max(0, meshParts - visibleParts.size());
+                    drawCalls += visibleParts.size();
+                    for (ChunkMesh.SectionPart part : visibleParts) {
+                        triangles += part.triangleCount();
+                    }
                     continue;
                 }
                 mesh.draw();
@@ -74,7 +101,10 @@ final class TerrainRenderer {
                     triangles,
                     culledByDistance,
                     culledByBounds,
-                    pass.estimatedStateChanges()
+                    pass.estimatedStateChanges(),
+                    loadedParts,
+                    renderedParts,
+                    culledParts
             );
         });
     }

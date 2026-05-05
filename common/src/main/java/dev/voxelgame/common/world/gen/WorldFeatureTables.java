@@ -141,20 +141,20 @@ public final class WorldFeatureTables {
             ),
             table(FROST_FEATURES,
                     block("voxel:feature_frost_small_stone", FeatureKind.ROCK, Blocks.SMALL_STONE, 0.016, 0.8, 1, 3, 3, 4,
-                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.GRAVEL, Blocks.ICE, Blocks.STONE), true, true, 0.0, ""),
+                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.SNOWY_GRASS, Blocks.GRAVEL, Blocks.ICE, Blocks.STONE), true, true, 0.0, ""),
                     block("voxel:feature_frost_glow_crystal", FeatureKind.RESOURCE_NODE, Blocks.GLOW_CRYSTAL_NODE, 0.026, 0.45, 1, 1, 8, 4,
-                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.GRAVEL, Blocks.ICE, Blocks.STONE), true, true, 0.010, "voxel:journal_map_first_ruin"),
+                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.SNOWY_GRASS, Blocks.GRAVEL, Blocks.ICE, Blocks.STONE), true, true, 0.010, "voxel:journal_map_first_ruin"),
                     structure("voxel:feature_small_ruin_frost", FeatureKind.RUIN, "voxel:small_ruin", 0.0010, 0.5, 56,
-                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.GRAVEL, Blocks.STONE), true,
+                            biomes("voxel:frost_peaks"), surfaces(Blocks.SNOW, Blocks.SNOWY_GRASS, Blocks.GRAVEL, Blocks.STONE), true,
                             "voxel:ruin_crate", "voxel:snow_hare", "voxel:journal_structure_small_ruin")
             ),
             table(SUN_DUNES_FEATURES,
                     block("voxel:feature_dunes_small_stone", FeatureKind.ROCK, Blocks.SMALL_STONE, 0.016, 1.0, 1, 3, 4, 2,
-                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND, Blocks.STONE), true, true, 0.0, ""),
+                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND, Blocks.RED_SAND, Blocks.STONE), true, true, 0.0, ""),
                     block("voxel:feature_dunes_cactus", FeatureKind.PLANT_CLUSTER, Blocks.CACTUS, 0.026, 0.5, 1, 2, 6, 2,
-                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND), true, true, 0.0, ""),
+                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND, Blocks.RED_SAND), true, true, 0.0, ""),
                     structure("voxel:feature_desert_well", FeatureKind.VILLAGE_PART, "voxel:desert_well", 0.0012, 0.65, 48,
-                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND, Blocks.STONE), false,
+                            biomes("voxel:sun_dunes"), surfaces(Blocks.SAND, Blocks.RED_SAND, Blocks.STONE), false,
                             "", "voxel:dune_crawler", "voxel:journal_structure_desert_well")
             )
     ));

@@ -126,6 +126,31 @@ class WorldRendererTest {
         assertEquals(RenderPassPlan.TERRAIN_OPAQUE, stats.opaquePass().passName());
         assertEquals(RenderPassPlan.TERRAIN_CUTOUT, stats.cutoutPass().passName());
         assertEquals(RenderPassPlan.TERRAIN_TRANSLUCENT, stats.transparentPass().passName());
+        assertEquals(0, stats.loadedSectionParts());
+        assertEquals(0, stats.renderedSectionParts());
+        assertEquals(0, stats.culledSectionParts());
+    }
+
+    @Test
+    void renderPassStatsExposeSectionPartCounters() {
+        RenderPassStats pass = new RenderPassStats(
+                RenderPassPlan.TERRAIN_OPAQUE,
+                2,
+                1,
+                1,
+                5,
+                90,
+                1,
+                2,
+                3,
+                8,
+                5,
+                3
+        );
+
+        assertEquals(8, pass.loadedParts());
+        assertEquals(5, pass.renderedParts());
+        assertEquals(3, pass.culledParts());
     }
 
     @Test

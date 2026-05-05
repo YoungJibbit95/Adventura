@@ -1,8 +1,24 @@
 package dev.voxelgame.client.render;
 
-public record ChunkMesh(float[] vertices, int[] indices, Bounds bounds) {
+import dev.voxelgame.common.block.BlockRenderLayer;
+
+import java.util.List;
+import java.util.Objects;
+
+public record ChunkMesh(float[] vertices, int[] indices, Bounds bounds, List<SectionPart> parts) {
+    public ChunkMesh {
+        vertices = vertices == null ? new float[0] : vertices;
+        indices = indices == null ? new int[0] : indices;
+        bounds = bounds == null ? computeBounds(vertices) : bounds;
+        parts = parts == null ? List.of() : List.copyOf(parts);
+    }
+
     public ChunkMesh(float[] vertices, int[] indices) {
-        this(vertices, indices, computeBounds(vertices));
+        this(vertices, indices, computeBounds(vertices), List.of());
+    }
+
+    public ChunkMesh(float[] vertices, int[] indices, List<SectionPart> parts) {
+        this(vertices, indices, computeBounds(vertices), parts);
     }
 
     public int vertexCount() {
@@ -23,6 +39,10 @@ public record ChunkMesh(float[] vertices, int[] indices, Bounds bounds) {
 
     public boolean isEmpty() {
         return indices.length == 0;
+    }
+
+    public int partCount() {
+        return parts.size();
     }
 
     public static Bounds computeBounds(float[] vertices) {
@@ -60,6 +80,27 @@ public record ChunkMesh(float[] vertices, int[] indices, Bounds bounds) {
 
         public boolean isEmpty() {
             return minX == maxX && minY == maxY && minZ == maxZ;
+        }
+    }
+
+    public record SectionPart(int sectionY, BlockRenderLayer layer, int indexOffset, int indexCount, Bounds bounds) {
+        public SectionPart {
+            Objects.requireNonNull(layer, "layer");
+            bounds = bounds == null ? Bounds.empty() : bounds;
+            indexOffset = Math.max(0, indexOffset);
+            indexCount = Math.max(0, indexCount);
+        }
+
+        public int triangleCount() {
+            return indexCount / 3;
+        }
+
+        public long byteOffset() {
+            return (long) indexOffset * Integer.BYTES;
+        }
+
+        public boolean isEmpty() {
+            return indexCount == 0 || bounds.isEmpty();
         }
     }
 }

@@ -2,6 +2,7 @@ package dev.voxelgame.common.item;
 
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.block.ToolType;
+import dev.voxelgame.common.gameplay.WeaponItemRules;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
@@ -49,6 +50,20 @@ class ItemRegistryDataTest {
                 continue;
             }
             assertEquals(item.placesBlockKey(), blocks.canonicalKey(item.placesBlockKey()).orElseThrow(), item.key());
+        }
+    }
+
+    @Test
+    void mineralSwordItemsAreDurableWeaponsWithCanonicalAliases() {
+        var items = Items.createDefaultRegistry();
+
+        assertEquals("voxel:platin_sword", items.canonicalKey("voxel:platinum_sword").orElseThrow());
+        assertEquals("voxel:titan_sword", items.canonicalKey("voxel:titanium_sword").orElseThrow());
+        for (String key : Set.of("voxel:iron_sword", "voxel:platin_sword", "voxel:sapphire_sword", "voxel:titan_sword")) {
+            ItemType item = items.requireByKey(key);
+            assertEquals(1, item.maxStackSize(), key);
+            assertTrue(item.durability() > 0, key);
+            assertTrue(WeaponItemRules.isWeapon(item), key);
         }
     }
 

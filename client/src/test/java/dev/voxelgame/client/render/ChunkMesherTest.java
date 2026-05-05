@@ -23,6 +23,12 @@ class ChunkMesherTest {
         assertEquals(24, mesh.vertexCount());
         assertEquals(36, mesh.indexCount());
         assertEquals(12, mesh.triangleCount());
+        assertEquals(1, mesh.partCount());
+        assertEquals(4, mesh.parts().get(0).sectionY());
+        assertEquals(BlockRenderLayer.SOLID, mesh.parts().get(0).layer());
+        assertEquals(0, mesh.parts().get(0).indexOffset());
+        assertEquals(36, mesh.parts().get(0).indexCount());
+        assertEquals(0L, mesh.parts().get(0).byteOffset());
         assertBounds(mesh, 0.0f, 1.0f, 64.0f, 65.0f, 0.0f, 1.0f);
     }
 
@@ -127,7 +133,57 @@ class ChunkMesherTest {
         );
 
         assertEquals(24, sectionMesh.vertexCount());
+        assertEquals(1, sectionMesh.partCount());
+        assertEquals(4, sectionMesh.parts().get(0).sectionY());
+        assertEquals(sectionMesh.indexCount(), sectionMesh.parts().get(0).indexCount());
         assertBounds(sectionMesh, 0.0f, 1.0f, 64.0f, 65.0f, 0.0f, 1.0f);
+    }
+
+    @Test
+    void visibleFaceMeshingEmitsContiguousSectionParts() {
+        MeshWorld meshWorld = meshWorld();
+        meshWorld.world().setBlockId(0, 64, 0, Blocks.STONE);
+        meshWorld.world().setBlockId(0, 96, 0, Blocks.STONE);
+
+        ChunkMesh mesh = new ChunkMesher().buildVisibleFaceMesh(
+                meshWorld.world(),
+                meshWorld.chunk(),
+                BlockRenderLayer.SOLID,
+                false
+        );
+
+        assertEquals(2, mesh.partCount());
+        ChunkMesh.SectionPart lower = mesh.parts().get(0);
+        ChunkMesh.SectionPart upper = mesh.parts().get(1);
+        assertEquals(4, lower.sectionY());
+        assertEquals(6, upper.sectionY());
+        assertEquals(0, lower.indexOffset());
+        assertEquals(lower.indexOffset() + lower.indexCount(), upper.indexOffset());
+        assertEquals(mesh.indexCount(), upper.indexOffset() + upper.indexCount());
+        assertEquals(64.0f, lower.bounds().minY(), 0.0001f);
+        assertEquals(65.0f, lower.bounds().maxY(), 0.0001f);
+        assertEquals(96.0f, upper.bounds().minY(), 0.0001f);
+        assertEquals(97.0f, upper.bounds().maxY(), 0.0001f);
+        assertEquals((long) upper.indexOffset() * Integer.BYTES, upper.byteOffset());
+    }
+
+    @Test
+    void sectionPartMeshingKeepsSectionBoundaryFacesCulledByNeighborBlocks() {
+        MeshWorld meshWorld = meshWorld();
+        meshWorld.world().setBlockId(0, 79, 0, Blocks.STONE);
+        meshWorld.world().setBlockId(0, 80, 0, Blocks.STONE);
+
+        ChunkMesh mesh = new ChunkMesher().buildVisibleFaceMesh(
+                meshWorld.world(),
+                meshWorld.chunk(),
+                BlockRenderLayer.SOLID,
+                false
+        );
+
+        assertEquals(2, mesh.partCount());
+        assertEquals(60, mesh.indexCount());
+        assertEquals(30, mesh.parts().get(0).indexCount());
+        assertEquals(30, mesh.parts().get(1).indexCount());
     }
 
     @Test

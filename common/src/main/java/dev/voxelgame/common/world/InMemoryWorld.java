@@ -31,6 +31,16 @@ public final class InMemoryWorld implements WorldView {
         return chunks.computeIfAbsent(pos, key -> new Chunk(key, dimension));
     }
 
+    public void putChunk(Chunk chunk) {
+        if (chunk == null) {
+            throw new IllegalArgumentException("Chunk cannot be null");
+        }
+        if (!dimension.equals(chunk.dimension())) {
+            throw new IllegalArgumentException("Chunk dimension does not match world dimension");
+        }
+        chunks.put(chunk.pos(), chunk);
+    }
+
     public Optional<Chunk> findChunk(ChunkPos pos) {
         return Optional.ofNullable(chunks.get(pos));
     }

@@ -1,6 +1,8 @@
 import { tabs } from "../data/launcherData";
 
 export function Sidebar({ activeTab, runtime, onTabChange }) {
+  const javaLabel = runtime?.java?.ok ? runtime.java.source || "preview" : "missing";
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -33,8 +35,8 @@ export function Sidebar({ activeTab, runtime, onTabChange }) {
       <div className="mini-status">
         <span className="pulse" />
         <div>
-          <strong>Workspace</strong>
-          <span>{runtime?.packaged ? "Packaged" : "Development"}</span>
+          <strong>{runtime?.platform || "Runtime"}</strong>
+          <span>{runtime?.packaged ? "Packaged" : "Development"} - Java {javaLabel}</span>
         </div>
       </div>
     </aside>

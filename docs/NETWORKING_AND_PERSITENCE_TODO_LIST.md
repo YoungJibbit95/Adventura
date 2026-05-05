@@ -519,3 +519,182 @@ World-Saves sind derzeit Properties mit BlockChanges und BlockEntity-Snapshots. 
 - Saves sind crash- und migrationsbewusst.
 - Packet- und Save-Aenderungen sind getestet.
 - Netzwerk-/Persistenzsysteme sind nicht in einem einzigen Handler gefangen.
+
+---
+
+# P10 - Finished Game Server State Roadmap 2026-05-05
+
+Owner: Main Networking Dev, mit Project Manager und Lead Game Design Engineer.
+
+Die bestehenden Packets, SaveQueue, PlayerSave-Felder, BlockEntityStore und GameplayEvents reichen fuer Alpha-Slices, aber ein fertiges Spiel braucht einen durchgehenden State-Pfad: jedes Reward, jeder Unlock, jede Station-Ausgabe und jede Discovery kommt vom Server, ist idempotent, wird gespeichert und kann nach Reconnect korrekt dargestellt werden.
+
+## P10.1 Progression State Sync
+
+### Aufgaben
+
+- Player progression payload definieren:
+  - achieved milestones.
+  - completed goals.
+  - journal entries.
+  - recipe history.
+  - discovered biomes.
+  - discovered structures.
+  - discovered creatures.
+  - map fragments.
+  - rare-find flags.
+- Server producers implementieren:
+  - item pickup -> supply/rare-find/recipe history.
+  - accepted craft/cook/forge -> recipe and milestone producers.
+  - biome position authority -> biome discovery.
+  - structure bounds/markers -> structure discovery and map fragment.
+  - entity interest/observe/feed -> creature discovery/friendship event.
+- Packet path:
+  - either dedicated `ProgressionSnapshot` plus deltas, or bounded `GameplayEvent`s plus periodic snapshot.
+  - client gets full snapshot on login/reconnect.
+  - deltas include monotone sequence and stable keys.
+- Save:
+  - all keys canonicalized.
+  - unknown future keys preserved or quarantined by schema policy.
+  - migration tests for older PlayerSave rows.
+
+### Akzeptanz
+
+- Reconnect restores journal/goals/milestones without client guessing.
+- Unlock events are emitted once and can be safely replayed or ignored if duplicate.
+
+## P10.2 Unified Action And Transaction Replies
+
+### Aufgaben
+
+- Standard reply model:
+  - transaction id or action sequence.
+  - accepted/rejected.
+  - reason key.
+  - cooldown remaining.
+  - affected inventory slots.
+  - affected entity/block/station.
+  - optional authoritative snapshot.
+- Migrate:
+  - CraftRequest.
+  - CookRequest.
+  - StorageTransfer.
+  - BlockInteract.
+  - EntityInteract.
+  - SleepRequest.
+  - ProjectileShoot.
+- Standard reject keys:
+  - out_of_range.
+  - wrong_tool.
+  - missing_item.
+  - inventory_full.
+  - station_missing.
+  - station_wrong_type.
+  - stale_revision.
+  - no_fuel.
+  - no_heat.
+  - output_blocked.
+  - cooldown.
+  - rate_limited.
+  - unsafe_sleep.
+  - target_invalid.
+
+### Akzeptanz
+
+- Online UI can show pending/accepted/rejected for every critical action.
+- ServerConnectionHandler contains routing, not custom reply logic per feature.
+
+## P10.3 BlockEntity And Station Replication
+
+### Aufgaben
+
+- Common/server model:
+  - `BlockEntitySnapshot`.
+  - `StationSnapshot`.
+  - `StorageSnapshot`.
+  - `StationTransaction`.
+  - `StationTransactionResult`.
+- Sync policy:
+  - public state to nearby interested clients.
+  - private UI state only to opener.
+  - revision required for mutating transactions.
+  - close/update packets when block changes or interest leaves range.
+- Persistence:
+  - station payload in WorldSave/Region record.
+  - unknown payload retention.
+  - active job progress.
+  - consumed generated loot markers.
+- Multiplayer tests:
+  - two clients same storage.
+  - two clients same output.
+  - stale revision reject.
+  - station broken while UI open.
+  - save/load active job.
+
+### Akzeptanz
+
+- No station/storage dupe in multiplayer.
+- Save/load preserves station state and gracefully handles future schema keys.
+
+## P10.4 Region Storage Implementation Path
+
+### Aufgaben
+
+- Implement reader/writer after `RegionFileLayout`:
+  - header magic/version.
+  - 32x32 chunk index.
+  - record offsets/lengths/CRC.
+  - compression flag.
+  - section block data.
+  - optional light arrays.
+  - block entity payloads.
+  - chunk dirty delta against generated baseline.
+- Migration:
+  - keep Properties V1 reader.
+  - write backups before migration.
+  - verify negative chunk coordinates.
+  - corrupt region quarantine.
+- SaveQueue integration:
+  - coalesce by region key.
+  - expose pending/running region writes.
+  - flush on shutdown.
+  - periodic save checkpoint.
+
+### Akzeptanz
+
+- Long exploration does not create one huge properties file.
+- Crash recovery can explain what was preserved, retried or quarantined.
+
+## P10.5 Operational And Abuse Safety
+
+### Aufgaben
+
+- Data-driven intent rate limits per action type.
+- Packet budget per connection and disconnect reason.
+- Movement reject telemetry with strike window.
+- Chat spam limit.
+- Admin/debug command channel:
+  - kick.
+  - save.
+  - world report.
+  - player stats.
+  - tp debug commands gated.
+- Dedicated server config:
+  - port.
+  - seed.
+  - save path.
+  - whitelist/auth.
+  - max players.
+  - view distance.
+  - autosave interval.
+  - debug command permissions.
+- Graceful shutdown:
+  - stop accepting new actions.
+  - flush saves.
+  - close open station UIs.
+  - final player snapshots.
+  - clean event-loop close.
+
+### Akzeptanz
+
+- A broken or malicious client cannot destabilize the alpha server loop.
+- Headless servers can be diagnosed without attaching a debugger.

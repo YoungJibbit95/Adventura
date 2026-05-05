@@ -17,11 +17,11 @@ public final class Structures {
             }
         }
         for (int y = 1; y <= 3; y++) {
-            blocks.add(new BlockPlacement(-2, y, -2, Blocks.MOSSY_STONE));
-            blocks.add(new BlockPlacement(2, y, -2, Blocks.STONE));
-            blocks.add(new BlockPlacement(-2, y, 2, Blocks.STONE));
+            blocks.add(new BlockPlacement(-2, y, -2, Blocks.MOSSY_STONE_BRICKS));
+            blocks.add(new BlockPlacement(2, y, -2, Blocks.STONE_BRICKS));
+            blocks.add(new BlockPlacement(-2, y, 2, Blocks.STONE_BRICKS));
             if (y <= 2) {
-                blocks.add(new BlockPlacement(2, y, 2, Blocks.MOSSY_STONE));
+                blocks.add(new BlockPlacement(2, y, 2, Blocks.MOSSY_STONE_BRICKS));
             }
         }
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.STORAGE_CRATE));
@@ -79,20 +79,20 @@ public final class Structures {
         }
         for (int z = -1; z <= 1; z++) {
             for (int x = -1; x <= 1; x++) {
-                blocks.add(new BlockPlacement(x, 1, z, Blocks.STONE));
+                blocks.add(new BlockPlacement(x, 1, z, Blocks.FANCY_STONE_BRICKS));
             }
         }
         blocks.add(new BlockPlacement(0, 1, 0, Blocks.WATER));
         for (int y = 2; y <= 4; y++) {
-            blocks.add(new BlockPlacement(-1, y, -1, Blocks.STONE));
-            blocks.add(new BlockPlacement(1, y, -1, Blocks.STONE));
-            blocks.add(new BlockPlacement(-1, y, 1, Blocks.STONE));
-            blocks.add(new BlockPlacement(1, y, 1, Blocks.STONE));
+            blocks.add(new BlockPlacement(-1, y, -1, Blocks.STONE_BRICKS));
+            blocks.add(new BlockPlacement(1, y, -1, Blocks.STONE_BRICKS));
+            blocks.add(new BlockPlacement(-1, y, 1, Blocks.STONE_BRICKS));
+            blocks.add(new BlockPlacement(1, y, 1, Blocks.STONE_BRICKS));
         }
         for (int z = -2; z <= 2; z++) {
             for (int x = -2; x <= 2; x++) {
                 if (Math.abs(x) == 2 || Math.abs(z) == 2) {
-                    blocks.add(new BlockPlacement(x, 5, z, Blocks.STONE));
+                    blocks.add(new BlockPlacement(x, 5, z, Blocks.FANCY_STONE_BRICKS));
                 }
             }
         }

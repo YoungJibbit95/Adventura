@@ -1,15 +1,28 @@
 const { app, BrowserWindow, ipcMain, shell } = require("electron");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const {
+  environmentForRuntime,
+  gameExecutable,
+  gradleCommand: platformGradleCommand,
+  platformKey,
+  runtimeInfo
+} = require("./platform.cjs");
 
 const devProjectRoot = path.resolve(__dirname, "..", "..");
 const bundledGameRoot = path.join(process.resourcesPath, "game");
 const settingsPath = path.join(os.homedir(), ".adventura", "launcher.properties");
 const packagedRuntimeRoot = path.join(os.homedir(), ".adventura", "runtime");
+const distributionFreshnessTtlMs = 2500;
+const startConfirmationMs = 1800;
+const serverReadyTimeoutMs = 14000;
 const running = new Map();
+const distributionFreshnessCache = new Map();
+let resolvedJavaRuntime = null;
 const sourceModules = {
   client: ["common", "client"],
   server: ["common", "server"]
@@ -27,18 +40,16 @@ const defaults = {
 
 if (process.platform === "linux") {
   app.commandLine.appendSwitch("no-sandbox");
-  app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-gpu-sandbox");
-  app.disableHardwareAcceleration();
 }
 
 function createWindow() {
   const win = new BrowserWindow({
     title: "Adventura Launcher",
-    width: 1220,
-    height: 780,
-    minWidth: 1040,
-    minHeight: 680,
+    width: 1180,
+    height: 760,
+    minWidth: 860,
+    minHeight: 600,
     backgroundColor: "#030508",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -76,6 +87,7 @@ ipcMain.handle("runtime:getInfo", () => ({
   projectRoot: launcherWorkspaceRoot(),
   launchMode: app.isPackaged ? "bundled" : "installDist",
   java: javaRuntimeInfo(),
+  platform: platformKey(),
   settingsPath,
   gradle: gradleCommand(),
   packaged: app.isPackaged
@@ -95,9 +107,15 @@ ipcMain.handle("settings:save", async (_event, settings) => {
   return sanitized;
 });
 
+ipcMain.handle("launcher:getStatus", () => processSnapshot());
+
 ipcMain.handle("launcher:launch", async (_event, payload) => {
   const settings = sanitizeSettings(payload?.settings || defaults);
   await saveSettings(settings);
+
+  if (payload?.mode === "game") {
+    return startClient("Adventura", mainMenuArgs(settings));
+  }
 
   if (payload?.mode === "server") {
     return startServer(settings);
@@ -108,6 +126,12 @@ ipcMain.handle("launcher:launch", async (_event, payload) => {
     if (!serverResult.ok && !serverResult.alreadyRunning) {
       return serverResult;
     }
+    const joinSettings = localJoinSettings(settings);
+    const ready = await waitForServerReady(joinSettings.host, joinSettings.port);
+    if (!ready.ok) {
+      return ready;
+    }
+    return startClient("Multiplayer", clientArgs(joinSettings, true));
   }
 
   if (payload?.mode === "multiplayer") {
@@ -123,15 +147,17 @@ ipcMain.handle("launcher:stop", (_event, target) => {
   if (target === "all") {
     stopAllProcesses();
     broadcastLog("Alle Launcher-Prozesse wurden gestoppt.");
+    broadcastStatus();
     return { ok: true };
   }
   const child = running.get(target);
   if (!child) {
     return { ok: false, message: "Kein laufender Prozess gefunden." };
   }
-  child.kill();
+  killProcessTree(child);
   running.delete(target);
   broadcastLog(`${target} wurde gestoppt.`);
+  broadcastStatus();
   return { ok: true };
 });
 
@@ -228,6 +254,15 @@ function clientArgs(settings, multiplayer) {
   ];
 }
 
+function mainMenuArgs(settings) {
+  return [
+    "--seed", settings.seed,
+    "--username", settings.username,
+    "--preview-radius", String(settings.previewRadius),
+    "--render-distance", String(settings.renderDistance)
+  ];
+}
+
 function serverArgs(settings) {
   return [
     "--port", String(settings.port),
@@ -266,13 +301,13 @@ async function startServer(settings) {
   }
   const args = serverArgs(settings);
   if (app.isPackaged) {
-    return startGameProcess("server", bundledExecutable("server"), args, `Server startet auf ${settings.host}:${settings.port}.`, packagedRuntimeRoot);
+    return startGameProcess("server", bundledExecutable("server"), args, `Server startet auf Port ${settings.port}.`, packagedRuntimeRoot);
   }
   const prepared = await ensureDevDistribution("server");
   if (!prepared.ok) {
     return prepared;
   }
-  return startGameProcess("server", devExecutable("server"), args, `Server startet auf ${settings.host}:${settings.port}.`, devProjectRoot);
+  return startGameProcess("server", devExecutable("server"), args, `Server startet auf Port ${settings.port}.`, devProjectRoot);
 }
 
 function preflight(inputSettings) {
@@ -280,9 +315,14 @@ function preflight(inputSettings) {
   const java = javaRuntimeInfo();
   const checks = [
     {
+      label: "Platform",
+      status: "ok",
+      detail: `${platformKey()} / ${app.isPackaged ? "packaged" : "workspace"}`
+    },
+    {
       label: "Java 21",
       status: java.ok ? "ok" : "error",
-      detail: java.ok ? java.version : java.message
+      detail: java.ok ? `${java.version} (${java.source})` : java.message
     },
     {
       label: "Settings",
@@ -306,7 +346,7 @@ function preflight(inputSettings) {
 }
 
 function gradleWrapperCheck() {
-  const wrapper = path.join(devProjectRoot, gradleCommand());
+  const wrapper = path.join(devProjectRoot, process.platform === "win32" ? "gradlew.bat" : "gradlew");
   return {
     label: "Gradle Wrapper",
     status: fs.existsSync(wrapper) ? "ok" : "error",
@@ -374,6 +414,7 @@ async function ensureDevDistribution(name) {
     broadcastLog(message);
     return { ok: false, message };
   }
+  distributionFreshnessCache.delete(name);
 
   if (!fs.existsSync(executable)) {
     const message = `${label}-Starter wurde nicht erzeugt: ${executable}`;
@@ -389,10 +430,16 @@ function isDevDistributionFresh(name) {
   if (!fs.existsSync(executable)) {
     return false;
   }
+  const cached = distributionFreshnessCache.get(name);
+  if (cached && Date.now() - cached.time < distributionFreshnessTtlMs) {
+    return cached.fresh;
+  }
 
   const outputTime = newestModifiedTime([devDistributionRoot(name)]);
   const inputTime = newestModifiedTime(devInputPaths(name));
-  return outputTime > 0 && outputTime >= inputTime;
+  const fresh = outputTime > 0 && outputTime >= inputTime;
+  distributionFreshnessCache.set(name, { time: Date.now(), fresh });
+  return fresh;
 }
 
 function devInputPaths(name) {
@@ -448,10 +495,10 @@ function newestModifiedTime(pathsToScan) {
 
 function runCommand(command, args, cwd, logKey) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = spawnLauncherCommand(command, args, {
       cwd,
-      shell: process.platform === "win32",
-      env: childEnvironment({ FORCE_COLOR: "1" })
+      env: childEnvironment({ FORCE_COLOR: "1" }),
+      windowsHide: true
     });
 
     child.stdout.on("data", (data) => forwardProcessOutput(logKey, data, "info"));
@@ -479,32 +526,53 @@ function startGameProcess(key, executable, appArgs, startMessage, cwd) {
 
   fs.mkdirSync(cwd, { recursive: true });
 
-  const child = spawn(executable, appArgs, {
+  const child = spawnLauncherCommand(executable, appArgs, {
     cwd,
-    shell: process.platform === "win32",
-    env: childEnvironment()
+    env: childEnvironment(),
+    windowsHide: true
   });
 
   running.set(key, child);
   broadcastLog(startMessage);
+  broadcastStatus();
 
-  child.stdout.on("data", (data) => forwardProcessOutput(key, data, "info"));
-  child.stderr.on("data", (data) => forwardProcessOutput(key, data, "warn"));
-  child.on("error", (error) => {
-    running.delete(key);
-    broadcastLog(`${key} Fehler: ${error.message}`, key, "error");
-  });
-  child.on("exit", (code, signal) => {
-    running.delete(key);
-    broadcastLog(`${key} beendet (${code ?? signal ?? "signal"}).`);
-  });
+  return new Promise((resolve) => {
+    let settled = false;
+    const confirmTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve({ ok: true, pid: child.pid });
+      }
+    }, startConfirmationMs);
 
-  return { ok: true };
+    child.stdout.on("data", (data) => forwardProcessOutput(key, data, "info"));
+    child.stderr.on("data", (data) => forwardProcessOutput(key, data, "warn"));
+    child.on("error", (error) => {
+      clearTimeout(confirmTimer);
+      running.delete(key);
+      broadcastLog(`${key} Fehler: ${error.message}`, key, "error");
+      broadcastStatus();
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, message: error.message });
+      }
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(confirmTimer);
+      running.delete(key);
+      const detail = signal ? `Signal ${signal}` : `Exit ${code ?? "unbekannt"}`;
+      broadcastLog(`${key} beendet (${detail}).`, key, code === 0 ? "info" : "warn");
+      broadcastStatus();
+      if (!settled) {
+        settled = true;
+        resolve({ ok: false, message: `${key} konnte nicht stabil starten (${detail}).` });
+      }
+    });
+  });
 }
 
 function devExecutable(name) {
-  const executable = process.platform === "win32" ? `${name}.bat` : name;
-  return path.join(devDistributionRoot(name), "bin", executable);
+  return gameExecutable(path.join(devProjectRoot, name, "build", "install"), name);
 }
 
 function devDistributionRoot(name) {
@@ -512,8 +580,7 @@ function devDistributionRoot(name) {
 }
 
 function bundledExecutable(name) {
-  const executable = process.platform === "win32" ? `${name}.bat` : name;
-  return path.join(bundledGameRoot, name, "bin", executable);
+  return gameExecutable(bundledGameRoot, name);
 }
 
 function launcherWorkspaceRoot() {
@@ -523,60 +590,97 @@ function launcherWorkspaceRoot() {
 function ensureJavaRuntime() {
   const java = javaRuntimeInfo();
   if (java.ok) {
+    resolvedJavaRuntime = java;
     return null;
   }
+  resolvedJavaRuntime = null;
   broadcastLog(java.message);
   return { ok: false, message: java.message };
 }
 
-function javaRuntimeInfo() {
-  const result = spawnSync("java", ["-version"], {
-    encoding: "utf8",
-    timeout: 5000
-  });
-  if (result.error) {
-    return {
-      ok: false,
-      version: "",
-      message: "Java 21 wurde nicht gefunden. Bitte JDK 21 installieren und java in PATH setzen."
-    };
+function localJoinSettings(settings) {
+  const host = localConnectHost(settings.host);
+  if (host !== settings.host) {
+    broadcastLog(`Auto Server verbindet lokal ueber ${host}:${settings.port} statt ${settings.host}:${settings.port}.`);
   }
-  const output = `${result.stderr || ""}\n${result.stdout || ""}`.trim();
-  const firstLine = output.split(/\r?\n/).find(Boolean) || "java -version";
-  const major = parseJavaMajorVersion(firstLine);
-  if (major < 21) {
-    return {
-      ok: false,
-      version: firstLine,
-      message: `Java 21+ wird benoetigt, gefunden wurde: ${firstLine}`
-    };
-  }
-  return {
-    ok: true,
-    version: firstLine,
-    message: firstLine
-  };
+  return { ...settings, host };
 }
 
-function parseJavaMajorVersion(line) {
-  const version = line.match(/version "(?<version>[^"]+)"/)?.groups?.version
-    || line.match(/openjdk (?<version>[0-9][^\s]*)/)?.groups?.version
-    || "";
-  if (version.startsWith("1.")) {
-    return Number.parseInt(version.slice(2), 10) || 0;
+function localConnectHost(host) {
+  const normalized = String(host || "").trim().toLowerCase();
+  if (!normalized || normalized === "0.0.0.0" || normalized === "::") {
+    return "127.0.0.1";
   }
-  return Number.parseInt(version, 10) || 0;
+  if (["127.0.0.1", "localhost", "::1"].includes(normalized)) {
+    return host;
+  }
+  return "127.0.0.1";
+}
+
+function waitForServerReady(host, port) {
+  broadcastLog(`Warte auf Server ${host}:${port}.`, "server");
+  const deadline = Date.now() + serverReadyTimeoutMs;
+
+  return new Promise((resolve) => {
+    const tryConnect = () => {
+      const socket = net.createConnection({ host, port });
+      let settled = false;
+      const finish = (ok, detail) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.destroy();
+        if (ok) {
+          broadcastLog(`Server ist erreichbar auf ${host}:${port}.`, "server", "ok");
+          resolve({ ok: true });
+          return;
+        }
+        if (Date.now() >= deadline) {
+          const message = `Server wurde nicht rechtzeitig erreichbar (${detail}).`;
+          broadcastLog(message, "server", "error");
+          resolve({ ok: false, message });
+          return;
+        }
+        setTimeout(tryConnect, 240);
+      };
+
+      socket.setTimeout(900);
+      socket.once("connect", () => finish(true, "ok"));
+      socket.once("timeout", () => finish(false, "Timeout"));
+      socket.once("error", (error) => finish(false, error.code || error.message));
+    };
+
+    tryConnect();
+  });
+}
+
+function javaRuntimeInfo() {
+  return runtimeInfo({
+    resourcesPath: process.resourcesPath,
+    projectRoot: devProjectRoot
+  });
 }
 
 function gradleCommand() {
-  return process.platform === "win32" ? "gradlew.bat" : "./gradlew";
+  return platformGradleCommand(devProjectRoot);
 }
 
 function childEnvironment(extra = {}) {
-  const env = { ...process.env, ...extra };
+  const base = resolvedJavaRuntime?.ok
+    ? environmentForRuntime(resolvedJavaRuntime, process.env)
+    : { ...process.env };
+  const env = { ...base, ...extra };
   delete env.ELECTRON_RENDERER_URL;
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
+}
+
+function spawnLauncherCommand(command, args, options) {
+  if (process.platform === "win32" && /\.(bat|cmd)$/i.test(command)) {
+    return spawn("cmd.exe", ["/d", "/c", "call", command, ...args], options);
+  }
+  return spawn(command, args, options);
 }
 
 function forwardProcessOutput(key, data, fallbackLevel = "info") {
@@ -611,11 +715,48 @@ function broadcastLog(message, source = "launcher", level = "info") {
   });
 }
 
+function processSnapshot() {
+  return {
+    client: processState("client"),
+    server: processState("server")
+  };
+}
+
+function processState(key) {
+  const child = running.get(key);
+  const active = Boolean(child && child.exitCode === null);
+  return {
+    running: active,
+    pid: active ? child.pid : null
+  };
+}
+
+function broadcastStatus() {
+  const status = processSnapshot();
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("launcher:status", status);
+  });
+}
+
 function stopAllProcesses() {
   for (const child of running.values()) {
     if (child.exitCode === null) {
-      child.kill();
+      killProcessTree(child);
     }
   }
   running.clear();
+}
+
+function killProcessTree(child) {
+  if (!child || child.exitCode !== null) {
+    return;
+  }
+  if (process.platform === "win32" && child.pid) {
+    spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    return;
+  }
+  child.kill();
 }

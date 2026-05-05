@@ -383,3 +383,99 @@ Owner: Lead UI/UX Frontend Developer für UI-Animationen, Lead Engine Developer 
 
 - Partikel-Animationen sind datengetrieben und budgetierbar.
 - Pixel-Art bleibt klar.
+
+---
+
+# P8 - Finished Game Animation Roadmap 2026-05-05
+
+Owner: Lead UI/UX Frontend Developer fuer UI/hand, Lead Engine Developer fuer render integration, Lead Game Design Engineer fuer creature/combat readability.
+
+Animations are now more than polish: they are how Adventura communicates server-confirmed actions, creature intent, station state and danger tells.
+
+## P8.1 Creature Behavior Animation Contracts
+
+### Aufgaben
+
+- Minimum states per creature family:
+  - idle.
+  - wander.
+  - graze/nibble/root.
+  - look-at-player.
+  - flee.
+  - follow.
+  - feed accepted.
+  - content/calm.
+  - agitated.
+  - attack windup for rare danger.
+- Snapshot state mapping:
+  - every server `EntitySnapshot.stateKey` used by AI has a visual state.
+  - unknown state falls back to idle with debug warning.
+- Blend rules:
+  - no instant pop for common idle/wander/flee.
+  - danger windup must be readable longer than damage startup.
+
+### Akzeptanz
+
+- Players can read friendly, skittish and dangerous creature intent.
+- Server state and rendered animation cannot silently drift.
+
+## P8.2 Station And Interaction Animation
+
+### Aufgaben
+
+- Campfire:
+  - unlit.
+  - active.
+  - low fuel.
+  - burned out.
+  - cooking complete.
+- Cooking Pot:
+  - idle.
+  - cooking steam.
+  - ready output.
+  - blocked output.
+- Forge:
+  - cold.
+  - heating.
+  - hot.
+  - smelt ready.
+  - rare binding effect.
+- Item/hand:
+  - gather.
+  - mine/chop/dig/cut.
+  - eat.
+  - feed.
+  - throw/shoot.
+  - place.
+  - failed action shake kept subtle.
+
+### Akzeptanz
+
+- Station state is readable before opening a screen.
+- Failed actions provide feedback without feeling noisy.
+
+## P8.3 Event-Driven Feedback Animation
+
+### Aufgaben
+
+- Bind `GameplayEvent`s to animation categories:
+  - pickup.
+  - craft.
+  - cook complete.
+  - recipe unlock.
+  - journal unlock.
+  - status effect changed.
+  - damage/heal.
+  - rare find.
+  - structure discovery.
+- Low-motion mode:
+  - reduce shake/pulse.
+  - keep information visible through color/icon/text.
+- Debug:
+  - event animation queue size.
+  - dropped/merged repeated animations.
+
+### Akzeptanz
+
+- Server-confirmed events drive visible feedback.
+- Animation spam is bounded during repeated actions.

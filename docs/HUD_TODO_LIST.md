@@ -282,6 +282,11 @@ Owner: Lead UI/UX Frontend Developer, mit Schnittstellen zu Lead Engine Develope
 - ServerStatsSnapshot und lokale EngineFrameStats klar markieren.
 - Budgets mit Prozentwerten anzeigen.
 
+### Erreicht 2026-05-05
+
+- Die `PHYS`-Debug-Zeile zeigt neben Loading-/Collision-Cache-Daten jetzt auch den aktiven Surface-Key sowie Speed- und Friction-Multiplikator.
+- Verifikation: Runtime-Anbindung ueber `ClientWorldCollisionTest.playerSurfaceUsesLoadedBlockBelowFeet`; Layout bleibt ueber `GameClientUiLayoutTest` im Build-Gate.
+
 ### Akzeptanz
 
 - Entwickler sehen sofort, welcher Bereich ein Problem verursacht.
@@ -314,3 +319,107 @@ Owner: Lead UI/UX Frontend Developer, mit Schnittstellen zu Lead Engine Develope
 
 - Wichtige Events sind sichtbar und serverbestätigt.
 - HUD-Feedback ist konsistent mit Audio und Partikeln.
+
+---
+
+# P8 - Finished Game HUD And Diagnostics Roadmap 2026-05-05
+
+Owner: Lead UI/UX Frontend Developer, mit Lead Engine Developer und Main Networking Dev.
+
+Das HUD muss zwei Jobs sauber trennen: normale Spielerfuehrung und Entwicklerdiagnose. Fuer ein fertiges Spiel sollen beide aus stabilen ViewModels kommen, nicht aus direkten Zugriffen auf `GameClient`-Interna.
+
+## P8.1 Player-Facing HUD Completion
+
+### Aufgaben
+
+- Survival HUD:
+  - health.
+  - hunger.
+  - stamina.
+  - breath.
+  - status effects.
+  - damage/heal pulses.
+- Comfort HUD:
+  - compact comfort level.
+  - one concrete source explanation.
+  - rested/cozy state.
+  - sleep readiness.
+- Interaction HUD:
+  - block action.
+  - station action.
+  - entity observe/feed/attack distinction.
+  - wrong tool.
+  - inventory full.
+  - server reject reason.
+- Progression HUD:
+  - current gentle nudge from progression state.
+  - new journal entry badge.
+  - recipe unlocked.
+  - map fragment found.
+- Feedback rules:
+  - server-confirmed events first.
+  - repeated warnings collapse.
+  - low-motion option.
+  - no long text over combat/exploration view.
+
+### Akzeptanz
+
+- HUD explains the next useful action without becoming a quest checklist.
+- Every visible reward/unlock is server-confirmed.
+
+## P8.2 Diagnostics Screen
+
+### Aufgaben
+
+- Split debug HUD into pages:
+  - Frame.
+  - Render.
+  - Chunks.
+  - Lighting.
+  - Physics.
+  - Entities.
+  - Networking.
+  - Saves.
+  - Actions.
+  - Stations.
+  - Progression.
+  - Worldgen.
+- Each page should show:
+  - current value.
+  - budget where known.
+  - peak/recent average where useful.
+  - warning state.
+- Pull from:
+  - local `EngineFrameStats`.
+  - render stats/resource tracker.
+  - chunk build queue.
+  - collision cache stats.
+  - server stats snapshots.
+  - action/station/progression diagnostics when added.
+
+### Akzeptanz
+
+- Long-session problems can be diagnosed without reading logs first.
+- Normal HUD can stay minimal and clean.
+
+## P8.3 HUD ViewModel Contracts
+
+### Aufgaben
+
+- Define view models:
+  - `SurvivalHudInfo`.
+  - `ComfortHudInfo` already exists; expand with BaseFacts later.
+  - `InteractionHudInfo`.
+  - `ProgressionHudInfo`.
+  - `DebugHudInfo`.
+  - `NetworkHudInfo`.
+  - `StationHudInfo`.
+- Update rules:
+  - generated from authoritative state or local engine stats.
+  - no direct mutable world access in rendering methods.
+  - stable layout tests for all HUD modes.
+
+### Akzeptanz
+
+- HUD can be tested without launching the whole client.
+- New gameplay systems add data to view models instead of drawing directly.

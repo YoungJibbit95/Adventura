@@ -8,6 +8,7 @@ import dev.voxelgame.common.world.DimensionSettings;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,13 +16,22 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class CollisionShapeCache {
+    private static final int DEFAULT_MAX_CACHED_SECTIONS_PER_SHAPE_SET = 256;
+
     private final Source source;
     private final Map<ShapeSet, Map<SectionKey, SectionShapes>> sections = new EnumMap<>(ShapeSet.class);
+    private final int maxCachedSectionsPerShapeSet;
+    private long evictedSections;
 
     public CollisionShapeCache(Source source) {
+        this(source, DEFAULT_MAX_CACHED_SECTIONS_PER_SHAPE_SET);
+    }
+
+    public CollisionShapeCache(Source source, int maxCachedSectionsPerShapeSet) {
         this.source = Objects.requireNonNull(source, "source");
+        this.maxCachedSectionsPerShapeSet = Math.max(1, maxCachedSectionsPerShapeSet);
         for (ShapeSet set : ShapeSet.values()) {
-            sections.put(set, new LinkedHashMap<>());
+            sections.put(set, new LinkedHashMap<>(16, 0.75f, true));
         }
     }
 
@@ -221,7 +231,7 @@ public final class CollisionShapeCache {
                 shapeCount += section.entries().size();
             }
         }
-        return new CacheStats(sectionCount, shapeCount);
+        return new CacheStats(sectionCount, shapeCount, evictedSections, maxCachedSectionsPerShapeSet);
     }
 
     private CollisionCheck firstMatching(
@@ -288,7 +298,27 @@ public final class CollisionShapeCache {
 
     private SectionShapes section(ShapeSet set, ChunkPos pos, int sectionY) {
         SectionKey key = new SectionKey(pos, sectionY);
-        return sections.get(set).computeIfAbsent(key, ignored -> buildSection(set, pos, sectionY));
+        Map<SectionKey, SectionShapes> cache = sections.get(set);
+        SectionShapes cached = cache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        SectionShapes built = buildSection(set, pos, sectionY);
+        cache.put(key, built);
+        trimCache(cache);
+        return built;
+    }
+
+    private void trimCache(Map<SectionKey, SectionShapes> cache) {
+        while (cache.size() > maxCachedSectionsPerShapeSet) {
+            Iterator<SectionKey> iterator = cache.keySet().iterator();
+            if (!iterator.hasNext()) {
+                return;
+            }
+            iterator.next();
+            iterator.remove();
+            evictedSections++;
+        }
     }
 
     private SectionShapes buildSection(ShapeSet set, ChunkPos pos, int sectionY) {
@@ -407,7 +437,14 @@ public final class CollisionShapeCache {
     public record ShapeBounds(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
     }
 
-    public record CacheStats(int sections, int shapes) {
+    public record CacheStats(int sections, int shapes, long evictedSections, int maxSectionsPerShapeSet) {
+        public CacheStats {
+            sections = Math.max(0, sections);
+            shapes = Math.max(0, shapes);
+            evictedSections = Math.max(0L, evictedSections);
+            maxSectionsPerShapeSet = Math.max(1, maxSectionsPerShapeSet);
+        }
+
         public int estimatedBytes() {
             return Math.max(0, sections) * 96 + Math.max(0, shapes) * 48;
         }

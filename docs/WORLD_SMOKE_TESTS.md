@@ -392,3 +392,76 @@ Ein Build ist smoke-stabil, wenn:
 - Inventory/Cooking/Storage funktioniert.
 - Join Local funktioniert.
 - Debug HUD plausible Werte zeigt.
+
+---
+
+# Finished Game Core Smoke Gates 2026-05-05
+
+Diese Gates ergaenzen die bisherigen Alpha-Smokes. Sie sollen spaeter verhindern, dass Adventura zwar einzelne Features hat, aber als zusammenhaengendes Spiel bricht.
+
+## H. First Session Core Loop
+
+Ablauf:
+
+1. Neues Singleplayer-Spiel mit festem Seed starten.
+2. Ohne Debug-Teleport starter supplies sammeln.
+3. Erste Nahrung finden und essen.
+4. Erstes Werkzeug craften.
+5. Campfire craften, platzieren und anzuenden.
+6. Storage oeffnen oder craften.
+7. Workbench-Route finden oder Journal-Hinweis dafuer erhalten.
+8. Spiel beenden, neu starten, Fortschritt pruefen.
+
+Akzeptanz:
+
+- Spieler findet Starter-Ressourcen ohne externe Doku.
+- Milestone/Journal/Recipe-Hinweise erscheinen hoechstens einmal.
+- Inventory, Hunger, Comfort and Journal state survive restart.
+
+## I. Station Transaction Contention
+
+Ablauf:
+
+1. Lokalen Server starten und mit zwei Clients joinen.
+2. Beide Clients oeffnen dieselbe Storage Crate.
+3. Beide versuchen denselben Stack zu bewegen.
+4. Beide nutzen dieselbe Campfire/CookingPot/Forge-Ausgabe, sobald StationRuntime vorhanden ist.
+5. Server neu starten und Station/Storage pruefen.
+
+Akzeptanz:
+
+- Genau ein Client bekommt einen umstrittenen Output.
+- Der andere Client erhaelt einen klaren Reject oder aktualisierte Station-Snapshot.
+- Save/Load dupliziert keine Items.
+
+## J. Progression Discovery Chain
+
+Ablauf:
+
+1. Vom Spawn aus Pine Forest, Lakeside, Highlands und Old Ruins oder Mushroom Grove erreichen.
+2. Jeweils einen relevanten Resource-/Structure-/Creature-Trigger ausloesen.
+3. Erste Ruine entdecken.
+4. Rare Find looten.
+5. Reconnect/restart.
+
+Akzeptanz:
+
+- Discovered biome/structure/creature/journal/map/rare-find state bleibt erhalten.
+- Keine Discovery spammt bei erneutem Betreten.
+- Route wirkt seed-robust und nicht zufaellig blockiert.
+
+## K. Long Session Engine Budget
+
+Ablauf:
+
+1. 20 Minuten erkunden.
+2. Mehrere Biome, Wasser, Struktur, Campfire/Base und mindestens eine Station besuchen.
+3. Debug/Diagnostics-Werte notieren.
+4. Zur Basis zurueckkehren.
+5. Save/restart/rejoin.
+
+Akzeptanz:
+
+- Loaded chunks, GPU meshes, collision cache sections, entity counts and pending saves bleiben budgetiert.
+- Basis, Storage, Station, Comfort, Journal and inventory bleiben korrekt.
+- Keine sichtbaren Chunk-Luecken, stale station UIs or missing entities after return.

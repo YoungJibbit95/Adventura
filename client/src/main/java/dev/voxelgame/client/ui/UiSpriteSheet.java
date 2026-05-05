@@ -3,6 +3,8 @@ package dev.voxelgame.client.ui;
 import dev.voxelgame.client.render.RenderResourceTracker;
 
 import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,7 +35,8 @@ public final class UiSpriteSheet implements AutoCloseable {
     public enum BackgroundMode {
         OPAQUE,
         KEY_BLACK,
-        EDGE_CHECKER
+        EDGE_CHECKER,
+        EDGE_CHECKER_TRIM
     }
 
     private UiSpriteSheet(int textureId, int width, int height, long textureBytes) {
@@ -48,6 +51,10 @@ public final class UiSpriteSheet implements AutoCloseable {
     }
 
     public static UiSpriteSheet load(String resourcePath, BackgroundMode backgroundMode) {
+        return load(resourcePath, backgroundMode, 0);
+    }
+
+    public static UiSpriteSheet load(String resourcePath, BackgroundMode backgroundMode, int maxDimension) {
         try (InputStream input = UiSpriteSheet.class.getClassLoader().getResourceAsStream(resourcePath)) {
             if (input == null) {
                 throw new IllegalArgumentException("Missing UI sprite sheet: " + resourcePath);
@@ -56,13 +63,16 @@ public final class UiSpriteSheet implements AutoCloseable {
             if (image == null) {
                 throw new IllegalArgumentException("Unsupported UI sprite sheet: " + resourcePath);
             }
+            image = prepareImage(image, backgroundMode);
+            image = scaledImage(image, maxDimension);
+            BackgroundMode uploadMode = backgroundMode == BackgroundMode.EDGE_CHECKER_TRIM ? BackgroundMode.OPAQUE : backgroundMode;
             int textureId = glGenTextures();
             glBindTexture(GL_TEXTURE_2D, textureId);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.getWidth(), image.getHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, toRgbaBuffer(image, backgroundMode));
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.getWidth(), image.getHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, toRgbaBuffer(image, uploadMode));
             glBindTexture(GL_TEXTURE_2D, 0);
             long textureBytes = (long) image.getWidth() * image.getHeight() * 4L;
             RenderResourceTracker.registerTexture(textureBytes);
@@ -82,6 +92,18 @@ public final class UiSpriteSheet implements AutoCloseable {
                 width,
                 height
         );
+    }
+
+    public UiSprite fullSprite() {
+        return sprite(0, 0, width, height);
+    }
+
+    public int width() {
+        return width;
+    }
+
+    public int height() {
+        return height;
     }
 
     int textureId() {
@@ -122,6 +144,23 @@ public final class UiSpriteSheet implements AutoCloseable {
         }
         buffer.flip();
         return buffer;
+    }
+
+    static BufferedImage prepareImage(BufferedImage image, BackgroundMode backgroundMode) {
+        if (backgroundMode != BackgroundMode.EDGE_CHECKER_TRIM) {
+            return image;
+        }
+        BufferedImage cleaned = copyArgb(image);
+        boolean[] background = edgeCheckerBackground(cleaned);
+        for (int i = 0; i < background.length; i++) {
+            if (!background[i]) {
+                continue;
+            }
+            int x = i % cleaned.getWidth();
+            int y = i / cleaned.getWidth();
+            cleaned.setRGB(x, y, cleaned.getRGB(x, y) & 0x00FFFFFF);
+        }
+        return trimTransparentPadding(cleaned);
     }
 
     private static boolean[] edgeCheckerBackground(BufferedImage image) {
@@ -239,5 +278,58 @@ public final class UiSpriteSheet implements AutoCloseable {
         int rg = (right >> 8) & 0xFF;
         int rb = right & 0xFF;
         return Math.max(Math.abs(lr - rr), Math.max(Math.abs(lg - rg), Math.abs(lb - rb)));
+    }
+
+    private static BufferedImage trimTransparentPadding(BufferedImage image) {
+        int minX = image.getWidth();
+        int minY = image.getHeight();
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (((image.getRGB(x, y) >> 24) & 0xFF) <= 8) {
+                    continue;
+                }
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+        if (maxX < minX || maxY < minY) {
+            return image;
+        }
+        if (minX == 0 && minY == 0 && maxX == image.getWidth() - 1 && maxY == image.getHeight() - 1) {
+            return image;
+        }
+        BufferedImage trimmed = new BufferedImage(maxX - minX + 1, maxY - minY + 1, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = trimmed.createGraphics();
+        graphics.drawImage(image, 0, 0, trimmed.getWidth(), trimmed.getHeight(), minX, minY, maxX + 1, maxY + 1, null);
+        graphics.dispose();
+        return trimmed;
+    }
+
+    private static BufferedImage copyArgb(BufferedImage image) {
+        BufferedImage copy = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        graphics.drawImage(image, 0, 0, null);
+        graphics.dispose();
+        return copy;
+    }
+
+    private static BufferedImage scaledImage(BufferedImage image, int maxDimension) {
+        if (maxDimension <= 0 || Math.max(image.getWidth(), image.getHeight()) <= maxDimension) {
+            return image;
+        }
+        float scale = maxDimension / (float) Math.max(image.getWidth(), image.getHeight());
+        int width = Math.max(1, Math.round(image.getWidth() * scale));
+        int height = Math.max(1, Math.round(image.getHeight() * scale));
+        BufferedImage scaled = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = scaled.createGraphics();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        graphics.drawImage(image, 0, 0, width, height, null);
+        graphics.dispose();
+        return scaled;
     }
 }

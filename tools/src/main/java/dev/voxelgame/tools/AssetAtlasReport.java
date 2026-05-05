@@ -20,8 +20,7 @@ public final class AssetAtlasReport {
             "ui_hud_sheet.png",
             "blocks_tiles_sheet.png",
             "tools_weapons_sheet.png",
-            "nature_food_sheet.png",
-            "ores_materials_sheet.png"
+            "nature_food_sheet.png"
     );
 
     private static final Map<Short, List<String>> FALLBACK_SHEETS_BY_BLOCK = fallbackSheetsByBlock();
@@ -68,18 +67,14 @@ public final class AssetAtlasReport {
 
     public static List<String> textureCandidates(String blockKey, TextureFace face) {
         String name = blockKey.substring(blockKey.indexOf(':') + 1);
-        List<String> baseNames = new ArrayList<>();
-        baseNames.add(name);
-        if ("grass_block".equals(name)) {
-            baseNames.add("grass");
-        }
+        List<String> baseNames = textureBaseNames(name);
 
         List<String> suffixes = switch (face) {
             case TOP -> List.of("_top", "_up", "");
             case BOTTOM -> List.of("_bottom", "_down", "");
             case SIDE -> List.of("_side", "");
         };
-        List<String> roots = List.of("textures/block/", "textures/blocks/");
+        List<String> roots = List.of("textures/block/", "textures/blocks/", "blocks/", "");
         List<String> candidates = new ArrayList<>();
         for (String baseName : baseNames) {
             for (String suffix : suffixes) {
@@ -94,6 +89,45 @@ public final class AssetAtlasReport {
         return candidates;
     }
 
+    private static List<String> textureBaseNames(String name) {
+        List<String> baseNames = new ArrayList<>();
+        addUnique(baseNames, name);
+        switch (name) {
+            case "grass_block" -> {
+                addUnique(baseNames, "grass");
+                addUnique(baseNames, "mossy_grass");
+            }
+            case "skyroot_log" -> addUnique(baseNames, "oak_log");
+            case "skyroot_leaves" -> addUnique(baseNames, "oak_leaves");
+            case "pine_log" -> addUnique(baseNames, "spruce_log");
+            case "pine_leaves" -> addUnique(baseNames, "spruce_leaves");
+            case "mossy_stone" -> {
+                addUnique(baseNames, "cobblestone");
+                addUnique(baseNames, "cracked_cobblestone");
+            }
+            case "mossy_path" -> {
+                addUnique(baseNames, "mossy_grass");
+                addUnique(baseNames, "myzelium");
+            }
+            case "ice" -> addUnique(baseNames, "ice_block");
+            case "skyroot_planks" -> addUnique(baseNames, "oak_planks");
+            case "pine_planks" -> addUnique(baseNames, "spruce_planks");
+            case "snowy_grass_block" -> {
+                addUnique(baseNames, "snowy_grass");
+                addUnique(baseNames, "dirt");
+            }
+            case "stone_bricks" -> addUnique(baseNames, "stone_brick_block");
+            case "mossy_stone_bricks" -> addUnique(baseNames, "mossy_stone_brick_block");
+            case "fancy_stone_bricks" -> addUnique(baseNames, "fancy_stone_brick_block");
+            case "mossy_fancy_stone_bricks" -> addUnique(baseNames, "mossy_fancy_stone_brick_block");
+            case "glass" -> addUnique(baseNames, "glass_block");
+            case "tree_stump" -> addUnique(baseNames, "oak_log");
+            default -> {
+            }
+        }
+        return baseNames;
+    }
+
     private static List<String> missingFallbackSheets(Path assetRoot) {
         return FALLBACK_SHEETS.stream()
                 .filter(sheet -> !Files.isRegularFile(assetRoot.resolve(sheet)))
@@ -104,24 +138,36 @@ public final class AssetAtlasReport {
         if (!Files.isDirectory(assetRoot)) {
             return List.of();
         }
-        try (var files = Files.list(assetRoot)) {
-            return files.filter(Files::isRegularFile)
-                    .map(path -> path.getFileName().toString())
+        List<String> mappedRootPngs = mappedRootPngs();
+        List<String> unmapped = new ArrayList<>();
+        collectUnmappedDropPngs(assetRoot, assetRoot, mappedRootPngs, unmapped);
+        collectUnmappedDropPngs(assetRoot, assetRoot.resolve("blocks"), mappedRootPngs, unmapped);
+        unmapped.sort(String::compareTo);
+        return unmapped;
+    }
+
+    private static void collectUnmappedDropPngs(Path assetRoot, Path directory, List<String> mappedRootPngs, List<String> unmapped) throws IOException {
+        if (!Files.isDirectory(directory)) {
+            return;
+        }
+        try (var files = Files.list(directory)) {
+            files.filter(Files::isRegularFile)
+                    .map(path -> assetRoot.relativize(path).toString().replace('\\', '/'))
                     .filter(name -> name.toLowerCase(Locale.ROOT).endsWith(".png"))
                     .filter(name -> !FALLBACK_SHEETS.contains(name))
-                    .sorted()
-                    .toList();
+                    .filter(name -> !mappedRootPngs.contains(name))
+                    .forEach(unmapped::add);
         }
     }
 
     private static List<String> duplicateTextureNames(Path assetRoot) throws IOException {
-        List<Path> textureRoots = List.of(assetRoot.resolve("textures/block"), assetRoot.resolve("textures/blocks"));
+        List<Path> textureRoots = List.of(assetRoot, assetRoot.resolve("blocks"), assetRoot.resolve("textures/block"), assetRoot.resolve("textures/blocks"));
         Map<String, List<String>> pathsByName = new HashMap<>();
         for (Path textureRoot : textureRoots) {
             if (!Files.isDirectory(textureRoot)) {
                 continue;
             }
-            try (var files = Files.walk(textureRoot)) {
+            try (var files = textureRoot.equals(assetRoot) ? Files.list(textureRoot) : Files.walk(textureRoot)) {
                 files.filter(Files::isRegularFile)
                         .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png"))
                         .forEach(path -> {
@@ -138,6 +184,26 @@ public final class AssetAtlasReport {
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> duplicates.add(entry.getKey() + " -> " + String.join(", ", entry.getValue())));
         return duplicates;
+    }
+
+    private static List<String> mappedRootPngs() {
+        List<String> mapped = new ArrayList<>();
+        for (BlockType block : Blocks.createDefaultRegistry().values()) {
+            for (TextureFace face : TextureFace.values()) {
+                for (String candidate : textureCandidates(block.key(), face)) {
+                    if (!candidate.startsWith("textures/")) {
+                        addUnique(mapped, candidate);
+                    }
+                }
+            }
+        }
+        return mapped;
+    }
+
+    private static void addUnique(List<String> values, String value) {
+        if (!values.contains(value)) {
+            values.add(value);
+        }
     }
 
     private static Map<Short, List<String>> fallbackSheetsByBlock() {
@@ -187,7 +253,20 @@ public final class AssetAtlasReport {
                 Blocks.ICE,
                 Blocks.PINE_LOG,
                 Blocks.PINE_LEAVES,
-                Blocks.SKYROOT_PLANKS
+                Blocks.SKYROOT_PLANKS,
+                Blocks.CLAY_DEPOSIT,
+                Blocks.GLOW_CRYSTAL_NODE,
+                Blocks.FORGE,
+                Blocks.GLOW_MUSHROOM,
+                Blocks.RED_SAND,
+                Blocks.FARMLAND,
+                Blocks.SNOWY_GRASS,
+                Blocks.PINE_PLANKS,
+                Blocks.STONE_BRICKS,
+                Blocks.MOSSY_STONE_BRICKS,
+                Blocks.FANCY_STONE_BRICKS,
+                Blocks.MOSSY_FANCY_STONE_BRICKS,
+                Blocks.GLASS
         );
         put(sheets, "blocks_tiles_sheet.png", Blocks.WATER, Blocks.LAVA);
         put(sheets, "nature_food_sheet.png", Blocks.TORCH);
@@ -198,7 +277,12 @@ public final class AssetAtlasReport {
                 Blocks.CLAY_DEPOSIT,
                 Blocks.GLOW_CRYSTAL_NODE,
                 Blocks.FORGE,
-                Blocks.GLOW_MUSHROOM
+                Blocks.GLOW_MUSHROOM,
+                Blocks.GOLD_ORE,
+                Blocks.PLATIN_ORE,
+                Blocks.RUBY_ORE,
+                Blocks.SAPPHIRE_ORE,
+                Blocks.TITAN_ORE
         );
         return sheets;
     }

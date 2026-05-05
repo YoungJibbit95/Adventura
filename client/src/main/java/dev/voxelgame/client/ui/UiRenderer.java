@@ -68,6 +68,9 @@ public final class UiRenderer implements AutoCloseable {
     }
 
     public void rect(float x, float y, float width, float height, UiColor color) {
+        if (width <= 0.0f || height <= 0.0f || color.a() <= 0.0f) {
+            return;
+        }
         int base = vertices.size() / FLOATS_PER_VERTEX;
         vertex(x, y, color);
         vertex(x + width, y, color);
@@ -79,6 +82,33 @@ public final class UiRenderer implements AutoCloseable {
         indices.add(base);
         indices.add(base + 2);
         indices.add(base + 3);
+    }
+
+    public void roundedRect(float x, float y, float width, float height, float radius, UiColor color) {
+        if (width <= 0.0f || height <= 0.0f || color.a() <= 0.0f) {
+            return;
+        }
+        float r = Math.max(0.0f, Math.min(radius, Math.min(width, height) * 0.5f));
+        if (r < 1.0f) {
+            rect(x, y, width, height, color);
+            return;
+        }
+
+        rect(x + r, y, width - r * 2.0f, height, color);
+        rect(x, y + r, r, height - r * 2.0f, color);
+        rect(x + width - r, y + r, r, height - r * 2.0f, color);
+
+        int strips = Math.max(3, Math.min(10, Math.round(r / 2.0f)));
+        float stripHeight = r / strips;
+        for (int i = 0; i < strips; i++) {
+            float localY = i * stripHeight;
+            float sample = localY + stripHeight * 0.5f;
+            float dy = r - sample;
+            float inset = r - (float) Math.sqrt(Math.max(0.0f, r * r - dy * dy));
+            float stripWidth = Math.max(0.0f, width - inset * 2.0f);
+            rect(x + inset, y + localY, stripWidth, stripHeight + 0.5f, color);
+            rect(x + inset, y + height - r + localY, stripWidth, stripHeight + 0.5f, color);
+        }
     }
 
     public void text(String text, float x, float y, float scale, UiColor color) {
@@ -95,8 +125,11 @@ public final class UiRenderer implements AutoCloseable {
 
     public void button(UiButton button, boolean hovered) {
         UiColor color = !button.enabled() ? UiColor.BUTTON_DISABLED : hovered ? UiColor.BUTTON_HOVER : UiColor.BUTTON;
-        rect(button.x(), button.y(), button.width(), button.height(), color);
-        rect(button.x(), button.y(), button.width(), 2.0f, UiColor.ACCENT);
+        float radius = Math.max(4.0f, Math.min(12.0f, button.height() * 0.26f));
+        roundedRect(button.x() + 2.0f, button.y() + 3.0f, button.width(), button.height(), radius, new UiColor(0.0f, 0.0f, 0.0f, button.enabled() ? 0.22f : 0.12f));
+        roundedRect(button.x(), button.y(), button.width(), button.height(), radius, !button.enabled() ? new UiColor(0.08f, 0.09f, 0.09f, 0.72f) : new UiColor(0.12f, 0.16f, 0.14f, 0.96f));
+        roundedRect(button.x() + 2.0f, button.y() + 2.0f, button.width() - 4.0f, button.height() - 4.0f, Math.max(1.0f, radius - 2.0f), color);
+        roundedRect(button.x() + 4.0f, button.y() + 4.0f, button.width() - 8.0f, Math.max(1.0f, button.height() * 0.10f), Math.max(1.0f, radius * 0.30f), button.enabled() ? new UiColor(UiColor.ACCENT.r(), UiColor.ACCENT.g(), UiColor.ACCENT.b(), hovered ? 0.42f : 0.26f) : new UiColor(0.70f, 0.70f, 0.64f, 0.10f));
         float scale = 3.0f;
         centeredText(
                 button.label(),

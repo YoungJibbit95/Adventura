@@ -1,6 +1,6 @@
 package dev.voxelgame.common.world;
 
-import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.FluidBlocks;
 
 import java.util.Arrays;
 
@@ -138,7 +138,7 @@ public final class ChunkSection {
     }
 
     private static boolean isFluidBlock(short blockId) {
-        return blockId == Blocks.WATER;
+        return FluidBlocks.isFluid(blockId);
     }
 
     private static boolean allZero(byte[] values) {

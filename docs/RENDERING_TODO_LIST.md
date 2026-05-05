@@ -12,9 +12,11 @@ Letzter Rendering-Pass: P0/P1/P2/P3 wurden am 2026-04-30 im Code abgearbeitet. K
 - `ChunkMesher` nutzt wiederverwendete primitive Mesh-Buffer, misst Buffer-Wachstum/Retained-Buffer und kann Greedy Meshing per `/greedymesh` toggeln.
 - Greedy Meshing berücksichtigt Material, Light und AO pro Merge-Zelle; Cutout und Wasser bleiben bewusst im Simple-Mesh-Pfad.
 - Chunk-Meshes tragen eigene Bounds pro Layer; Frustum-Culling unterscheidet Distance- und Bounds-Culls, `/debugbounds` zeichnet Mesh-Bounds.
+- Seit 2026-05-05 tragen Chunk-Meshes zusaetzlich `SectionPart`-Draw-Ranges mit `sectionY`, Layer, Index-Offset, Index-Count und Bounds; der Terrain-Renderer cullt diese Parts einzeln.
 - CPU-Mesh-Budget, GPU-Upload-Budget, sichtbare Chunk-Priorität, Preview-Nachziehen, Spieleraktions-Priorität und adaptive Budget-Senkung sind gekoppelt.
 - `BlockTextureAtlas` validiert Missing Textures, Duplicate-Mappings, Atlasgröße, Materialanzahl und UV-Rects; `/debugatlas` zeigt eine kompakte Report-Zeile.
 - Atlas-Tiles haben extrudiertes Pixel-Art-Padding, UV-Inset ist dokumentiert, Filter ist bewusst `nearest-no-mip`, und ein optionaler PNG-Debug-Export existiert.
+- Seit 2026-05-05 nutzt `chunk.frag` die Material-Roughness aus der LUT fuer einen leichten, datengetriebenen Material-Sheen auf Wasser, Glas, Eis, Ore- und Crystal-Materialien.
 
 Verifikation 2026-04-30: Mit `JAVA_HOME=/home/youngjibbit/.local/share/adventura-jdk/jdk-21.0.11+10` liefen die fokussierten Client-Tests erfolgreich: `./gradlew :client:test --no-daemon --max-workers=1 --rerun-tasks --tests 'dev.voxelgame.client.render.*' --tests 'dev.voxelgame.client.render.assets.*' --tests 'dev.voxelgame.client.GameSettingsTest' --tests 'dev.voxelgame.client.world.ClientWorldMeshInvalidationTest'`. Der vollständige Check `./gradlew buildGame --no-daemon --max-workers=1` ist ebenfalls grün.
 
@@ -187,6 +189,7 @@ Für Adventura: zuerst **1D Material LUT Texture** oder kleine **Material Metada
 
 - `RenderMaterial` definiert CPU-Materialdaten inkl. Layer, Flags, Alpha, Emissive, Cutout-Threshold, Style-Metadaten und Atlas-UVs.
 - `TerrainMaterialLut` lädt die Materialdaten als GPU-Metadata-Texture; Shader lesen per `materialIndex`.
+- `chunk.frag` liest die Roughness-Zeile der Material-LUT und wendet daraus `applyMaterialSheen(...)` an; neue glaenzende Materialien brauchen dadurch keine Shader-ID-Hacks.
 - Debug-HUD zeigt Material Count, LUT-Größe, fehlende Materialdaten und Atlas-Count.
 
 ---
@@ -337,10 +340,12 @@ Frustum Culling soll nicht immer ganze Welt-/Chunk-Höhe behandeln.
 
 - ~~Mesh Bounds pro Layer berechnen.~~
 - ~~optional Bounds pro Section berechnen.~~
+- ~~Section-Draw-Ranges pro Mesh erzeugen.~~ `ChunkMesh.SectionPart`
+- ~~Frustum-Culling pro Section-Draw-Range nutzen.~~ `VisibilityCollector.partCulling(...)`
 - ~~Frustum testet realistische Mesh Bounds.~~
 - ~~Debug Toggle für Bounds anzeigen.~~
 - ~~Metrics: culled by chunk und rendered layers.~~
-Hinweis 2026-05-01: Section-Bounds/Culling sind headless abgesichert (`sectionBoundsAroundUsesRadiusAndOnlyNonEmptySections`). Echte `culled by section`-Draw-Range-Metriken bleiben ein späteres Renderer-Upgrade: Dafür muss der Mesher SOLID/CUTOUT/TRANSLUCENT pro vertikaler Section oder Draw-Range ausgeben, z. B. über `SectionMeshPart` mit `sectionY`, `indexOffset`, `indexCount`, `Bounds` oder mehrere `ChunkMesh`-Objekte pro Section.
+Hinweis 2026-05-05: Der fruehere Renderer-Upgrade-Punkt ist umgesetzt: `ChunkMesher` gibt SOLID/CUTOUT/TRANSLUCENT pro vertikaler Section als `ChunkMesh.SectionPart(sectionY, layer, indexOffset, indexCount, bounds)` aus. `GpuChunkMesh.drawParts(...)` nutzt Element-Buffer-Byte-Offsets, und `TerrainRenderer` zeichnet nur die im Frustum sichtbaren Parts. HUD/Frame-Stats zeigen geladene, gerenderte und gekullte Section-Parts als `SPART R/C/L`.
 
 ### Akzeptanz
 
@@ -355,6 +360,9 @@ Hinweis 2026-05-01: Section-Bounds/Culling sind headless abgesichert (`sectionBo
 - `RenderPassStats` und `EngineFrameStats.Rendering` unterscheiden `culledByDistance` und `culledByBounds`.
 - `ClientWorld` liefert Section-/Vertical-Bounds-Stats; Debug-HUD zeigt Sections, Bounds, Cull-Distance und Cull-Bounds.
 - `/debugbounds` zeichnet die tatsächlichen Mesh-Bounds per Debug-Line-Renderer.
+- `ChunkMesher` baut sectionweise zusammenhaengende Index-Ranges; Greedy-Meshes werden pro Section begrenzt, damit Bounds und Draw-Ranges exakt bleiben.
+- `RenderPassStats`, `WorldRenderer.RenderStats` und `EngineFrameStats.Rendering` tragen Section-Part-Zaehler bis ins Debug-HUD.
+- `VisibilityCollectorTest`, `ChunkMesherTest`, `WorldRendererTest` und `EngineFrameStatsTest` sichern Section-Part-Culling, contiguous Index-Ranges, korrektes Culling an Section-Grenzen und Runtime-Diagnostics ab.
 
 ---
 
@@ -383,7 +391,7 @@ Meshing und Upload sollen nicht gegen FPS kämpfen.
 
 - `GameSettings` trennt Chunk-Count-Budget, CPU-Mesh-ms-Budget und GPU-Upload-ms-Budget.
 - Render-Presets setzen beide ms-Budgets; `/meshms n` und `/uploadms n` steuern sie zur Laufzeit.
-- `WorldRenderer` verarbeitet CPU-Mesh-Builds und GPU-Uploads getrennt, mit eigener Pending-GPU-Upload-Queue.
+- `WorldRenderer` verarbeitet CPU-Mesh-Builds und GPU-Uploads getrennt; `TerrainUploadQueue` besitzt Pending-Uploads, Priorisierung, Dedupe, Byte-Schaetzung und ms-Budget-Drain.
 - `ChunkBuildQueue` priorisiert urgent Spieleraktionen vor normalen/Preview-Rebuilds und sortiert danach nach Sicht-/Preview-Band.
 - `GameSettings.effectiveMeshBuildBudgetMilliseconds()` und `effectiveGpuUploadBudgetMilliseconds()` senken Budgets adaptiv, wenn der vorherige Frame teuer war.
 
@@ -419,6 +427,8 @@ Meshing und Upload sollen nicht gegen FPS kämpfen.
 
 ## P3.2 Pixel-Art-sichere Atlas-Regeln
 
+Status 2026-05-05: Drop-PNGs unter `assets/game/blocks/*.png` und legacy `assets/game/*.png` werden als temporaerer Migrationspfad fuer Block-Overrides akzeptiert, inklusive Alias-Mapping fuer `oak_*`/`spruce_*`/`ice_block`/Glass/Steinziegel/Farmland/Snowy-Grass auf Adventura-Blocknamen. `MAX_TILE_CONTENT_SIZE = 256` begrenzt grosse Drop-Texturen auf ein budgetierbares Runtime-Atlas-Tile; grosse Quellen werden beim Downsample bilinear normalisiert.
+
 ### Ziel
 
 Block-Faces dürfen keine sichtbaren Nähte, Bleeding oder transparente Ränder erzeugen.
@@ -433,6 +443,7 @@ Die Assets müssen vom Sprite perfrekt gerendert werden, momentan sind viele Ass
   - ~~oder mip mit extruded padding gegen shimmering~~
 - ~~Atlas-Filter global kontrollieren.~~
 - ~~Sprite-Sheets und Einzel-PNGs gleich behandeln.~~
+- ~~neutrale/weisse Hintergrundraender bei Einzel-PNGs vor dem Atlas-Upload entfernen.~~
 - ~~Debug Test für seam-heavy Blocks.~~
 
 ### Akzeptanz
@@ -447,7 +458,9 @@ Die Assets müssen vom Sprite perfrekt gerendert werden, momentan sind viele Ass
 - `UV_INSET_PIXELS = 0.5f` hält UVs bewusst innerhalb der Content-Fläche.
 - `ATLAS_FILTER_MODE = nearest-no-mip`; GL nutzt `GL_NEAREST` für Min/Mag.
 - Sheet-Slices und Einzel-PNGs gehen durch dieselbe `buildAtlas`-/`paddedTile`-Pipeline.
+- Einzelne Block-/Drop-PNGs durchlaufen `edge-neutral-trim`: verbundene neutrale/weisse Randpixel werden transparent gemacht und erst danach getrimmt, normalisiert, gepaddet und in den Atlas gelegt.
 - Tests prüfen Padding-Extrusion, Missing-Texture-Validation und Atlas-Reportdaten.
+- Verifikation 2026-05-05: `BlockTextureAtlasTest.removesConnectedNeutralEdgeBackgroundFromIndividualTextures` prueft, dass weisse Aussenraender verschwinden, aber eingeschlossene helle Pixel im eigentlichen Sprite erhalten bleiben.
 
 ---
 
@@ -850,12 +863,14 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 - `RenderPreset` definiert Low/Medium/High als konkrete Qualitätsverträge für Render Distance, Preview Radius, Mesh-/Upload-Budgets, Fog, AO, Soft Shadows, Bloom, Wasser-Modus und Particle Quality.
 - `/preset low|medium|high` und die Settings-UI wenden Presets an; manuelle Änderungen an Rendering-Kosten oder visuellen Toggles setzen den aktiven Zustand wieder auf `Custom`.
 - Low reduziert sichtbare Kosten über kleinere Distanzen/Budgets, deaktiviertes Bloom/AO/Soft-Shadows, einfaches Wasser und niedrigere Particle Quality. Medium/High erhöhen diese Werte stufenweise.
+- Particle Quality budgetiert jetzt zusaetzlich das Ambient-Particle-Source-Scanning; niedrige Partikelqualitaet reduziert damit nicht nur Anzahl, sondern auch World-Scan-Frequenz.
 - Debug-HUD und Settings-Panel zeigen `PRESET LOW|MEDIUM|HIGH|CUSTOM`, damit Performance-Smokes eindeutig reproduzierbar sind.
 
 ### Verifikation 2026-05-01
 
 - `GameSettingsTest` prüft Preset-Anwendung, Custom-Overrides, Alias-Parsing und monotone Kostenstaffelung von Low zu High.
 - Fokussiert grün: `./gradlew :client:test --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
+- Fokussiert gruen 2026-05-05: `./gradlew.bat :client:test --tests dev.voxelgame.client.GameSettingsTest --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=asset_edge_cleanup_1`.
 
 ### Akzeptanz
 
@@ -870,6 +885,7 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 ## Unit Tests
 
 - ~~Material LUT mapping.~~ `BlockRenderPropertiesTest`, `TerrainLightingShaderContractTest`.
+- ~~Material roughness/sheen contract.~~ `BlockRenderPropertiesTest.reflectiveBlocksExposeLowerRoughnessForShaderSheen`, `TerrainLightingShaderContractTest`.
 - ~~missing material fallback.~~ `BlockRenderPropertiesTest`, `BlockTextureAtlasTest`.
 - ~~atlas UV rect validity.~~ `BlockTextureAtlasTest`.
 - ~~transparent sort order.~~ `WorldRendererTest`.
@@ -895,12 +911,14 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 - `RenderingSmokeCoverageTest` hält die Rendering-Smoke-Anker in `WORLD_SMOKE_TESTS.md` fest: Presets, Shader-Reload, Debug Views, Wasser, Cutout, Glow, Campfire/Lantern, UI/HUD Scale und Long Explore.
 - `WORLD_SMOKE_TESTS.md` enthält eine eigene Rendering Preset Matrix für Low/Medium/High, die Debug-HUD, Render-Kosten, Wasser, Cutout, Glow und Chunk-Unload zusammen prüft.
 - Die automatisierten Rendering-Tests decken Material-LUT, Atlas-Validation, Layer-Splitting, Greedy-Meshing, Light/AO-Vertexdaten, transparente Sortierung, Shader-Contracts, Render-Presets und HUD/Layout-Verträge ab.
+- 2026-05-05: `ChunkRenderLayerPresence` verhindert leere Layer-Builds fuer Chunks ohne Cutout/Translucent/Solid-Inhalt; Preview-Generation markiert nur bereits geladene Nachbar-Chunks dirty, damit neue Chunks keine Remesh-Kaskade ausloesen.
 
 ### Verifikation 2026-05-01
 
 - Fokussiert grün: `./gradlew :client:test --tests dev.voxelgame.client.render.RenderingSmokeCoverageTest --tests dev.voxelgame.client.render.BlockRenderPropertiesTest --tests dev.voxelgame.client.render.ChunkMesherTest --tests dev.voxelgame.client.render.LightDebugInfoTest --tests dev.voxelgame.client.render.TerrainLightingShaderContractTest --tests dev.voxelgame.client.render.WorldRendererTest --tests dev.voxelgame.client.render.assets.BlockTextureAtlasTest --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.GameClientUiLayoutTest`.
 - Fokussiert grün: `./gradlew :common:test --tests dev.voxelgame.common.world.light.LightEngineTest`.
-- Hinweis: `ClientWorldMeshInvalidationTest` wurde separat angestoßen, scheitert aktuell aber nach der Testausführung im Gradle-Runner mit `NoSuchFileException` auf `client/build/test-results/test/binary/in-progress-results-generic*.bin`. Die Long-Explore-/Chunk-Unload-Abdeckung bleibt daher als Manual-Smoke in `WORLD_SMOKE_TESTS.md` verankert, bis der Runner-Fehler stabil eingegrenzt ist.
+- ~~Hinweis: `ClientWorldMeshInvalidationTest` wurde separat angestoßen, scheitert aktuell aber nach der Testausführung im Gradle-Runner mit `NoSuchFileException` auf `client/build/test-results/test/binary/in-progress-results-generic*.bin`.~~ 2026-05-05 erneut stabil gruen mit eigener Test-Run-ID.
+- Fokussiert gruen: `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --tests dev.voxelgame.client.GameClientUiLayoutTest --no-daemon --max-workers=1 -PadventuraTestRunId=world_chunk_melee_ui_3`.
 
 ## Akzeptanz für Rendering-Kern
 
@@ -908,7 +926,7 @@ Adventura soll nicht neutral/grau wirken, sondern warm, weich und lesbar.
 - keine neuen hardcoded Shader-IDs.
 - Wasser ist lesbar und performant.
 - Render Debug Views helfen effektiv.
-- Chunk Loading erzeugt keine großen Stutter.
+- ~~Chunk Loading erzeugt weniger vermeidbare Stutter durch Preview-Dirty-Dedupe und Layer-Skip-Meshing.~~
 - Low-End Preset ist wirklich günstiger.
 - Visual Style bleibt cozy und eigenständig.
 
@@ -922,7 +940,7 @@ Dieser Block ergänzt die bisherige Rendering-Basis um die Core-Bestandteile, di
 
 ## P10.1 Render Pipeline Module
 
-Arbeitsstatus 2026-05-01: 🟠 P10.1a umgesetzt. `RenderPassExecutor`, `RenderStateGuard`, `TerrainRenderer` und `VisibilityCollector` sind als kleiner Runtime-Schnitt aus `WorldRenderer` extrahiert; `WaterRenderer` und `SelectionRenderer` bleiben als naechste P10.1b-Slices offen.
+Arbeitsstatus 2026-05-05: 🟠 P10.1b fortgefuehrt. `RenderPassExecutor`, `RenderStateGuard`, `TerrainRenderer`, `VisibilityCollector` und `TerrainUploadQueue` sind als Runtime-Schnitte aus `WorldRenderer` extrahiert; `WaterRenderer` und `SelectionRenderer` bleiben als naechste Slices offen.
 
 Erledigt: 2026-05-01 P10.1a Runtime-Pass-Schnitt.
 Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.render.RenderPipelineModuleTest --tests dev.voxelgame.client.render.RenderPassPlanTest --tests dev.voxelgame.client.render.WorldRendererTest --tests dev.voxelgame.client.EngineFrameStatsTest`; `./gradlew :client:test --no-daemon`; `./gradlew buildGame --no-daemon`.
@@ -931,11 +949,11 @@ Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.r
 
 - `WorldRenderer` weiter in kleinere Verantwortungen schneiden:
   - ~~`TerrainRenderer`~~
-  - `TerrainUploadQueue`
+  - ~~`TerrainUploadQueue`~~
   - ~~`RenderPassExecutor`~~
   - ~~`RenderStateGuard`~~
   - ~~`VisibilityCollector`~~
-  - `WaterRenderer`
+  - `WaterRenderer` (Vorarbeit 2026-05-05: `ChunkTerrainCache.FluidSurface` liefert Shore-/Depth-/Foam-Daten)
   - `SelectionRenderer`
 - ~~`RenderPassPlan` von Teststruktur zu Runtime-Vertrag ausbauen.~~
 - Render-State-Änderungen messbar machen:
@@ -946,6 +964,12 @@ Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.r
   - texture bind.
 - ~~RenderContext unveränderlich halten und pro Pass keine versteckten Globals verwenden.~~
 
+### Erreicht 2026-05-05
+
+- `TerrainUploadQueue` kapselt Pending-GPU-Uploads, Kamera-Prioritaet, Chunk-Dedupe, Byte-Schaetzung und ms-Budget-Drain.
+- Pending Uploads werden bei Chunk-Release gecancelt, damit entladene Chunks nicht spaeter wieder auf der GPU erscheinen.
+- Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.render.TerrainUploadQueueTest --tests dev.voxelgame.client.render.WorldRendererTest --no-daemon --max-workers=1`.
+
 ### Akzeptanz
 
 - Neue Passes können ohne `WorldRenderer`-Explosion ergänzt werden.
@@ -953,6 +977,8 @@ Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.r
 - Frame-Stats zeigen Kosten pro Pass.
 
 ## P10.2 Sprite Rendering und Billboards
+
+Status 2026-05-05: Item-Icons koennen individuelle PNG-Dateien aus `textures/item/`, `minerals/`, `blocks/`, `textures/block/` oder dem Root-Drop-Folder bevorzugen. Root-Drop-Assets fuer `iron_sword`, `platin_sword`, `sapphire_sword` und `titan_sword` werden ueber die Item-Candidates erkannt, mit Sheet-Fallbacks fuer die neuen Mineral-Schwerter. Grosse Drop-Texturen werden fuer UI-Icons auf `INDIVIDUAL_ITEM_MAX_TEXTURE_SIZE = 128` normalisiert; die einheitliche Sprite-Atlas-Strategie fuer Drops, Entities und Partikel bleibt offen.
 
 ### Offen
 
@@ -965,6 +991,7 @@ Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.r
   - Decals/Break Overlay.
 - `ParticleSpriteAtlas` analog zum Block-Atlas planen.
 - Sprite-Pivots, UV-Rects, Tint, Blend-Mode und Pixel-Snap dokumentieren.
+- ~~Item-Icons koennen individuelle PNGs vor Sheet-Slices bevorzugen.~~
 - Item- und Entity-Icons nicht ad hoc aus einzelnen Sheets sampeln.
 - Instancing für viele gleiche Sprites evaluieren.
 
@@ -1025,3 +1052,150 @@ Verifikation: `./gradlew :client:test --no-daemon --tests dev.voxelgame.client.r
 - Rendering-PRs nennen mindestens einen Test oder Smoke.
 - Shader-Änderungen brechen Uniform-Verträge nicht still.
 - GPU-Ressourcen bleiben bei Erkundung stabil.
+
+---
+
+# P11 - Finished Game Rendering Roadmap 2026-05-05
+
+Owner: Lead Engine Developer, mit UI/UX fuer Screens/HUD und Lead Game Design Engineer fuer biome identity.
+
+Rendering ist bereits solide fuer Alpha: Material LUT, BlockTextureAtlas, water flags, render passes, debug views, particles, entity renderer, performance presets and smoke coverage exist. Fuer ein fertiges Spiel fehlen die visuellen Systeme, die Core Mechanics klar lesbar machen: world events, stations, creatures, ruins, base comfort and long-session stability.
+
+## P11.1 Visual Gameplay Readability
+
+### Aufgaben
+
+- Interaction readability:
+  - selected block face.
+  - mining progress on exact face.
+  - wrong-tool feedback.
+  - station interaction highlight.
+  - loot marker/rare-find subtle cue.
+- Station readability:
+  - active campfire state.
+  - cooking pot active/ready/blocked cues.
+  - forge heat/active/ready cues.
+  - storage open/locked/full cues.
+- Creature readability:
+  - idle/graze/flee/follow/agitated states.
+  - feedable/favorite-food subtle icon or HUD cue.
+  - rare danger windup must be visible before damage.
+- Exploration readability:
+  - structure bounds not visible in normal mode, but landmarks readable.
+  - cave exits and glow resources visible in low light.
+  - map/ruin clues use world-space and journal-space feedback.
+
+### Akzeptanz
+
+- Players can tell what is interactable without reading debug text.
+- Dangerous states are telegraphed visually before server damage.
+
+## P11.2 Weather, Atmosphere And World Events
+
+### Aufgaben
+
+- Weather state rendering:
+  - clear.
+  - light rain optional.
+  - fog/mist in mire/lakeside.
+  - snow/frost atmosphere.
+  - thunder/lightning only with gameplay-safe brightness.
+- Day/night:
+  - keep cozy night readable near campfire/lantern/glow resources.
+  - darkness should guide, not hide required resources.
+  - debug view for time/brightness/fog.
+- Biome atmosphere:
+  - color pipeline per biome family.
+  - fog distance/scattering per biome.
+  - optional ambient particles by biome.
+- WorldEvent integration:
+  - renderer consumes server/world state, not separate client random.
+
+### Akzeptanz
+
+- Atmosphere supports exploration routes and status effects.
+- Low preset can disable expensive weather layers.
+
+## P11.3 Sprite, Particle And Decal Pipeline
+
+### Aufgaben
+
+- Unified sprite atlas:
+  - UI icons.
+  - item drops.
+  - held items.
+  - particles.
+  - entity billboard fallback.
+  - decals/break overlay.
+- Particle emitters:
+  - campfire smoke/sparks.
+  - cooking steam.
+  - forge embers.
+  - harvesting.
+  - rare loot glint.
+  - status effects.
+  - projectile impact.
+- Decals/overlays:
+  - block break.
+  - projectile hit.
+  - footprint/hint optional.
+- Diagnostics:
+  - sprite batches.
+  - particle count by emitter.
+  - atlas missing sprites.
+  - per-preset particle budget.
+
+### Akzeptanz
+
+- New item/particle visuals do not add renderer-specific special cases.
+- Effects are budgeted and visible in debug stats.
+
+## P11.4 Shadows, Depth And Post Stack
+
+### Aufgaben
+
+- Decide alpha-final shadow tier:
+  - stay with vertex/side soft shading.
+  - add cheap terrain/contact shadows.
+  - shadow map only if measured and fallback-safe.
+- Framebuffer/post:
+  - central framebuffer abstraction.
+  - bloom/glow pass.
+  - exposure/gamma/color grading.
+  - screenshot/debug capture.
+- Depth uses:
+  - selection/outline correctness.
+  - particles sorted or depth-aware enough.
+  - water/translucency stability.
+
+### Akzeptanz
+
+- Visual polish improves readability without breaking Low preset.
+- Post and shadows can be disabled cleanly.
+
+## P11.5 Long-Session GPU Stability
+
+### Aufgaben
+
+- Track:
+  - terrain mesh count/bytes.
+  - entity buffers.
+  - particle buffers.
+  - textures/atlases.
+  - framebuffers.
+  - shader programs.
+- Long explore smoke:
+  - start at spawn.
+  - explore several biomes.
+  - return to base.
+  - verify mesh release and atlas stability.
+  - verify no shader/resource leak.
+- Add debug capture:
+  - render stats snapshot.
+  - resource tracker snapshot.
+  - missing material/sprite report.
+
+### Akzeptanz
+
+- Long exploration does not grow GPU resources without bound.
+- Rendering regressions can be attached to a measurable budget.

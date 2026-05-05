@@ -270,10 +270,16 @@ Comfort soll Basebuilding belohnen, aber nicht erzwingen. Adventura bleibt cozy,
 
 ## Offen
 
-- Iron Tools vollständig einführen.
+- ~~Iron Tools vollständig einführen.~~ Iron Axe/Pickaxe waren bereits vorhanden; `voxel:iron_sword` ergaenzt den fehlenden Waffen-Slot inklusive Durability, Workbench-Recipe und Weapon-Stats.
 - Repair-System einbauen.
 - härtere Late-Game Nodes.
 - Tooltips mit Effective Against.
+
+## Erreicht 2026-05-05
+
+- Platin-, Sapphire- und Titan-Schwerter erweitern die Forge-Progression als langlebige Mineral-Waffen mit klarer Damage-/Cooldown-/Knockback-Staffelung.
+- Recipes: Iron Sword am Workbench, Platin/Sapphire/Titan Swords an der Forge; `voxel:platinum_sword` und `voxel:titanium_sword` bleiben als Aliase kompatibel.
+- Verifikation: `ItemRegistryDataTest.mineralSwordItemsAreDurableWeaponsWithCanonicalAliases`, `CraftingRecipeTest.mineralSwordsExtendWorkbenchAndForgeProgression`, `WeaponItemRulesTest`.
 
 ## Repair
 
@@ -571,6 +577,11 @@ Combat soll nicht der Kern sein, aber leichte Gefahren können Ruinen/Exploratio
 - Gegner selten und klar telegraphed.
 - Cozy-Spielgefühl nicht zerstören.
 
+## Erreicht 2026-05-05
+
+- `WeaponItemRules` bereitet das Damage-System fuer leichte Waffen vor: Messer sind schnell/niedrig, Iron/Platin/Sapphire/Titan Swords staffeln Damage, Cooldown und Knockback.
+- Offen bleibt die serverautoritative `MeleeAttackAction` mit Range, Friendly-Creature-Regeln, Invulnerability-Window und GameplayEvent-Feedback.
+
 ## Akzeptanz
 
 - Adventure bekommt Spannung.
@@ -820,3 +831,349 @@ Dieser Block ergänzt die reine Feature-Liste um die Systeme, die Adventura als 
 - ~~Status Effects sind speicherbar, testbar und fuer HUD erklaerbar.~~
   Erledigt: 2026-05-02 - SaveState, PacketCodec und Client-Feedback haben fokussierte Tests.
   Verifikation: Common-/Client-/Server-Testbefehle aus P9.6.
+
+---
+
+# P10 - Finished Game Core Mechanics Roadmap 2026-05-05
+
+Owner: Lead Game Design Engineer, mit Project Manager fuer Scope und Main Networking Dev fuer Autoritaet/Save.
+
+Adventura hat schon viele Alpha-Contracts. Dieser Block plant die noch fehlenden Core Mechanics fuer ein fertiges Spiel: nicht nur mehr Items, sondern verbindende Systeme, die aus Sammeln, Bauen, Kochen, Komfort, Kreaturen, Exploration und Ruinen einen vollstaendigen Spielbogen machen.
+
+## P10.0 Bestandsaufnahme aus Code und Docs
+
+Vorhanden:
+
+- Early-to-ruin Milestone-Kette in `AlphaMilestones`.
+- Items, Blocks, Recipes, Tool-Tiers, Foods, Stations, Comfort, StatusEffects and ContentTags.
+- Biome Progression Cards, Feature Tables, Structures, LootTables and Journal/Goal definitions.
+- Peaceful creature design, favorite-feed rules, friendship save fields and first server-side feed handling.
+- Server-side damage, projectiles, entity drops, storage, campfire, cooking and sleep basics.
+
+Fehlt:
+
+- Server-Producer, die alle Contracts wirklich freischalten: milestones, goals, journal entries, recipe history, structure/creature discovery, map fragments.
+- A complete station loop: active jobs, fuel/heat, output claims, repair/upgrades and consistent UI/server rejects.
+- A satisfying base loop beyond raw comfort scan.
+- AI/encounter mechanics with readable behavior and budgeted simulation.
+- A defined midgame-to-endgame arc after first ruin.
+- Farming/fishing/gardening or equivalent quiet side loops, if the cozy identity needs more repeatable goals.
+- Economy/trading/NPCs are only implicit through village markers; no finished system exists yet.
+
+## P10.1 Player Progression Runtime
+
+### Ziel
+
+Player progress should be a server-owned state machine, not scattered UI hints.
+
+### Aufgaben
+
+- Define `PlayerProgressionState` from existing save fields:
+  - achieved milestones.
+  - completed goals.
+  - discovered recipes.
+  - discovered biomes.
+  - discovered structures.
+  - discovered creatures.
+  - journal entries.
+  - map fragments.
+  - rare-find flags.
+- Add server producers:
+  - first pickup.
+  - first food eaten.
+  - first recipe available.
+  - first tool crafted.
+  - campfire placed/lit.
+  - storage opened.
+  - workbench used.
+  - cooking pot/forge ready.
+  - comfort threshold reached.
+  - first ruin discovered.
+  - rare loot obtained.
+- Add `GameplayEvent` types or payloads for:
+  - milestone unlocked.
+  - goal completed.
+  - journal entry unlocked.
+  - recipe discovered.
+  - structure discovered.
+  - creature discovered.
+  - map fragment found.
+- Ensure every unlock is idempotent and save-backed.
+
+### Akzeptanz
+
+- Reconnect/restart preserves progress.
+- Client cannot grant itself journal, recipe, rare-find or milestone progress.
+- Journal/HUD can display the next useful hint from server-owned state.
+
+## P10.2 Moment-To-Moment Interaction Loop
+
+### Ziel
+
+Every core interaction should have a clear feel, cost, reward, feedback and authoritative validation.
+
+### Fehlende oder unfertige Mechanics
+
+- Gathering:
+  - better affordances for harvestable plants, stumps, clay, reeds, glow resources.
+  - repeated harvest cooldowns or regrowth rules where appropriate.
+  - inventory-full and wrong-tool feedback from server results.
+- Tools:
+  - durability repair.
+  - tool tier gates beyond current basic levels.
+  - bonus drops tuned by tool tier, not hidden hard switches.
+  - clear effective-tool UI.
+- Food:
+  - raw/cooked/stew/tea roles.
+  - comfort/rested/status interactions.
+  - spoiled or freshness is optional and should be avoided unless it adds cozy planning.
+- Movement/adventure:
+  - cold/wet/hot should change route planning without punishing exploration.
+  - caves/ruins need readable danger tells and safe fallback exits.
+- Projectiles/combat:
+  - actual bow/ammo path if combat expands.
+  - ~~server-owned melee range/damage/cooldown/durability/drop rules.~~ `MeleeAttackRules` and server entity attack handling now bind held items/tools/hands into authoritative entity damage.
+  - melee windup/cooldown feedback.
+  - creature no-kill rules for cozy species.
+  - rare danger drops balanced so combat is not the main economy.
+
+### Akzeptanz
+
+- Every interaction answers: why do it, what can fail, what does the server change, what feedback appears.
+- Repeated actions do not spam feedback or create grind loops.
+- The first 30 minutes have a clear rhythm without a tutorial wall.
+
+## P10.3 Basebuilding And Comfort Loop
+
+### Ziel
+
+Basebuilding should be useful, warm and readable. Comfort must become a set of explainable facts, not just a number.
+
+### Aufgaben
+
+- Define `BaseFacts`:
+  - nearest active campfire.
+  - storage nearby.
+  - sleeping mat sheltered.
+  - workbench/cooking/forge nearby.
+  - light level or light source.
+  - comfort source diversity.
+  - nearby friendly creatures.
+  - danger-free radius.
+- Define comfort categories:
+  - warmth.
+  - rest.
+  - storage/order.
+  - decoration.
+  - light.
+  - nature/creatures.
+  - food/cooking.
+- Add diminishing returns:
+  - repeated identical decoration should help less than diverse sources.
+  - keep the cap understandable.
+- Add base benefits:
+  - rested/cozy.
+  - slower hunger drain.
+  - faster stamina regen.
+  - safer sleep.
+  - gentle creature visits.
+  - journal/home marker.
+- Add smoke:
+  - build small base.
+  - add storage/campfire/sleeping mat/decor.
+  - sleep through night.
+  - save/reload and verify BaseFacts.
+
+### Akzeptanz
+
+- Players can improve a home without needing perfect decoration math.
+- Comfort feedback names one concrete next improvement.
+- Base benefits never require grind or daily chores.
+
+## P10.4 Station And Crafting Progression
+
+### Ziel
+
+Stations should feel like meaningful tools in the world, not just recipe filters.
+
+### Station Requirements
+
+- Inventory:
+  - starter recipes.
+  - missing ingredient hints.
+  - first-tool unlock path.
+- Campfire:
+  - fuel.
+  - active/inactive/burned out.
+  - cooking slot or simple queue.
+  - warmth/comfort.
+  - charcoal/pottery/copper starter role.
+- Workbench:
+  - assembly recipes.
+  - repair/upgrade entry point.
+  - recipe categories and station radius.
+- Cooking Pot:
+  - water/container requirement.
+  - soups/stews/tea/jam.
+  - better food and status/comfort utility.
+- Forge:
+  - fuel/heat.
+  - ore -> ingot.
+  - tool tiers.
+  - ruin seal / ancient binding.
+- Ancient Altar:
+  - future sealed ruin interactions.
+  - one-shot lore and map unlocks.
+  - offerings accepted/rejected by server.
+
+### Missing Mechanics To Add
+
+- Recipe unlock rules from discoveries and station access.
+- Active station jobs with progress and output claims.
+- Repair and upgrade recipes.
+- Station-specific reject reasons:
+  - no station.
+  - wrong station.
+  - no fuel/heat/water/container.
+  - stale revision.
+  - missing ingredient.
+  - output blocked.
+  - inventory full.
+- Balancing report:
+  - average resources to reach campfire/workbench/cooking pot/forge.
+  - station recipes per tier.
+  - fuel availability per biome.
+
+### Akzeptanz
+
+- A player understands why each station matters.
+- Multiplayer cannot duplicate station outputs.
+- Save/load preserves active station state.
+
+## P10.5 Creatures, Friendship And Encounters
+
+### Ziel
+
+Creatures should make the world feel alive and sometimes useful, while rare danger adds tension without turning Adventura into a combat-first game.
+
+### Cozy Creature Mechanics
+
+- Observe:
+  - discover creature.
+  - journal entry.
+  - small behavior hint.
+- Feed:
+  - favorite food only.
+  - daily cap.
+  - cooldown.
+  - server-owned trust step.
+- Trust:
+  - smaller flee radius.
+  - occasional hint.
+  - base comfort contribution.
+  - peaceful resource hook only where designed.
+- Resource:
+  - shed/collect locks.
+  - no kill incentive for friendly creatures.
+  - deterministic but capped drops where death drops exist.
+
+### Rare Danger Mechanics
+
+- Dangers should be:
+  - rare.
+  - biome/structure-bound.
+  - visibly telegraphed.
+  - avoid starter bases.
+  - budgeted by encounter markers.
+- Add:
+  - windup state.
+  - agitated state.
+  - disengage/flee/reset.
+  - status effect source if needed.
+  - clear HUD/audio/particle warning.
+
+### Akzeptanz
+
+- Friendly creatures are not grind machines.
+- Rare dangers create exploration texture, not mandatory farming.
+- Creature state is save/sync safe enough for multiplayer.
+
+## P10.6 Exploration, Ruins And Endgame Arc
+
+### Ziel
+
+The current alpha ends at first ruin/rare find. A finished game needs a longer but still cozy arc.
+
+### Proposed Arc
+
+1. Safe camp and first tools.
+2. Food and fire.
+3. Storage, comfort and workbench.
+4. Lakeside/cooking route.
+5. Highlands/forge route.
+6. Mushroom grove/old ruins discovery.
+7. First rare find and journal/map fragment.
+8. Sealed ruin clue.
+9. Ancient altar restoration.
+10. Multi-biome restoration chain.
+11. Final cozy-adventure goal: restore a small network of ancient lights/waypoints, not defeat a final boss.
+
+### Missing Content Systems
+
+- Caves or underground pockets:
+  - ore route.
+  - glow resource route.
+  - safe exit readability.
+  - smoke seeds.
+- Sealed ruins:
+  - generated marker.
+  - required key/seal/fragment.
+  - one-shot reward.
+  - journal/lore page.
+- Map fragments:
+  - point to biome/structure family.
+  - no exact GPS unless debug mode.
+- Ancient lights/waypoints:
+  - late-game comfort/exploration reward.
+  - possible fast-travel only after careful scope decision.
+- Optional side loops:
+  - gardening/herb planter regrowth.
+  - fishing/lakeside quiet loop.
+  - simple trading/NPC village loop.
+
+### Akzeptanz
+
+- Late game grows from early systems instead of replacing them.
+- Ruins reward curiosity and preparation.
+- The final objective fits cozy adventure identity.
+
+## P10.7 Balancing And Player Experience Gates
+
+### Aufgaben
+
+- First-session smoke:
+  - can player identify starter resources.
+  - can player craft first tool.
+  - can player light campfire.
+  - can player understand hunger and comfort.
+  - can player find next route.
+- Progression budgets:
+  - max minutes to first tool.
+  - max minutes to campfire.
+  - max minutes to workbench route clue.
+  - max minutes to cooking pot route clue.
+  - max minutes to first ruin clue.
+- Resource sanity:
+  - no required item appears only in rare biome.
+  - every station ingredient has at least two discoverable hints or route sources.
+  - rare loot is one-shot protected.
+- Feedback sanity:
+  - no repeated warning spam.
+  - all rejects have player-readable text.
+  - journal hints do not become quest spam.
+
+### Akzeptanz
+
+- The game can be played by someone who did not read the docs.
+- Core loop can be tested with repeatable seeds.
+- Balancing changes have measurable before/after notes.

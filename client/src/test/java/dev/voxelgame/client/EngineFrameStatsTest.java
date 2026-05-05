@@ -95,7 +95,10 @@ class EngineFrameStatsTest {
                 4096L,
                 64,
                 64,
-                16384L
+                16384L,
+                21,
+                15,
+                6
         );
         EntityRenderer.RenderStats entityStats = new EntityRenderer.RenderStats(3, 2, 12, 12, 4);
         ParticleSystem.RenderStats particleStats = new ParticleSystem.RenderStats(33, 4.5, 0.25, 2L, 1, 18);
@@ -204,7 +207,7 @@ class EngineFrameStatsTest {
         assertEquals(7.5, stats.phases().renderTotalMilliseconds(), 0.001);
         assertEquals(world.dirtyChunkCount(), stats.jobs().chunkMesh().pendingJobs());
         assertEquals(9L, stats.jobs().chunkGenerate().completedJobs());
-        assertEquals(9L, stats.jobs().chunkLight().completedJobs());
+        assertEquals(1L, stats.jobs().chunkLight().completedJobs());
         assertEquals(4, stats.jobs().saveWrite().pendingJobs());
         assertEquals(1, stats.jobs().saveWrite().runningJobs());
         assertEquals(8L, stats.jobs().saveWrite().completedJobs());
@@ -226,6 +229,9 @@ class EngineFrameStatsTest {
         assertEquals(4096L, stats.rendering().gpuUploadBytes());
         assertEquals(64, stats.rendering().atlasWidth());
         assertEquals(16384L, stats.rendering().atlasBytes());
+        assertEquals(21, stats.rendering().loadedSectionParts());
+        assertEquals(15, stats.rendering().renderedSectionParts());
+        assertEquals(6, stats.rendering().culledSectionParts());
         assertEquals(4, stats.rendering().debugChunkBorders());
         assertEquals(2, stats.rendering().debugMeshBounds());
         assertEquals(1, stats.rendering().debugSectionBounds());
@@ -255,6 +261,7 @@ class EngineFrameStatsTest {
         assertEquals("Custom", stats.budgets().profile());
         assertEquals(1000.0 / 60.0, stats.budgets().frameTargetMilliseconds(), 0.001);
         assertEquals(16.6 / (1000.0 / 60.0), stats.budgets().frameUsage(), 0.001);
+        assertEquals(1.5, stats.budgets().chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(10.0, stats.budgets().meshingBudgetMilliseconds(), 0.001);
         assertEquals(8.0, stats.budgets().gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(4096.0 / 2_000_000.0, stats.budgets().gpuUploadBytesUsage(), 0.001);

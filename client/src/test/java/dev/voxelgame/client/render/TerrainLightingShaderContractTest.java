@@ -23,9 +23,12 @@ class TerrainLightingShaderContractTest {
         assertTrue(shader.contains("float terrainLight"));
         assertTrue(shader.contains("float aoForLight"));
         assertTrue(shader.contains("float bloomAmount"));
+        assertTrue(shader.contains("float materialRoughness"));
+        assertTrue(shader.contains("vec3 applyMaterialSheen"));
         assertTrue(shader.contains("smoothstep(threshold, 1.0"));
         assertTrue(shader.contains("clamp(glowContribution, vec3(0.0), vec3(0.42))"));
         assertTrue(shader.contains("animatedFluid()"));
+        assertTrue(shader.contains("lit = applyMaterialSheen"));
         assertTrue(shader.contains("glowContribution"));
         assertTrue(shader.contains("uWeatherFlash, 0.0, 1.0"));
     }

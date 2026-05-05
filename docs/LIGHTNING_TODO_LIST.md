@@ -78,6 +78,7 @@ Adventura braucht:
 
 - `LightRules` definiert zentrale Sky-Light-Reduktion und Occlusion-Typen: Opaque blockt vollständig, Water/Ice reduzieren leicht, Cutout bleibt offen, Leaves dämpfen stärker.
 - `LightEngine` nutzt diese Regeln beim Sky-Light-Seeding und bei der Propagation, damit Wasser/Leaves nicht wie reine Luft wirken.
+- Seitliche Sky-Light-Propagation queued nur noch outgoing light nach `LightRules`, sodass transparente Blöcke auch unter Überhängen korrekt dämpfen.
 - `LightEngineTest` deckt offene Spalten, Roofs, Höhlen, Überhänge, Wasser, Cutout, Leaves und Chunkgrenzen ab.
 
 ### Akzeptanz
@@ -153,6 +154,26 @@ Komplette Light Rebuilds sind teuer, wenn nur ein Campfire/Lantern geändert wir
 - `LightEngine.updateBlockLight(...)` führt Add-/Remove-Queues für Block-Light und liefert betroffene Chunks plus Fallback-Signal.
 - `ClientWorld.applyBlock(...)` nutzt Incremental Block-Light, rebuildet Sky-Light nur bei geänderten Sky-Occlusion-Regeln und zeichnet Lighting-Zeit weiter in `ChunkBuildQueue` auf.
 - Betroffene Light-Chunks werden zusätzlich dirty markiert; Geometrieänderungen behalten die bestehenden Neighbor-Invalidierungen.
+
+### Umsetzung 2026-05-05
+
+- `LightEngine.rebuildChunkLighting(...)` kann mehrere Chunk-Zentren als Batch neu beleuchten und fasst deren betroffene Neighbor-Region zusammen.
+- Block-Light-Sources werden fuer Batch-Rebuilds einmal aus den betroffenen Chunks gesammelt; Propagation bleibt auf geladene betroffene Chunk-Positionen begrenzt.
+- `ClientWorld` beleuchtet neu generierte Preview-Chunks pro Frame als Batch und meldet dafuer einen Light-Job, damit Chunk-Loading weniger Light-Spikes erzeugt.
+- Affected-Chunk-Aufloesung nutzt direkte 3x3-Nachbarschaftslookups statt einen Scan ueber alle geladenen Chunks.
+- Sky-Light-Rebuilds setzen direkte Columns ohne Propagation-Queue und erzeugen Boundary-Seeds nur dort, wo ein horizontaler Nachbar wirklich heller werden kann.
+- Block-Light-Emitter-Scans laufen sectionweise und ueberspringen leere Sections; hohe Chunks mit viel Luft kosten dadurch beim Rebuild deutlich weniger.
+- `LightEngine.WorkStats` dokumentiert die Rebuild-Arbeit fuer Tests und kuenftige Profiling-/HUD-Anbindung.
+
+### Verifikation 2026-05-05
+
+- `LightEngineTest.batchRebuildLightsMergedChunkRegionOnce`
+- `LightEngineTest.affectedChunkLookupIgnoresFarLoadedChunksWithoutScanningTheWorld`
+- `LightEngineTest.blockLightEmitterScanSkipsEmptySectionsInTallChunks`
+- `LightEngineTest.openSkyLightSeedingAvoidsPropagationQueueForTallAirChunks`
+- `LightEngineTest.skyLightBoundarySeedingTargetsOnlyColumnsThatCanImproveNeighbors`
+- `LightEngineTest.lateralSkyLightPropagationAppliesTransparentBlockAttenuation`
+- `ClientWorldMeshInvalidationTest.previewGenerationCanBeBudgetedAcrossFrames`
 
 ### Akzeptanz
 
@@ -324,7 +345,7 @@ Weather-Lightning bleibt bewusst getrennt vom normalen Lighting-System: keine Bl
 - Block Light add.
 - Block Light remove.
 - Chunk boundary propagation.
-- Full rebuild fallback.
+- ~~Full rebuild fallback.~~ Batch-Fallbacks rebuilden nur die zusammengefasste betroffene geladene Chunk-Region.
 
 ## Manual Smoke Tests
 

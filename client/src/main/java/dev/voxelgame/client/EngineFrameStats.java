@@ -237,7 +237,10 @@ public record EngineFrameStats(
                         Math.max(0, renderedChunkBorderDebugChunks),
                         Math.max(0, renderedMeshBoundsDebugBoxes),
                         Math.max(0, renderedSectionBoundsDebugBoxes),
-                        safeRenderStats.renderStateChanges()
+                        safeRenderStats.renderStateChanges(),
+                        safeRenderStats.loadedSectionParts(),
+                        safeRenderStats.renderedSectionParts(),
+                        safeRenderStats.culledSectionParts()
                 ),
                 new Entities(
                         Math.max(0, visibleEntitySnapshots),
@@ -545,10 +548,19 @@ public record EngineFrameStats(
             int debugChunkBorders,
             int debugMeshBounds,
             int debugSectionBounds,
-            int renderStateChanges
+            int renderStateChanges,
+            int loadedSectionParts,
+            int renderedSectionParts,
+            int culledSectionParts
     ) {
+        public Rendering {
+            loadedSectionParts = Math.max(0, loadedSectionParts);
+            renderedSectionParts = Math.max(0, renderedSectionParts);
+            culledSectionParts = Math.max(0, culledSectionParts);
+        }
+
         static Rendering empty() {
-            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0L, 0, 0L, 0, 0, 0, 0, 0L, 0, 0, 0, 0, 0);
+            return new Rendering(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0L, 0L, 0, 0L, 0, 0, 0, 0, 0L, 0, 0, 0, 0, 0, 0, 0, 0);
         }
     }
 
@@ -731,14 +743,17 @@ public record EngineFrameStats(
                 double networkBytesPerSecond
         ) {
             AlphaBudgetProfile profile = AlphaBudgetProfile.from(settings);
+            double chunkGenerationBudgetMilliseconds = settings == null
+                    ? profile.chunkGenerationBudgetMilliseconds()
+                    : settings.chunkGenerationBudgetMilliseconds();
             double meshBudgetMilliseconds = settings == null ? profile.meshingBudgetMilliseconds() : settings.meshBuildBudgetMilliseconds();
             double uploadBudgetMilliseconds = settings == null ? profile.gpuUploadBudgetMilliseconds() : settings.gpuUploadBudgetMilliseconds();
             return new Budgets(
                     profile.label(),
                     profile.frameTargetMilliseconds(),
                     ratio(frameMilliseconds, profile.frameTargetMilliseconds()),
-                    profile.chunkGenerationBudgetMilliseconds(),
-                    ratio(chunkGenerationMilliseconds, profile.chunkGenerationBudgetMilliseconds()),
+                    chunkGenerationBudgetMilliseconds,
+                    ratio(chunkGenerationMilliseconds, chunkGenerationBudgetMilliseconds),
                     profile.lightingBudgetMilliseconds(),
                     ratio(lightingMilliseconds, profile.lightingBudgetMilliseconds()),
                     meshBudgetMilliseconds,

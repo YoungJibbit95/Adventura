@@ -84,6 +84,10 @@ float fogAffectFactor() {
     return 1.0;
 }
 
+float materialRoughness() {
+    return clamp(materialTexel(5).w, 0.0, 1.0);
+}
+
 vec3 layerDebugColor() {
     float layer = materialTexel(5).z;
     if (layer < 0.5) {
@@ -190,6 +194,22 @@ float bloomAmount(float emissive) {
     return smoothstep(threshold, 1.0, clamp(emissive, 0.0, 1.0));
 }
 
+vec3 applyMaterialSheen(vec3 lit, vec3 surfaceColor, float normalizedLight) {
+    float smoothness = 1.0 - materialRoughness();
+    if (smoothness <= 0.02) {
+        return lit;
+    }
+    vec3 sheenDirection = normalize(vec3(-0.35, 0.82, -0.22));
+    float facing = max(dot(normalize(vNormal), sheenDirection), 0.0);
+    float tightness = mix(18.0, 5.0, smoothness);
+    float sheen = pow(facing, tightness) * smoothness * clamp(normalizedLight, 0.0, 1.2);
+    if (animatedFluid()) {
+        sheen += (sin(uTime * 1.35 + vWorldPosition.x * 0.16 + vWorldPosition.z * 0.13) * 0.5 + 0.5) * smoothness * 0.035;
+    }
+    vec3 sheenTint = mix(vec3(1.0), surfaceColor, 0.34);
+    return lit + sheenTint * sheen * 0.18;
+}
+
 vec3 applyBiomeTint(vec3 color) {
     float mode = biomeTintMode();
     if (mode < 0.5) {
@@ -262,6 +282,7 @@ void main() {
     float ao = aoForLight(emissive);
     float foliageShade = biomeTintMode() > 1.5 && biomeTintMode() < 2.5 ? 0.94 : 1.0;
     vec3 lit = surface.rgb * normalizedLight * vShade * ao * foliageShade;
+    lit = applyMaterialSheen(lit, surface.rgb, normalizedLight);
     vec3 glowContribution = vec3(0.0);
     float bloom = bloomAmount(emissive);
     if (uBloomEnabled == 1 && bloom > 0.0) {

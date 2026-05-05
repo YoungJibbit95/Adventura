@@ -62,6 +62,8 @@ import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
+import dev.voxelgame.common.physics.CollisionShapeCache;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.registry.Registry;
 import dev.voxelgame.common.world.BiomeType;
@@ -89,6 +91,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
@@ -165,6 +168,8 @@ public final class GameClient {
     private static final Vector3f PLACE_PREVIEW_VALID_COLOR = new Vector3f(0.38f, 0.88f, 0.48f);
     private static final Vector3f PLACE_PREVIEW_INVALID_COLOR = new Vector3f(0.96f, 0.28f, 0.28f);
     private static final Vector3f FAR_TARGET_COLOR = new Vector3f(0.95f, 0.42f, 0.34f);
+    private static final int SINGLEPLAYER_SPAWN_LOAD_RADIUS_CAP = 2;
+    private static final int SINGLEPLAYER_SPAWN_LOAD_BATCH_CHUNKS = 4;
 
     private final ConnectionOptions connectionOptions;
     private final GameSettings settings;
@@ -199,10 +204,12 @@ public final class GameClient {
     private final AtomicReference<GamePacket.PlayerPositionSnapshot> pendingAuthoritativePlayerState = new AtomicReference<>();
     private final ConcurrentLinkedQueue<GamePacket.ProjectileImpact> pendingProjectileImpacts = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<GamePacket.GameplayEvents> pendingGameplayEvents = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<Runnable> mainThreadActions = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger loadingSession = new AtomicInteger();
     private final WeatherLightningController weatherLightning = new WeatherLightningController();
     private GameMode gameMode = GameMode.SURVIVAL;
     private GameState gameState = GameState.MAIN_MENU;
-    private LoadingScreenViewModel loadingScreen = LoadingScreenViewModel.boot();
+    private volatile LoadingScreenViewModel loadingScreen = LoadingScreenViewModel.boot();
     private Runnable pendingLoadingAction;
     private ClientWorld world;
     private WorldRenderer worldRenderer;
@@ -413,6 +420,7 @@ public final class GameClient {
             lastTime = now;
             lastFrameMilliseconds = rawDeltaSeconds * 1000.0;
             updateFps(now);
+            runMainThreadActions();
             long updateStartNanos = System.nanoTime();
             long phaseStartNanos = updateStartNanos;
 
@@ -467,7 +475,12 @@ public final class GameClient {
                     ChunkStreamingRings rings = chunkStreamingRings();
                     world.tickCampfires(now);
                     emitCampfireReadyFeedback(now);
-                    world.ensurePreviewAround(camera.position(), rings.previewRadiusChunks(), settings.meshBuildBudgetChunks());
+                    world.ensurePreviewAround(
+                            camera.position(),
+                            rings.previewRadiusChunks(),
+                            settings.effectiveChunkGenerationBudgetChunks(lastFrameMilliseconds),
+                            settings.effectiveChunkGenerationBudgetMilliseconds(lastFrameMilliseconds)
+                    );
                     int releaseSafeUnloadBudget = Math.min(settings.chunkUnloadBudgetChunks(), settings.gpuReleaseBudgetChunks());
                     List<ChunkPos> unloadedChunks = world.unloadOutside(camera.position(), rings.retainRadiusChunks(), releaseSafeUnloadBudget);
                     WorldRenderer.MeshReleaseStats releaseStats = worldRenderer.releaseChunks(unloadedChunks);
@@ -507,7 +520,8 @@ public final class GameClient {
             glClearColor(renderSettings.skyR(), renderSettings.skyG(), renderSettings.skyB(), 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             int visibleEntitySnapshotCount = 0;
-            if (world != null) {
+            boolean renderWorldThisFrame = world != null && gameState != GameState.LOADING;
+            if (renderWorldThisFrame) {
                 long renderStartNanos = System.nanoTime();
                 long chunkJobsStartNanos = renderStartNanos;
                 lastMeshBuilds = worldRenderer.rebuildDirty(
@@ -1303,7 +1317,7 @@ public final class GameClient {
             ClientWorld.AmbientParticleSources sources = world.ambientParticleSourcesWithin(camera.position(), 9, 4, 3);
             ambientLeafParticleSources = sources.leafSources();
             ambientSporeParticleSources = sources.sporeSources();
-            nextAmbientParticleSourceScanTime = now + 0.35;
+            nextAmbientParticleSourceScanTime = now + settings.ambientParticleSourceScanIntervalSeconds();
         }
         for (ClientWorld.BlockPos source : ambientLeafParticleSources) {
             particleSystem.spawnLeafDrift(source.x(), source.y(), source.z(), now);
@@ -3005,12 +3019,16 @@ public final class GameClient {
         float leftX = x;
         float rightX = x + columnWidth + gap;
         float sectionHeight = layout.sectionHeight();
+        float rowTop = 48.0f * scale;
+        float rowStep = 42.0f * scale;
+        float toggleTwoColumnWidth = columnWidth * 0.5f - 26.0f * scale;
+        float toggleTwoColumnRightX = columnWidth * 0.5f + 6.0f * scale;
 
         settingsSection(leftX, y, columnWidth, sectionHeight, "WORLD & RENDERING");
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + 52.0f * scale, columnWidth - 36.0f * scale, "Render distance", settings.renderDistanceChunks() + " chunks",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop, columnWidth - 36.0f * scale, "Render distance", settings.renderDistanceChunks() + " chunks",
                 () -> settings.adjustRenderDistance(-1),
                 () -> settings.adjustRenderDistance(1));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + 104.0f * scale, columnWidth - 36.0f * scale, "World preview", settings.previewRadiusChunks() + " chunks",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep, columnWidth - 36.0f * scale, "World preview", settings.previewRadiusChunks() + " chunks",
                 () -> {
                     settings.adjustPreviewRadius(-1);
                     refreshPreview();
@@ -3019,59 +3037,107 @@ public final class GameClient {
                     settings.adjustPreviewRadius(1);
                     refreshPreview();
                 });
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + 156.0f * scale, columnWidth - 36.0f * scale, "Mesh budget", settings.meshBuildBudgetChunks() + " chunks",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 2.0f, columnWidth - 36.0f * scale, "Chunk jobs", settings.chunkGenerationBudgetChunks() + " chunks",
+                () -> settings.adjustChunkGenerationBudget(-1),
+                () -> settings.adjustChunkGenerationBudget(1));
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 3.0f, columnWidth - 36.0f * scale, "Chunk time", formatMilliseconds(settings.chunkGenerationBudgetMilliseconds()),
+                () -> settings.adjustChunkGenerationBudgetMilliseconds(-0.5),
+                () -> settings.adjustChunkGenerationBudgetMilliseconds(0.5));
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 4.0f, columnWidth - 36.0f * scale, "Mesh jobs", settings.meshBuildBudgetChunks() + " chunks",
                 () -> settings.adjustMeshBuildBudget(-1),
                 () -> settings.adjustMeshBuildBudget(1));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + 208.0f * scale, columnWidth - 36.0f * scale, "Field of view", settings.fieldOfViewDegrees() + " deg",
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 5.0f, columnWidth - 36.0f * scale, "Mesh time", formatMilliseconds(settings.meshBuildBudgetMilliseconds()),
+                () -> settings.adjustMeshBuildBudgetMilliseconds(-0.5),
+                () -> settings.adjustMeshBuildBudgetMilliseconds(0.5));
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 6.0f, columnWidth - 36.0f * scale, "GPU upload", formatMilliseconds(settings.gpuUploadBudgetMilliseconds()),
+                () -> settings.adjustGpuUploadBudgetMilliseconds(-0.5),
+                () -> settings.adjustGpuUploadBudgetMilliseconds(0.5));
+        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 7.0f, columnWidth - 36.0f * scale, "Field of view", settings.fieldOfViewDegrees() + " deg",
                 () -> settings.adjustFieldOfView(-5),
                 () -> settings.adjustFieldOfView(5));
-        settingToggleCompact(mouse, clicked, leftX + 18.0f * scale, y + 266.0f * scale, columnWidth * 0.5f - 26.0f * scale, "Fog", settings.fogEnabled(), settings::toggleFog);
-        settingToggleCompact(mouse, clicked, leftX + columnWidth * 0.5f + 6.0f * scale, y + 266.0f * scale, columnWidth * 0.5f - 24.0f * scale, "Water", settings.transparentWaterEnabled(), () -> {
-            settings.toggleTransparentWater();
-            if (world != null) {
-                world.markAllLoadedDirty();
-            }
-        });
 
         settingsSection(rightX, y, columnWidth, sectionHeight, "QUALITY & INTERFACE");
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + 52.0f * scale, columnWidth - 36.0f * scale, "Mouse speed", settings.mouseSensitivityPercent() + "%",
+        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop, columnWidth - 36.0f * scale, "Mouse speed", settings.mouseSensitivityPercent() + "%",
                 () -> settings.adjustMouseSensitivity(-10),
                 () -> settings.adjustMouseSensitivity(10));
-        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 108.0f * scale, columnWidth * 0.5f - 26.0f * scale, "Ambient AO", settings.ambientOcclusionEnabled(), () -> {
+        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep, columnWidth - 36.0f * scale, "UI scale", settings.uiScalePercent() + "%",
+                () -> settings.adjustUiScale(-10),
+                () -> settings.adjustUiScale(10));
+        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep * 2.0f, columnWidth - 36.0f * scale, "Particles", formatPercent(settings.particleQuality()),
+                () -> settings.adjustParticleQuality(-0.25),
+                () -> settings.adjustParticleQuality(0.25));
+        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep * 3.0f, columnWidth - 36.0f * scale, "Render debug", settings.renderDebugView().commandName(),
+                settings::cycleRenderDebugView,
+                settings::cycleRenderDebugView);
+        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 224.0f * scale, toggleTwoColumnWidth, "Ambient AO", settings.ambientOcclusionEnabled(), () -> {
             settings.toggleAmbientOcclusion();
             if (world != null) {
                 world.markAllLoadedDirty();
             }
         });
-        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f * scale, y + 108.0f * scale, columnWidth * 0.5f - 24.0f * scale, "Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
-        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 168.0f * scale, columnWidth * 0.5f - 26.0f * scale, "HUD " + settings.hudMode().label(), settings.hudEnabled(), settings::toggleHud);
-        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f * scale, y + 168.0f * scale, columnWidth * 0.5f - 24.0f * scale, "Bloom", settings.bloomEnabled(), settings::toggleBloom);
-        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 228.0f * scale, columnWidth * 0.5f - 26.0f * scale, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
-        settingToggleCompact(mouse, clicked, rightX + columnWidth * 0.5f + 6.0f * scale, y + 228.0f * scale, columnWidth * 0.5f - 24.0f * scale, "VSync", settings.vsyncEnabled(), () -> {
+        settingToggleCompact(mouse, clicked, rightX + toggleTwoColumnRightX, y + 224.0f * scale, toggleTwoColumnWidth, "Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
+        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 272.0f * scale, toggleTwoColumnWidth, "Fog", settings.fogEnabled(), settings::toggleFog);
+        settingToggleCompact(mouse, clicked, rightX + toggleTwoColumnRightX, y + 272.0f * scale, toggleTwoColumnWidth, "Bloom", settings.bloomEnabled(), settings::toggleBloom);
+        float toggleGap = 8.0f * scale;
+        float thirdToggleWidth = (columnWidth - 36.0f * scale - toggleGap * 2.0f) / 3.0f;
+        float thirdToggleX = rightX + 18.0f * scale;
+        settingToggleCompact(mouse, clicked, thirdToggleX, y + 320.0f * scale, thirdToggleWidth, "VSync", settings.vsyncEnabled(), () -> {
             settings.toggleVsync();
             glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
         });
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + 280.0f * scale, columnWidth - 36.0f * scale, "UI scale", settings.uiScalePercent() + "%",
-                () -> settings.adjustUiScale(-10),
-                () -> settings.adjustUiScale(10));
+        settingToggleCompact(mouse, clicked, thirdToggleX + thirdToggleWidth + toggleGap, y + 320.0f * scale, thirdToggleWidth, "Water", settings.transparentWaterEnabled(), () -> {
+            settings.toggleTransparentWater();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
+        settingToggleCompact(mouse, clicked, thirdToggleX + (thirdToggleWidth + toggleGap) * 2.0f, y + 320.0f * scale, thirdToggleWidth, "Simple", settings.simpleWaterEnabled(), settings::toggleSimpleWater);
+        settingToggleCompact(mouse, clicked, thirdToggleX, y + 368.0f * scale, thirdToggleWidth, "HUD", settings.hudEnabled(), settings::toggleHud);
+        settingToggleCompact(mouse, clicked, thirdToggleX + thirdToggleWidth + toggleGap, y + 368.0f * scale, thirdToggleWidth, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+        settingToggleCompact(mouse, clicked, thirdToggleX + (thirdToggleWidth + toggleGap) * 2.0f, y + 368.0f * scale, thirdToggleWidth, "Greedy", settings.greedyMeshingEnabled(), () -> {
+            settings.toggleGreedyMeshing();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
 
-        drawAssetPanel("frame_moss", x, layout.presetY(), panelWidth, layout.presetHeight(), new UiColor(0.045f, 0.058f, 0.052f, 0.72f));
-        uiRenderer.rect(x + 8.0f * scale, layout.presetY() + 8.0f * scale, panelWidth - 16.0f * scale, layout.presetHeight() - 16.0f * scale, new UiColor(0.02f, 0.032f, 0.030f, 0.26f));
+        drawModernPanel(
+                x,
+                layout.presetY(),
+                panelWidth,
+                layout.presetHeight(),
+                10.0f * scale,
+                new UiColor(0.040f, 0.058f, 0.050f, 0.88f),
+                new UiColor(0.15f, 0.21f, 0.17f, 0.92f),
+                UiColor.ACCENT,
+                scale
+        );
+        drawModernInsetPanel(
+                x + 8.0f * scale,
+                layout.presetY() + 8.0f * scale,
+                panelWidth - 16.0f * scale,
+                layout.presetHeight() - 16.0f * scale,
+                7.0f * scale,
+                new UiColor(0.02f, 0.032f, 0.030f, 0.32f),
+                new UiColor(0.09f, 0.13f, 0.10f, 0.50f),
+                UiColor.ACCENT,
+                scale
+        );
         uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT), x + 18.0f * scale, layout.presetY() + 20.0f * scale, 1.45f * scale, UiColor.MUTED);
         float presetButtonWidth = Math.min(106.0f * scale, (panelWidth - 148.0f * scale) / 3.0f);
         float presetGap = 10.0f * scale;
         float presetX = x + Math.max(112.0f * scale, panelWidth - presetButtonWidth * 3.0f - presetGap * 2.0f - 18.0f * scale);
         float presetButtonY = layout.presetY() + 10.0f * scale;
         float presetButtonHeight = Math.max(26.0f, 34.0f * scale);
-        drawButton(new UiButton(presetX, presetButtonY, presetButtonWidth, presetButtonHeight, "LOW", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.LOW));
-        drawButton(new UiButton(presetX + presetButtonWidth + presetGap, presetButtonY, presetButtonWidth, presetButtonHeight, "MEDIUM", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.MEDIUM));
-        drawButton(new UiButton(presetX + (presetButtonWidth + presetGap) * 2.0f, presetButtonY, presetButtonWidth, presetButtonHeight, "HIGH", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.HIGH));
+        drawModernButton(new UiButton(presetX, presetButtonY, presetButtonWidth, presetButtonHeight, "LOW", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.LOW));
+        drawModernButton(new UiButton(presetX + presetButtonWidth + presetGap, presetButtonY, presetButtonWidth, presetButtonHeight, "MEDIUM", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.MEDIUM));
+        drawModernButton(new UiButton(presetX + (presetButtonWidth + presetGap) * 2.0f, presetButtonY, presetButtonWidth, presetButtonHeight, "HIGH", true), mouse, clicked, () -> applyRenderPreset(RenderPreset.HIGH));
         if (layout.showControls()) {
             renderSettingsControlsSummary(x, layout.controlsY(), panelWidth);
         }
 
         float buttonWidth = Math.min(280.0f * scale, framebufferWidth - 80.0f);
-        drawButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, layout.backY(), buttonWidth, layout.backHeight(), "BACK", true), mouse, clicked, () -> {
+        drawModernButton(new UiButton(framebufferWidth * 0.5f - buttonWidth * 0.5f, layout.backY(), buttonWidth, layout.backHeight(), "BACK", true), mouse, clicked, () -> {
             gameState = settingsReturnState;
             setCursorForState();
             updateWindowTitle();
@@ -3082,17 +3148,17 @@ public final class GameClient {
         float margin = Math.max(20.0f, Math.min(36.0f, framebufferWidth * 0.055f));
         float panelWidth = Math.max(360.0f, Math.min(920.0f, framebufferWidth - margin * 2.0f));
         float widthScale = panelWidth / 920.0f;
-        float heightScale = Math.max(0.62f, Math.min(1.0f, framebufferHeight / 700.0f));
+        float heightScale = Math.max(0.62f, Math.min(1.0f, framebufferHeight / 820.0f));
         float scale = Math.max(0.72f, Math.min(1.0f, Math.min(widthScale, heightScale)));
         float titleScale = fitTextScale("SETTINGS", 5.2f * scale, 2.35f, framebufferWidth - margin * 2.0f);
         float titleY = Math.max(20.0f, 34.0f * scale);
         float subtitleScale = fitTextScale("BALANCE PERFORMANCE, LOOKS AND COMFORT", 1.45f * scale, 0.8f, framebufferWidth - margin * 2.0f);
-        float subtitleY = titleY + BitmapFont.textHeight(titleScale) + 12.0f * scale;
-        float contentY = subtitleY + BitmapFont.textHeight(subtitleScale) + 26.0f * scale;
+        float subtitleY = titleY + BitmapFont.textHeight(titleScale) + 8.0f * scale;
+        float contentY = subtitleY + BitmapFont.textHeight(subtitleScale) + 14.0f * scale;
         float columnGap = 22.0f * scale;
         float columnWidth = (panelWidth - columnGap) * 0.5f;
-        float sectionHeight = 330.0f * scale;
-        float presetY = contentY + sectionHeight + 22.0f * scale;
+        float sectionHeight = 416.0f * scale;
+        float presetY = contentY + sectionHeight + 14.0f * scale;
         float presetHeight = 54.0f * scale;
         float controlsY = presetY + presetHeight + 18.0f * scale;
         float controlsHeight = 66.0f * scale;
@@ -3131,8 +3197,28 @@ public final class GameClient {
     private void renderSettingsControlsSummary(float x, float y, float width) {
         float scale = settingsLayoutScale;
         float height = 66.0f * scale;
-        drawAssetPanel("frame_stone", x, y, width, height, new UiColor(0.035f, 0.052f, 0.048f, 0.72f));
-        uiRenderer.rect(x + 8.0f * scale, y + 8.0f * scale, width - 16.0f * scale, height - 16.0f * scale, new UiColor(0.02f, 0.032f, 0.030f, 0.26f));
+        drawModernPanel(
+                x,
+                y,
+                width,
+                height,
+                10.0f * scale,
+                new UiColor(0.035f, 0.052f, 0.048f, 0.88f),
+                new UiColor(0.17f, 0.22f, 0.19f, 0.92f),
+                UiColor.ACCENT,
+                scale
+        );
+        drawModernInsetPanel(
+                x + 8.0f * scale,
+                y + 8.0f * scale,
+                width - 16.0f * scale,
+                height - 16.0f * scale,
+                7.0f * scale,
+                new UiColor(0.02f, 0.032f, 0.030f, 0.36f),
+                new UiColor(0.09f, 0.13f, 0.12f, 0.50f),
+                UiColor.ACCENT,
+                scale
+        );
         uiRenderer.text("CONTROLS", x + 18.0f * scale, y + 16.0f * scale, 1.45f * scale, UiColor.WHITE);
         float left = x + 132.0f * scale;
         float right = x + width * 0.55f;
@@ -3149,9 +3235,19 @@ public final class GameClient {
     }
 
     private void settingsSection(float x, float y, float width, float height, String title) {
-        drawAssetPanel("panel_settings", x, y, width, height, UiColor.PANEL);
         float scale = settingsLayoutScale;
-        uiRenderer.rect(x + 8.0f * scale, y + 7.0f * scale, width - 16.0f * scale, Math.max(2.0f, 3.0f * scale), UiColor.ACCENT);
+        drawModernPanel(
+                x,
+                y,
+                width,
+                height,
+                12.0f * scale,
+                new UiColor(0.035f, 0.050f, 0.052f, 0.90f),
+                new UiColor(0.19f, 0.23f, 0.22f, 0.96f),
+                UiColor.ACCENT,
+                scale
+        );
+        uiRenderer.roundedRect(x + 9.0f * scale, y + 8.0f * scale, width - 18.0f * scale, Math.max(2.0f, 3.0f * scale), 2.0f * scale, UiColor.ACCENT);
         uiRenderer.text(fitTextToWidth(title, 2.0f * scale, width - 36.0f * scale), x + 18.0f * scale, y + 18.0f * scale, 2.0f * scale, UiColor.WHITE);
     }
 
@@ -3159,13 +3255,22 @@ public final class GameClient {
         float scale = settingsLayoutScale;
         float height = 40.0f * scale;
         float buttonSize = Math.max(24.0f, 30.0f * scale);
-        drawAssetPanel("frame_stone", x, y, width, height, UiColor.SLOT);
-        uiRenderer.rect(x + 5.0f * scale, y + 5.0f * scale, width - 10.0f * scale, height - 10.0f * scale, new UiColor(0.02f, 0.032f, 0.030f, 0.34f));
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                height,
+                8.0f * scale,
+                new UiColor(0.022f, 0.034f, 0.032f, 0.72f),
+                new UiColor(0.12f, 0.16f, 0.15f, 0.82f),
+                UiColor.ACCENT,
+                scale
+        );
         float textWidth = Math.max(40.0f, width - buttonSize * 2.0f - 32.0f * scale);
         uiRenderer.text(fitTextToWidth(label.toUpperCase(Locale.ROOT), 1.15f * scale, textWidth), x + 10.0f * scale, y + 7.0f * scale, 1.15f * scale, UiColor.MUTED);
         uiRenderer.text(fitTextToWidth(value.toUpperCase(Locale.ROOT), 1.2f * scale, textWidth), x + 10.0f * scale, y + 23.0f * scale, 1.2f * scale, UiColor.WHITE);
-        drawButton(new UiButton(x + width - buttonSize * 2.0f - 10.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "-", true), mouse, clicked, minus);
-        drawButton(new UiButton(x + width - buttonSize - 5.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "+", true), mouse, clicked, plus);
+        drawModernButton(new UiButton(x + width - buttonSize * 2.0f - 10.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "-", true), mouse, clicked, minus);
+        drawModernButton(new UiButton(x + width - buttonSize - 5.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "+", true), mouse, clicked, plus);
     }
 
     private void settingToggleCompact(MousePosition mouse, boolean clicked, float x, float y, float width, String label, boolean enabled, Runnable toggle) {
@@ -3173,10 +3278,19 @@ public final class GameClient {
         float height = 44.0f * scale;
         float buttonWidth = Math.max(48.0f, 68.0f * scale);
         float buttonHeight = Math.max(24.0f, 30.0f * scale);
-        drawAssetPanel("frame_wood", x, y, width, height, UiColor.SLOT);
-        uiRenderer.rect(x + 5.0f * scale, y + 5.0f * scale, width - 10.0f * scale, height - 10.0f * scale, new UiColor(0.02f, 0.032f, 0.030f, 0.30f));
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                height,
+                8.0f * scale,
+                new UiColor(0.024f, 0.035f, 0.032f, 0.70f),
+                new UiColor(0.13f, 0.17f, 0.14f, 0.84f),
+                enabled ? UiColor.ACCENT : UiColor.WARNING,
+                scale
+        );
         uiRenderer.text(fitTextToWidth(label.toUpperCase(Locale.ROOT), 1.2f * scale, width - buttonWidth - 22.0f * scale), x + 10.0f * scale, y + 8.0f * scale, 1.2f * scale, UiColor.WHITE);
-        drawButton(new UiButton(x + width - buttonWidth - 8.0f * scale, y + (height - buttonHeight) * 0.5f, buttonWidth, buttonHeight, enabled ? "ON" : "OFF", true), mouse, clicked, toggle);
+        drawModernToggleButton(mouse, clicked, x + width - buttonWidth - 8.0f * scale, y + (height - buttonHeight) * 0.5f, buttonWidth, buttonHeight, enabled, toggle);
     }
 
     private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, EnumSet<CraftingStationType> stationTypes) {
@@ -3188,8 +3302,18 @@ public final class GameClient {
         int visibleRecipes = Math.min(6, recipes.size());
         float rowHeight = 50.0f;
         float panelHeight = 142.0f + Math.max(1, visibleRecipes) * rowHeight + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
-        drawAssetPanel("panel_crafting", x - 14.0f, y - 44.0f, panelWidth + 28.0f, panelHeight, new UiColor(0.04f, 0.06f, 0.06f, 0.72f));
-        uiRenderer.rect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, panelHeight - 56.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.20f));
+        drawModernPanel(
+                x - 14.0f,
+                y - 44.0f,
+                panelWidth + 28.0f,
+                panelHeight,
+                12.0f,
+                new UiColor(0.036f, 0.055f, 0.054f, 0.88f),
+                new UiColor(0.17f, 0.22f, 0.20f, 0.94f),
+                UiColor.ACCENT,
+                1.0f
+        );
+        uiRenderer.roundedRect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, panelHeight - 56.0f, 8.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.28f));
         uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
         float stationX = x + Math.max(126.0f, panelWidth - 210.0f);
         float stationWidth = x + panelWidth - stationX;
@@ -3206,24 +3330,32 @@ public final class GameClient {
             float rowY = y + 76.0f + index * rowHeight;
             String buttonLabel = recipe.label().toUpperCase(Locale.ROOT) + " [" + recipe.category().name() + "]";
             UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, buttonLabel, canCraft);
-            drawButton(button, mouse, clicked, () -> {
-                if (onlineMode) {
-                    connection.send(craftRequestFor(recipe));
-                    setStatus(craftingRequestMessage(recipe));
-                    updateWindowTitle();
-                } else if (activeStationFor(recipe, stationTypes).map(station -> hotbar.craft(recipe, station)).orElse(false)) {
-                    String craftedKey = itemKey(recipe.result().itemId());
-                    setStatus(earlyGameMilestones.craftItem(
-                                    craftedKey,
-                                    cozyName(craftedKey),
-                                    itemToolType(recipe.result().itemId()))
-                            .orElse("Crafted " + recipe.label()));
-                    craftingSuccessPop.trigger(recipe.key(), currentTimeSeconds());
-                    announceNewRecipeUnlocks();
-                    audio.play(AudioCue.CRAFT_SUCCESS);
-                    updateWindowTitle();
-                }
-            });
+            drawModernButtonSurface(
+                    button,
+                    mouse,
+                    clicked,
+                    () -> {
+                        if (onlineMode) {
+                            connection.send(craftRequestFor(recipe));
+                            setStatus(craftingRequestMessage(recipe));
+                            updateWindowTitle();
+                        } else if (activeStationFor(recipe, stationTypes).map(station -> hotbar.craft(recipe, station)).orElse(false)) {
+                            String craftedKey = itemKey(recipe.result().itemId());
+                            setStatus(earlyGameMilestones.craftItem(
+                                            craftedKey,
+                                            cozyName(craftedKey),
+                                            itemToolType(recipe.result().itemId()))
+                                    .orElse("Crafted " + recipe.label()));
+                            craftingSuccessPop.trigger(recipe.key(), currentTimeSeconds());
+                            announceNewRecipeUnlocks();
+                            audio.play(AudioCue.CRAFT_SUCCESS);
+                            updateWindowTitle();
+                        }
+                    },
+                    canCraft ? new UiColor(0.085f, 0.135f, 0.105f, 0.92f) : new UiColor(0.055f, 0.065f, 0.062f, 0.74f),
+                    canCraft ? new UiColor(0.145f, 0.210f, 0.150f, 0.96f) : new UiColor(0.078f, 0.088f, 0.082f, 0.78f),
+                    canCraft ? UiColor.ACCENT : UiColor.WARNING
+            );
             if (!canCraft && clicked && button.contains(mouse.x(), mouse.y())) {
                 emitCraftingFailure(craftFailMessage(recipe, stationTypes));
             }
@@ -3234,6 +3366,7 @@ public final class GameClient {
             float statusX = x + panelWidth - 168.0f;
             float detailWidth = Math.max(80.0f, statusX - detailX - 10.0f);
             float statusWidth = Math.max(72.0f, x + panelWidth - statusX - 8.0f);
+            uiRenderer.text(fitTextToWidth(buttonLabel, 1.05f, detailWidth), detailX, rowY + 7.0f, 1.05f, canCraft ? UiColor.WHITE : unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
             uiRenderer.text(fitTextToWidth(stationRequirementLine(recipe), 0.95f, detailWidth), detailX, rowY + 23.0f, 0.95f, stationColor);
             uiRenderer.text(fitTextToWidth(hotbar.recipeSummary(recipe), 0.95f, detailWidth), detailX, rowY + 36.0f, 0.95f, unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
             uiRenderer.text(fitTextToWidth(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), 0.9f, statusWidth), statusX, rowY + 36.0f, 0.9f, statusColor);
@@ -3418,10 +3551,19 @@ public final class GameClient {
 
     private void renderCraftingFilterChip(MousePosition mouse, boolean clicked, float x, float y, float width, float height, String label, boolean selected, Runnable action) {
         boolean hovered = contains(mouse, x, y, width, height);
-        UiColor color = selected ? UiColor.SLOT_ACTIVE : hovered ? UiColor.BUTTON_HOVER : UiColor.SLOT;
-        uiRenderer.rect(x, y, width, height, color);
+        UiColor color = selected ? new UiColor(0.18f, 0.35f, 0.24f, 0.94f) : new UiColor(0.055f, 0.080f, 0.076f, 0.88f);
+        UiColor hoverColor = selected ? new UiColor(0.24f, 0.42f, 0.28f, 0.96f) : new UiColor(0.100f, 0.145f, 0.125f, 0.92f);
+        drawModernButtonSurface(
+                new UiButton(x, y, width, height, label, true),
+                mouse,
+                false,
+                action,
+                color,
+                hoverColor,
+                selected ? UiColor.ACCENT : UiColor.MUTED
+        );
         if (selected) {
-            uiRenderer.rect(x, y + height - 3.0f, width, 3.0f, UiColor.ACCENT);
+            uiRenderer.roundedRect(x + 4.0f, y + height - 4.0f, width - 8.0f, 2.0f, 1.0f, UiColor.ACCENT);
         }
         float textScale = Math.min(1.15f, (width - 6.0f) / Math.max(1.0f, BitmapFont.textWidth(label, 1.0f)));
         uiRenderer.centeredText(
@@ -3442,9 +3584,9 @@ public final class GameClient {
         if (clicked) {
             craftingSearchFocused = hovered;
         }
-        UiColor color = craftingSearchFocused ? UiColor.SLOT_ACTIVE : hovered ? UiColor.BUTTON_HOVER : UiColor.SLOT;
-        uiRenderer.rect(x, y, width, 28.0f, color);
-        uiRenderer.rect(x, y + 26.0f, width, 2.0f, craftingSearchFocused ? UiColor.ACCENT : UiColor.BUTTON);
+        UiColor color = craftingSearchFocused ? new UiColor(0.105f, 0.175f, 0.135f, 0.92f) : hovered ? new UiColor(0.080f, 0.120f, 0.110f, 0.90f) : new UiColor(0.045f, 0.065f, 0.062f, 0.86f);
+        drawModernInsetPanel(x, y, width, 28.0f, 7.0f, color, new UiColor(0.13f, 0.17f, 0.15f, 0.84f), craftingSearchFocused ? UiColor.ACCENT : UiColor.MUTED, 1.0f);
+        uiRenderer.roundedRect(x + 5.0f, y + 24.0f, width - 10.0f, 2.0f, 1.0f, craftingSearchFocused ? UiColor.ACCENT : withAlpha(UiColor.BUTTON, 0.74f));
         String value = craftingSearch.isEmpty() ? "SEARCH" : craftingSearch.toString().toUpperCase(Locale.ROOT);
         UiColor textColor = craftingSearch.isEmpty() ? UiColor.MUTED : UiColor.WHITE;
         uiRenderer.text(clampText(value, 50), x + 10.0f, y + 9.0f, 1.15f, textColor);
@@ -3452,7 +3594,16 @@ public final class GameClient {
             float clearWidth = 24.0f;
             float clearX = x + width - clearWidth - 5.0f;
             boolean clearHovered = contains(mouse, clearX, y + 2.0f, clearWidth, 24.0f);
-            uiRenderer.rect(clearX, y + 2.0f, clearWidth, 24.0f, clearHovered ? UiColor.BUTTON_HOVER : UiColor.BUTTON);
+            drawModernButtonSurface(
+                    new UiButton(clearX, y + 2.0f, clearWidth, 24.0f, "X", true),
+                    mouse,
+                    false,
+                    () -> {
+                    },
+                    clearHovered ? new UiColor(0.16f, 0.22f, 0.18f, 0.92f) : UiColor.BUTTON,
+                    new UiColor(0.22f, 0.30f, 0.22f, 0.96f),
+                    UiColor.ACCENT
+            );
             uiRenderer.centeredText("X", clearX + clearWidth * 0.5f, y + 8.0f, 1.15f, UiColor.WHITE);
             if (clearHovered && clicked) {
                 craftingSearch.setLength(0);
@@ -3937,17 +4088,42 @@ public final class GameClient {
     }
 
     private void drawInventoryBackdrop(float x, float y, float width, float height, float uiScale) {
-        uiRenderer.rect(x, y, width, height, new UiColor(0.09f, 0.09f, 0.085f, 0.96f));
-        uiRenderer.rect(x + 2.0f * uiScale, y + 2.0f * uiScale, width - 4.0f * uiScale, height - 4.0f * uiScale, new UiColor(0.80f, 0.79f, 0.73f, 0.98f));
-        uiRenderer.rect(x + 5.0f * uiScale, y + 5.0f * uiScale, width - 10.0f * uiScale, height - 10.0f * uiScale, new UiColor(0.48f, 0.48f, 0.45f, 0.98f));
-        uiRenderer.rect(x + 7.0f * uiScale, y + 7.0f * uiScale, width - 14.0f * uiScale, height - 14.0f * uiScale, new UiColor(0.64f, 0.63f, 0.58f, 0.98f));
-        uiRenderer.rect(x + 7.0f * uiScale, y + 7.0f * uiScale, width - 14.0f * uiScale, 2.0f * uiScale, new UiColor(0.92f, 0.91f, 0.84f, 0.72f));
-        uiRenderer.rect(x + 7.0f * uiScale, y + height - 9.0f * uiScale, width - 14.0f * uiScale, 2.0f * uiScale, new UiColor(0.18f, 0.18f, 0.16f, 0.48f));
+        drawModernPanel(
+                x,
+                y,
+                width,
+                height,
+                10.0f * uiScale,
+                new UiColor(0.60f, 0.59f, 0.53f, 0.96f),
+                new UiColor(0.24f, 0.24f, 0.22f, 0.98f),
+                new UiColor(0.86f, 0.85f, 0.74f, 1.0f),
+                uiScale
+        );
+        drawModernInsetPanel(
+                x + 7.0f * uiScale,
+                y + 7.0f * uiScale,
+                width - 14.0f * uiScale,
+                height - 14.0f * uiScale,
+                7.0f * uiScale,
+                new UiColor(0.43f, 0.43f, 0.39f, 0.54f),
+                new UiColor(0.75f, 0.74f, 0.66f, 0.52f),
+                new UiColor(0.92f, 0.91f, 0.82f, 0.86f),
+                uiScale
+        );
     }
 
     private void drawInventoryShelf(float x, float y, float width, float height, float uiScale) {
-        uiRenderer.rect(x, y, width, height, new UiColor(0.34f, 0.34f, 0.32f, 0.50f));
-        uiRenderer.rect(x + 2.0f * uiScale, y + 2.0f * uiScale, width - 4.0f * uiScale, height - 4.0f * uiScale, new UiColor(0.72f, 0.71f, 0.65f, 0.28f));
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                height,
+                7.0f * uiScale,
+                new UiColor(0.32f, 0.32f, 0.29f, 0.44f),
+                new UiColor(0.76f, 0.75f, 0.66f, 0.36f),
+                new UiColor(0.92f, 0.91f, 0.82f, 0.72f),
+                uiScale
+        );
     }
 
     private void drawInventorySlotHoverFrame(String hoverKey, float x, float y, float size, float uiScale) {
@@ -3960,7 +4136,7 @@ public final class GameClient {
         float thickness = Math.max(2.0f * uiScale, 2.0f);
         UiColor border = new UiColor(0.96f, 0.95f, 0.82f, 0.52f + hover.alpha() * 0.45f);
         UiColor glow = new UiColor(1.0f, 0.98f, 0.72f, hover.alpha() * 0.20f);
-        uiRenderer.rect(left, top, hoveredSize, hoveredSize, glow);
+        uiRenderer.roundedRect(left, top, hoveredSize, hoveredSize, Math.max(4.0f, hoveredSize * 0.14f), glow);
         uiRenderer.rect(left, top, hoveredSize, thickness, border);
         uiRenderer.rect(left, top + hoveredSize - thickness, hoveredSize, thickness, border);
         uiRenderer.rect(left, top, thickness, hoveredSize, border);
@@ -3976,29 +4152,15 @@ public final class GameClient {
     }
 
     private void drawInventoryActionButton(UiButton button, MousePosition mouse, boolean clicked, Runnable action) {
-        float uiScale = settings.uiScale();
-        boolean hovered = button.contains(mouse.x(), mouse.y());
-        UiColor outer = button.enabled() ? new UiColor(0.16f, 0.17f, 0.15f, 0.96f) : new UiColor(0.22f, 0.22f, 0.20f, 0.62f);
-        UiColor fill = button.enabled()
-                ? hovered ? new UiColor(0.31f, 0.40f, 0.28f, 0.96f) : new UiColor(0.22f, 0.29f, 0.22f, 0.94f)
-                : new UiColor(0.34f, 0.34f, 0.31f, 0.50f);
-        uiRenderer.rect(button.x(), button.y(), button.width(), button.height(), outer);
-        uiRenderer.rect(button.x() + 2.0f * uiScale, button.y() + 2.0f * uiScale, button.width() - 4.0f * uiScale, button.height() - 4.0f * uiScale, fill);
-        uiRenderer.rect(button.x() + 2.0f * uiScale, button.y() + 2.0f * uiScale, button.width() - 4.0f * uiScale, 2.0f * uiScale, new UiColor(0.86f, 0.90f, 0.76f, button.enabled() ? 0.36f : 0.14f));
-        float textScale = Math.min(1.14f * uiScale, Math.min(
-                (button.width() - 10.0f * uiScale) / Math.max(1.0f, BitmapFont.textWidth(button.label(), 1.0f)),
-                (button.height() - 8.0f * uiScale) / BitmapFont.textHeight(1.0f)
-        ));
-        uiRenderer.centeredText(
-                button.label(),
-                button.x() + button.width() * 0.5f,
-                button.y() + button.height() * 0.5f - BitmapFont.textHeight(textScale) * 0.5f,
-                textScale,
-                button.enabled() ? UiColor.WHITE : UiColor.MUTED
+        drawModernButton(
+                button,
+                mouse,
+                clicked,
+                action,
+                new UiColor(0.19f, 0.26f, 0.19f, 0.94f),
+                new UiColor(0.27f, 0.37f, 0.24f, 0.96f),
+                UiColor.ACCENT
         );
-        if (button.enabled() && hovered && clicked) {
-            action.run();
-        }
     }
 
     private record InventoryPanelLayout(
@@ -5116,6 +5278,8 @@ public final class GameClient {
         EngineFrameStats.GpuResources resources = engineFrameStats.gpuResources();
         EngineFrameStats.Budgets budgets = engineFrameStats.budgets();
         ClientWorld.PhysicsLoadingStatus physicsLoading = world == null ? null : world.physicsLoadingStatus(position);
+        CollisionShapeCache.CacheStats collisionCache = world == null ? null : world.collisionCacheStats();
+        BlockSurfacePhysics.SurfaceMaterial surface = world == null ? BlockSurfacePhysics.DEFAULT : world.playerSurface(position);
         String selectedItem = hotbar.selectedLabel();
         String lookingAt = "none";
         if (world != null) {
@@ -5131,13 +5295,13 @@ public final class GameClient {
         uiRenderer.text("FPS " + frame.fps() + " FRAME " + formatMilliseconds(frame.frameMilliseconds()) + " UPD " + formatMilliseconds(frame.updateMilliseconds()) + " RENDER " + formatMilliseconds(frame.renderMilliseconds()) + " UI " + formatMilliseconds(frame.uiMilliseconds()), 22.0f, 24.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("PHASE IN " + formatMilliseconds(phases.inputMilliseconds()) + " NET " + formatMilliseconds(phases.networkMilliseconds()) + " PLY " + formatMilliseconds(phases.playerMilliseconds()) + " WORLD " + formatMilliseconds(phases.worldMilliseconds()) + " JOB " + formatMilliseconds(phases.chunkJobsMilliseconds()) + " GPU " + formatMilliseconds(phases.gpuUploadMilliseconds()) + " RPASS " + formatMilliseconds(phases.renderPassMilliseconds()), 22.0f, 44.0f, 1.65f, UiColor.WHITE);
         uiRenderer.text("XYZ " + Math.round(position.x) + " " + Math.round(position.y) + " " + Math.round(position.z) + " CHUNK " + chunkX + " " + chunkZ + " BIOME " + biomeLabel(biome) + " H " + terrainHeight, 22.0f, 64.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT) + " RD " + chunks.renderDistanceChunks() + " PRE " + chunks.previewRadiusChunks() + " RET " + chunks.retentionRadiusChunks() + " MB " + chunks.meshBuildBudgetChunks() + "/" + formatMilliseconds(chunks.meshBuildBudgetMilliseconds()) + " UP " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()) + " GREEDY " + onOff(settings.greedyMeshingEnabled()) + " DIRTY " + chunks.dirtyChunks() + " BUILT " + chunks.builtChunks(), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT) + " RD " + chunks.renderDistanceChunks() + " PRE " + chunks.previewRadiusChunks() + " RET " + chunks.retentionRadiusChunks() + " GEN " + settings.effectiveChunkGenerationBudgetChunks(lastFrameMilliseconds) + "/" + formatMilliseconds(settings.effectiveChunkGenerationBudgetMilliseconds(lastFrameMilliseconds)) + " MB " + chunks.meshBuildBudgetChunks() + "/" + formatMilliseconds(chunks.meshBuildBudgetMilliseconds()) + " UP " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds()) + " GREEDY " + onOff(settings.greedyMeshingEnabled()) + " DIRTY " + chunks.dirtyChunks() + " BUILT " + chunks.builtChunks(), 22.0f, 84.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOADED " + chunks.loadedChunks() + " VIS " + chunks.visibleChunks() + " UNLD " + chunks.unloadedChunks() + "/" + formatCount(chunks.totalUnloadedChunks()) + " FREED " + chunks.releasedGpuMeshLayers() + " GPU MESH " + rendering.loadedGpuMeshes() + " GPU CHUNK " + rendering.loadedGpuChunkPositions(), 22.0f, 104.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("QUEUE " + chunks.queuedChunks() + " REP " + formatCount(chunks.replacedChunkBuilds()) + " CAN " + formatCount(chunks.canceledChunkBuilds()) + " WAIT " + formatMilliseconds(chunks.averageChunkBuildWaitMilliseconds()) + " GEN " + formatMilliseconds(chunks.chunkGenerationMilliseconds()) + " MESH " + formatMilliseconds(chunks.meshingMilliseconds()) + " LIGHT " + formatMilliseconds(chunks.lightingMilliseconds()) + " UP " + formatMilliseconds(chunks.gpuUploadMilliseconds()) + " B/s " + formatRate(chunks.chunksBuiltPerSecond()), 22.0f, 124.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("JOBS P/R/C/X " + formatJobCounter(jobs.chunkGenerate()) + " " + formatJobCounter(jobs.chunkLight()) + " " + formatJobCounter(jobs.chunkMesh()) + " " + formatJobCounter(jobs.saveWrite()) + " " + formatJobCounter(jobs.netEncode()), 22.0f, 144.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("BUD " + budgets.profile().toUpperCase(Locale.ROOT) + " F " + formatMilliseconds(frame.frameMilliseconds()) + "/" + formatMilliseconds(budgets.frameTargetMilliseconds()) + " GEN " + formatPercent(budgets.chunkGenerationUsage()) + " LIGHT " + formatPercent(budgets.lightingUsage()) + " MESH " + formatPercent(budgets.meshingUsage()) + " GPU " + formatPercent(budgets.gpuUploadMillisecondsUsage()) + " UPB " + formatPercent(budgets.gpuUploadBytesUsage()) + " DRAW " + formatPercent(budgets.drawCallUsage()) + " TRI " + formatPercent(budgets.triangleUsage()) + " PART " + formatPercent(budgets.particleUsage()) + " ENT " + formatPercent(budgets.entityUsage()) + " SAVE " + formatPercent(budgets.saveWriteUsage()) + " NET " + formatPercent(budgets.networkBytesPerSecondUsage()), 22.0f, 164.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SECTIONS " + chunks.nonEmptySections() + "/" + chunks.totalSections() + " EMPTY " + chunks.emptySections() + " BOUNDS " + chunks.chunksWithSectionBounds() + " DIRTY G/L/F/B " + chunks.dirtyGeometrySections() + "/" + chunks.dirtyLightSections() + "/" + chunks.dirtyFluidSections() + "/" + chunks.dirtyBlockEntitySections() + " TCACHE " + chunks.terrainCacheChunks() + "/" + formatMegabytes(chunks.terrainCacheBytes()), 22.0f, 184.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SORT " + rendering.sortedTransparentMeshes() + " RST " + rendering.renderStateChanges() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
+        uiRenderer.text("DRAW " + rendering.drawCalls() + " PDC S/C/W " + rendering.solidDrawCalls() + "/" + rendering.cutoutDrawCalls() + "/" + rendering.transparentDrawCalls() + " MESH S/C/W " + rendering.solidMeshCount() + "/" + rendering.cutoutMeshCount() + "/" + rendering.transparentMeshCount() + " SPART R/C/L " + rendering.renderedSectionParts() + "/" + rendering.culledSectionParts() + "/" + rendering.loadedSectionParts() + " SORT " + rendering.sortedTransparentMeshes() + " RST " + rendering.renderStateChanges() + " CULLM " + rendering.culledMeshes() + " CULLC " + rendering.culledChunks() + " CD " + rendering.culledByDistance() + " CB " + rendering.culledByBounds(), 22.0f, 204.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("TRIS S " + formatCount(rendering.solidTriangles()) + " C " + formatCount(rendering.cutoutTriangles()) + " W " + formatCount(rendering.transparentTriangles()) + " TOTAL " + formatCount(rendering.triangles()) + " VRAM " + formatMegabytes(rendering.estimatedVramBytes()) + " UPB " + formatMegabytes(rendering.gpuUploadBytes()) + " ENT " + entities.visibleEntityCount() + "/" + entities.entityCount() + " EDC " + entities.drawCalls() + " EP " + entities.modelParts() + " EMDL " + entities.cachedModels() + " ECULL " + entities.culledEntityCount() + " HITBOX " + entities.debugHitboxes(), 22.0f, 224.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("GL MESH " + resources.liveChunkMeshes() + " VAO " + resources.liveChunkVertexArrays() + " BUF " + resources.liveChunkBuffers() + " EVAO " + resources.liveEntityVertexArrays() + " EBUF " + resources.liveEntityBuffers() + " TEX " + resources.liveTextures() + " SHD " + resources.liveShaderPrograms() + " RLD " + resources.shaderReloadCount() + " F " + resources.failedShaderReloadCount() + " " + formatMilliseconds(resources.lastShaderReloadMilliseconds()) + " PVAO " + resources.liveParticleVertexArrays() + " PBUF " + resources.liveParticleBuffers() + " FB " + resources.liveFramebuffers() + " MB " + formatMegabytes(resources.liveChunkMeshBytes()) + "/" + formatMegabytes(resources.peakChunkMeshBytes()), 22.0f, 244.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("MAT " + rendering.materialCount() + " LUT " + formatMegabytes(rendering.materialLutBytes()) + " MISS " + rendering.missingMaterialCount() + " VTX " + rendering.chunkVertexBytes() + "B MESH-GROW " + formatMegabytes(chunks.meshBufferGrowthBytes()) + " BUF " + formatMegabytes(chunks.retainedMeshBufferBytes()) + " ATLAS " + rendering.atlasTextureCount() + " " + rendering.atlasWidth() + "x" + rendering.atlasHeight() + " " + formatMegabytes(rendering.atlasBytes()) + " DEBUGVIEW " + settings.renderDebugView().commandName(), 22.0f, 264.0f, 1.65f, UiColor.MUTED);
@@ -5146,7 +5310,11 @@ public final class GameClient {
         uiRenderer.text("SRVSTAT PKT " + formatCount(network.serverStatsPackets()) + " SUB " + serverStats.chunkSubscriptions() + " CH " + formatCount(serverStats.sentChunkPackets()) + " ES " + formatCount(serverStats.sentEntitySnapshots()) + "/" + formatCount(serverStats.sentEntitySnapshotPackets()) + " BLK " + formatCount(serverStats.sentBlockUpdates()) + " DROP " + formatCount(serverStats.discardedUpdatesOutsideInterest()) + " REJ " + formatCount(serverStats.rejectedChunkRequests()) + " FAIL " + formatCount(serverStats.failedChunkRequests()) + " SAVE " + serverStats.savePendingWrites() + "/" + serverStats.saveRunningWrites() + "/" + formatCount(serverStats.saveCompletedWrites()) + " " + formatMilliseconds(serverStats.saveAverageWriteMilliseconds()) + " AVG " + formatCount(serverStats.averagePacketBytes()) + "B PPS " + formatRate(serverStats.packetRatePerSecond()), 22.0f, 324.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("SEL " + clampText(selectedItem, 72), 22.0f, 344.0f, 1.65f, UiColor.MUTED);
         uiRenderer.text("LOOK " + clampText(lookingAt, 72), 22.0f, 364.0f, 1.65f, UiColor.MUTED);
-        uiRenderer.text("PHYS " + physicsLoadingLabel(physicsLoading), 22.0f, 384.0f, 1.65f, physicsLoading != null && physicsLoading.blocked() ? UiColor.WARNING : UiColor.MUTED);
+        uiRenderer.text("PHYS " + physicsLoadingLabel(physicsLoading)
+                + " SURF " + surfaceDebugLabel(surface)
+                + " SPD " + formatPercent(surface.speedMultiplier())
+                + " FRI " + formatPercent(surface.frictionMultiplier())
+                + " " + collisionCacheLabel(collisionCache), 22.0f, 384.0f, 1.65f, physicsLoading != null && physicsLoading.blocked() ? UiColor.WARNING : UiColor.MUTED);
     }
 
     private static String physicsLoadingLabel(ClientWorld.PhysicsLoadingStatus status) {
@@ -5156,6 +5324,24 @@ public final class GameClient {
         return (status.blocked() ? "blocked by loading" : "ready")
                 + " C " + status.center().x() + " " + status.center().z()
                 + " " + status.loadedChunks() + "/" + status.requiredChunks();
+    }
+
+    private static String surfaceDebugLabel(BlockSurfacePhysics.SurfaceMaterial surface) {
+        BlockSurfacePhysics.SurfaceMaterial safe = surface == null ? BlockSurfacePhysics.DEFAULT : surface;
+        String key = safe.key();
+        if (key.startsWith("voxel:")) {
+            return key.substring("voxel:".length());
+        }
+        return key.isBlank() ? "default" : key;
+    }
+
+    private static String collisionCacheLabel(CollisionShapeCache.CacheStats stats) {
+        if (stats == null) {
+            return "CSEC 0 SHP 0 EVICT 0";
+        }
+        return "CSEC " + stats.sections() + "/" + stats.maxSectionsPerShapeSet()
+                + " SHP " + stats.shapes()
+                + " EVICT " + formatCount(stats.evictedSections());
     }
 
     private void renderBreakOverlay() {
@@ -5231,6 +5417,91 @@ public final class GameClient {
         uiRenderer.centeredText(label, centerX, textY, scale, new UiColor(color.r(), color.g(), color.b(), alpha));
     }
 
+    private void drawModernPanel(float x, float y, float width, float height, float radius, UiColor fill, UiColor border, UiColor accent, float uiScale) {
+        float scale = Math.max(0.5f, uiScale);
+        float shadow = Math.max(2.0f, 5.0f * scale);
+        float pad = Math.max(2.0f, 2.0f * scale);
+        float innerPad = Math.max(5.0f, 6.0f * scale);
+        uiRenderer.roundedRect(x + shadow * 0.55f, y + shadow * 0.70f, width, height, radius, new UiColor(0.0f, 0.0f, 0.0f, 0.26f));
+        uiRenderer.roundedRect(x, y, width, height, radius, border);
+        uiRenderer.roundedRect(x + pad, y + pad, width - pad * 2.0f, height - pad * 2.0f, Math.max(1.0f, radius - pad), fill);
+        uiRenderer.roundedRect(x + innerPad, y + innerPad, width - innerPad * 2.0f, Math.max(1.0f, 3.0f * scale), Math.max(1.0f, radius * 0.35f), withAlpha(accent, 0.40f));
+        uiRenderer.roundedRect(x + innerPad, y + height - innerPad - Math.max(1.0f, 2.0f * scale), width - innerPad * 2.0f, Math.max(1.0f, 2.0f * scale), Math.max(1.0f, radius * 0.30f), new UiColor(0.0f, 0.0f, 0.0f, 0.20f));
+    }
+
+    private void drawModernInsetPanel(float x, float y, float width, float height, float radius, UiColor fill, UiColor edge, UiColor accent, float uiScale) {
+        float scale = Math.max(0.5f, uiScale);
+        float pad = Math.max(1.0f, 2.0f * scale);
+        uiRenderer.roundedRect(x, y, width, height, radius, edge);
+        uiRenderer.roundedRect(x + pad, y + pad, width - pad * 2.0f, height - pad * 2.0f, Math.max(1.0f, radius - pad), fill);
+        uiRenderer.roundedRect(x + pad * 2.0f, y + pad * 2.0f, width - pad * 4.0f, Math.max(1.0f, 2.0f * scale), Math.max(1.0f, radius * 0.30f), withAlpha(accent, 0.26f));
+    }
+
+    private void drawModernButton(UiButton button, MousePosition mouse, boolean clicked, Runnable action) {
+        drawModernButton(button, mouse, clicked, action, UiColor.BUTTON, UiColor.BUTTON_HOVER, UiColor.ACCENT);
+    }
+
+    private void drawModernButton(UiButton button, MousePosition mouse, boolean clicked, Runnable action, UiColor base, UiColor hover, UiColor accent) {
+        drawModernButtonSurface(button, mouse, clicked, action, base, hover, accent);
+        float scale = Math.max(0.28f, Math.min(2.2f, Math.min(
+                (button.width() - 14.0f) / Math.max(1.0f, BitmapFont.textWidth(button.label(), 1.0f)),
+                (button.height() - 10.0f) / BitmapFont.textHeight(1.0f)
+        )));
+        uiRenderer.centeredText(
+                button.label(),
+                button.x() + button.width() * 0.5f,
+                button.y() + button.height() * 0.5f - BitmapFont.textHeight(scale) * 0.5f,
+                scale,
+                button.enabled() ? UiColor.WHITE : UiColor.MUTED
+        );
+    }
+
+    private void drawModernButtonSurface(UiButton button, MousePosition mouse, boolean clicked, Runnable action, UiColor base, UiColor hover, UiColor accent) {
+        boolean hovered = button.contains(mouse.x(), mouse.y());
+        float uiScale = settings == null ? 1.0f : settings.uiScale();
+        float radius = Math.max(3.0f, Math.min(11.0f * uiScale, button.height() * 0.28f));
+        float pad = Math.max(1.0f, 2.0f * uiScale);
+        float shadow = Math.max(1.0f, 3.0f * uiScale);
+        UiColor border = button.enabled()
+                ? hovered ? withAlpha(accent, 0.86f) : new UiColor(0.12f, 0.16f, 0.14f, 0.94f)
+                : new UiColor(0.10f, 0.11f, 0.10f, 0.54f);
+        UiColor fill = button.enabled()
+                ? hovered ? hover : base
+                : new UiColor(0.075f, 0.085f, 0.080f, 0.62f);
+        uiRenderer.roundedRect(button.x() + shadow * 0.45f, button.y() + shadow * 0.55f, button.width(), button.height(), radius, new UiColor(0.0f, 0.0f, 0.0f, button.enabled() ? 0.24f : 0.14f));
+        uiRenderer.roundedRect(button.x(), button.y(), button.width(), button.height(), radius, border);
+        uiRenderer.roundedRect(button.x() + pad, button.y() + pad, button.width() - pad * 2.0f, button.height() - pad * 2.0f, Math.max(1.0f, radius - pad), fill);
+        uiRenderer.roundedRect(button.x() + pad * 2.0f, button.y() + pad * 2.0f, button.width() - pad * 4.0f, Math.max(1.0f, 2.0f * uiScale), Math.max(1.0f, radius * 0.30f), button.enabled() ? withAlpha(accent, hovered ? 0.46f : 0.28f) : new UiColor(0.65f, 0.65f, 0.58f, 0.10f));
+        if (button.enabled() && hovered) {
+            uiRenderer.roundedRect(button.x() + pad * 2.0f, button.y() + button.height() - pad * 3.0f, button.width() - pad * 4.0f, Math.max(1.0f, 2.0f * uiScale), Math.max(1.0f, radius * 0.30f), withAlpha(accent, 0.22f));
+        }
+        if (button.enabled() && hovered && clicked) {
+            action.run();
+        }
+    }
+
+    private void drawModernToggleButton(MousePosition mouse, boolean clicked, float x, float y, float width, float height, boolean enabled, Runnable action) {
+        boolean hovered = contains(mouse, x, y, width, height);
+        float uiScale = settings == null ? 1.0f : settings.uiScale();
+        float radius = height * 0.5f;
+        UiColor border = enabled ? withAlpha(UiColor.ACCENT, hovered ? 0.95f : 0.74f) : new UiColor(0.30f, 0.24f, 0.19f, hovered ? 0.90f : 0.72f);
+        UiColor fill = enabled
+                ? hovered ? new UiColor(0.15f, 0.34f, 0.19f, 0.94f) : new UiColor(0.10f, 0.25f, 0.15f, 0.90f)
+                : hovered ? new UiColor(0.18f, 0.13f, 0.11f, 0.90f) : new UiColor(0.11f, 0.10f, 0.09f, 0.82f);
+        float pad = Math.max(2.0f, 3.0f * uiScale);
+        float knobSize = Math.max(8.0f, height - pad * 2.0f);
+        float knobX = enabled ? x + width - knobSize - pad : x + pad;
+        uiRenderer.roundedRect(x + 1.0f * uiScale, y + 2.0f * uiScale, width, height, radius, new UiColor(0.0f, 0.0f, 0.0f, 0.22f));
+        uiRenderer.roundedRect(x, y, width, height, radius, border);
+        uiRenderer.roundedRect(x + pad * 0.75f, y + pad * 0.75f, width - pad * 1.5f, height - pad * 1.5f, Math.max(1.0f, radius - pad), fill);
+        uiRenderer.roundedRect(knobX, y + pad, knobSize, knobSize, knobSize * 0.5f, enabled ? withAlpha(UiColor.ACCENT, 0.86f) : new UiColor(0.62f, 0.58f, 0.50f, 0.68f));
+        float textScale = Math.min(1.05f * uiScale, (width - 8.0f * uiScale) / Math.max(1.0f, BitmapFont.textWidth(enabled ? "ON" : "OFF", 1.0f)));
+        uiRenderer.centeredText(enabled ? "ON" : "OFF", x + width * 0.5f, y + height * 0.5f - BitmapFont.textHeight(textScale) * 0.5f, textScale, UiColor.WHITE);
+        if (hovered && clicked) {
+            action.run();
+        }
+    }
+
     private void drawAssetSlot(float x, float y, float size, boolean selected, boolean hotbarSlot) {
         if (selected && hotbarSlot) {
             drawSelectedSlotPulse(x, y, size);
@@ -5241,31 +5512,37 @@ public final class GameClient {
         UiColor fill = selected
                 ? new UiColor(0.44f, 0.54f, 0.38f, 0.98f)
                 : hotbarSlot ? new UiColor(0.30f, 0.30f, 0.27f, 0.98f) : new UiColor(0.28f, 0.28f, 0.26f, 0.98f);
-        uiRenderer.rect(x - 2.0f, y - 2.0f, size + 4.0f, size + 4.0f, new UiColor(0.10f, 0.10f, 0.09f, 0.92f));
-        uiRenderer.rect(x - 1.0f, y - 1.0f, size + 2.0f, size + 2.0f, outer);
-        uiRenderer.rect(x, y, size, size, fill);
-        uiRenderer.rect(x + 3.0f, y + 3.0f, size - 6.0f, size - 6.0f, new UiColor(0.17f, 0.17f, 0.16f, 0.72f));
-        uiRenderer.rect(x + 2.0f, y + 2.0f, size - 4.0f, 2.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.42f));
-        uiRenderer.rect(x + 2.0f, y + 2.0f, 2.0f, size - 4.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.32f));
+        float radius = Math.max(3.0f, Math.min(8.0f, size * 0.14f));
+        uiRenderer.roundedRect(x + 1.5f, y + 2.5f, size, size, radius, new UiColor(0.0f, 0.0f, 0.0f, 0.26f));
+        uiRenderer.roundedRect(x - 1.0f, y - 1.0f, size + 2.0f, size + 2.0f, radius + 1.0f, outer);
+        uiRenderer.roundedRect(x, y, size, size, radius, fill);
+        uiRenderer.roundedRect(x + 3.0f, y + 3.0f, size - 6.0f, size - 6.0f, Math.max(1.0f, radius - 2.0f), new UiColor(0.17f, 0.17f, 0.16f, 0.72f));
+        uiRenderer.roundedRect(x + 2.0f, y + 2.0f, size - 4.0f, 2.0f, 1.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.42f));
+        uiRenderer.rect(x + 2.0f, y + 3.0f, 2.0f, size - 6.0f, selected ? UiColor.WHITE : new UiColor(0.76f, 0.75f, 0.68f, 0.32f));
         uiRenderer.rect(x + 2.0f, y + size - 4.0f, size - 4.0f, 2.0f, new UiColor(0.08f, 0.08f, 0.075f, 0.72f));
         uiRenderer.rect(x + size - 4.0f, y + 2.0f, 2.0f, size - 4.0f, new UiColor(0.08f, 0.08f, 0.075f, 0.70f));
     }
 
     private void drawHotbarPanel(float x, float y, float width, float height) {
-        uiRenderer.rect(x, y, width, height, new UiColor(0.012f, 0.018f, 0.017f, 0.72f));
-        uiRenderer.rect(x + 4.0f, y + 4.0f, width - 8.0f, height - 8.0f, new UiColor(0.028f, 0.040f, 0.036f, 0.76f));
-        uiRenderer.rect(x + 4.0f, y + 4.0f, width - 8.0f, 2.0f, new UiColor(0.30f, 0.46f, 0.35f, 0.62f));
-        uiRenderer.rect(x + 4.0f, y + height - 6.0f, width - 8.0f, 2.0f, new UiColor(0.004f, 0.006f, 0.006f, 0.55f));
+        float uiScale = settings == null ? 1.0f : settings.uiScale();
+        drawModernPanel(
+                x,
+                y,
+                width,
+                height,
+                10.0f * uiScale,
+                new UiColor(0.028f, 0.040f, 0.036f, 0.78f),
+                new UiColor(0.012f, 0.018f, 0.017f, 0.76f),
+                UiColor.ACCENT,
+                uiScale
+        );
     }
 
     private void drawSelectedSlotPulse(float x, float y, float size) {
         UiPulse.Sample pulse = SELECTED_SLOT_PULSE.sample(frameTimeSeconds);
         float inset = pulse.inset();
         UiColor glow = new UiColor(0.55f, 0.86f, 0.48f, pulse.alpha());
-        uiRenderer.rect(x - inset, y - inset, size + inset * 2.0f, 2.0f, glow);
-        uiRenderer.rect(x - inset, y + size + inset - 2.0f, size + inset * 2.0f, 2.0f, glow);
-        uiRenderer.rect(x - inset, y - inset, 2.0f, size + inset * 2.0f, glow);
-        uiRenderer.rect(x + size + inset - 2.0f, y - inset, 2.0f, size + inset * 2.0f, glow);
+        uiRenderer.roundedRect(x - inset, y - inset, size + inset * 2.0f, size + inset * 2.0f, Math.max(4.0f, size * 0.16f), glow);
     }
 
     private boolean drawHudSprite(String key, float x, float y, float width, float height) {
@@ -5361,7 +5638,8 @@ public final class GameClient {
                     button.enabled() ? UiColor.WHITE : UiColor.MUTED
             );
         } else {
-            uiRenderer.button(button, hovered);
+            drawModernButton(button, mouse, clicked, action);
+            return;
         }
         if (button.enabled() && hovered && clicked) {
             action.run();
@@ -5658,62 +5936,46 @@ public final class GameClient {
     }
 
     private void loadSingleplayerAsync() {
+        int ticket = loadingSession.get();
         closeGameSession();
-        showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.10));
+        publishLoadingScreen(LoadingScreenViewModel.loadingWorld(0.10));
         onlineMode = false;
-        worldStartTimeSeconds = currentTimeSeconds();
-        world = new ClientWorld(connectionOptions.seed());
+        double startedAtSeconds = currentTimeSeconds();
         pendingAuthoritativePlayerState.set(null);
         pendingProjectileImpacts.clear();
+        pendingGameplayEvents.clear();
         weatherLightning.reset();
         hotbar.resetForNewGame();
         resetSurvivalHudSignals();
         syncKnownRecipeUnlocks();
 
-        // Start async chunk generation
         ChunkStreamingRings rings = chunkStreamingRings();
-        int previewRadius = rings.previewRadiusChunks();
-        int renderRadius = rings.renderRadiusChunks();
+        int initialRadius = initialSingleplayerLoadRadius(rings);
+        int requiredChunks = loadingChunkTarget(initialRadius);
 
-        // Generate spawn chunks asynchronously
-        new Thread(() -> {
+        startDaemonThread("Singleplayer-World-Loader", () -> {
             try {
-                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.25));
-                world.generatePreview(previewRadius);
-                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.50));
-
-                // Build initial meshes
-                worldRenderer.rebuildDirty(
-                        world,
-                        settings.ambientOcclusionEnabled(),
-                        settings.transparentWaterEnabled(),
-                        settings.meshBuildBudgetChunks(),
-                        camera.position(),
-                        Double.POSITIVE_INFINITY,
-                        Double.POSITIVE_INFINITY,
-                        renderRadius,
-                        previewRadius,
-                        settings.greedyMeshingEnabled()
-                );
-                showLoadingFrame(LoadingScreenViewModel.loadingWorld(0.75));
-
-                // Set camera and finalize
-                setCameraToSpawn();
-                showLoadingFrame(LoadingScreenViewModel.loadingWorld(1.0));
-
-                // Switch to game on main thread
-                pendingLoadingAction = () -> {
-                    gameState = GameState.PLAYING;
-                    setStatus("Singleplayer world loaded");
-                    setCursorForState();
-                    camera.resetMouseTracking();
-                    updateWindowTitle();
-                };
-
-            } catch (Exception e) {
-                showLoadingFrame(LoadingScreenViewModel.error("Failed to load world: " + e.getMessage()));
+                ClientWorld loadedWorld = new ClientWorld(connectionOptions.seed());
+                int loadedChunks = Math.min(loadedWorld.loadedChunkCount(), requiredChunks);
+                publishLoadingScreen(LoadingScreenViewModel.streamingSpawn(loadedChunks, requiredChunks));
+                while (loadingSessionActive(ticket) && loadedChunks < requiredChunks) {
+                    loadedWorld.generatePreview(initialRadius, SINGLEPLAYER_SPAWN_LOAD_BATCH_CHUNKS);
+                    int nextLoadedChunks = Math.min(loadedWorld.loadedChunkCount(), requiredChunks);
+                    publishLoadingScreen(LoadingScreenViewModel.streamingSpawn(nextLoadedChunks, requiredChunks));
+                    if (nextLoadedChunks <= loadedChunks) {
+                        break;
+                    }
+                    loadedChunks = nextLoadedChunks;
+                }
+                if (!loadingSessionActive(ticket)) {
+                    return;
+                }
+                publishLoadingScreen(LoadingScreenViewModel.loadingWorld(0.92));
+                enqueueMainThread(() -> completeSingleplayerLoad(ticket, loadedWorld, startedAtSeconds));
+            } catch (RuntimeException e) {
+                failLoadingAsync(ticket, "Failed to load world: " + e.getMessage());
             }
-        }, "Singleplayer-World-Loader").start();
+        });
     }
 
     private void startMultiplayer() {
@@ -5722,51 +5984,52 @@ public final class GameClient {
     }
 
     private void loadMultiplayer(String host) {
+        int ticket = loadingSession.get();
+        String endpoint = host + ":" + connectionOptions.port();
         closeGameSession();
-        showLoadingFrame(LoadingScreenViewModel.joiningServer(host + ":" + connectionOptions.port()));
-        onlineMode = true;
-        worldStartTimeSeconds = currentTimeSeconds();
-        world = new ClientWorld(connectionOptions.seed());
+        publishLoadingScreen(LoadingScreenViewModel.joiningServer(endpoint));
+        onlineMode = false;
+        double startedAtSeconds = currentTimeSeconds();
         hotbar.resetForNewGame();
         resetSurvivalHudSignals();
         syncKnownRecipeUnlocks();
-        setCameraToSpawn();
         nextMovementSequence = 1L;
         lastAuthoritativeMovementSequence = 0L;
         pendingAuthoritativePlayerState.set(null);
         pendingProjectileImpacts.clear();
         pendingGameplayEvents.clear();
         weatherLightning.reset();
-        try {
-            connection = new GameClientConnection(
-                    host,
-                    connectionOptions.port(),
-                    connectionOptions.username(),
-                    world,
-                    hotbar,
-                    playerStats,
-                    chatLog,
-                    pendingAuthoritativePlayerState::set,
-                    pendingProjectileImpacts::add,
-                    pendingGameplayEvents::add
-            );
-            connection.connect();
-            gameState = GameState.PLAYING;
-            setStatus("Connected to " + host + ":" + connectionOptions.port());
-            setCursorForState();
-            camera.resetMouseTracking();
-            updateWindowTitle();
-        } catch (RuntimeException e) {
-            showLoadingFrame(LoadingScreenViewModel.error("Connection failed: " + host + ":" + connectionOptions.port()));
-            closeGameSession();
-            gameState = GameState.MAIN_MENU;
-            setStatus("Connection failed: " + host + ":" + connectionOptions.port());
-            setCursorForState();
-            updateWindowTitle();
-        }
+        startDaemonThread("Multiplayer-Connector", () -> {
+            GameClientConnection connecting = null;
+            try {
+                ClientWorld connectedWorld = new ClientWorld(connectionOptions.seed());
+                connecting = new GameClientConnection(
+                        host,
+                        connectionOptions.port(),
+                        connectionOptions.username(),
+                        connectedWorld,
+                        hotbar,
+                        playerStats,
+                        chatLog,
+                        pendingAuthoritativePlayerState::set,
+                        pendingProjectileImpacts::add,
+                        pendingGameplayEvents::add
+                );
+                connecting.connect();
+                GameClientConnection connected = connecting;
+                enqueueMainThread(() -> completeMultiplayerLoad(ticket, host, connectedWorld, connected, startedAtSeconds));
+            } catch (RuntimeException e) {
+                if (connecting != null) {
+                    connecting.close();
+                }
+                failLoadingAsync(ticket, "Connection failed: " + endpoint);
+            }
+        });
     }
 
     private void beginLoading(LoadingScreenViewModel viewModel, Runnable action) {
+        loadingSession.incrementAndGet();
+        mainThreadActions.clear();
         loadingScreen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
         pendingLoadingAction = action;
         gameState = GameState.LOADING;
@@ -5783,21 +6046,87 @@ public final class GameClient {
         action.run();
     }
 
-    private void showLoadingFrame(LoadingScreenViewModel viewModel) {
+    private void publishLoadingScreen(LoadingScreenViewModel viewModel) {
         loadingScreen = viewModel == null ? LoadingScreenViewModel.boot() : viewModel;
-        if (window == 0 || uiRenderer == null) {
-            return;
-        }
-        glClearColor(0.025f, 0.04f, 0.045f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        uiRenderer.begin();
-        renderLoadingScreen(loadingScreen, currentTimeSeconds());
-        uiRenderer.flush(framebufferWidth, framebufferHeight);
-        glfwSwapBuffers(window);
-        glfwPollEvents();
     }
 
-    private static int loadingChunkTarget(int radiusChunks) {
+    private void completeSingleplayerLoad(int ticket, ClientWorld loadedWorld, double startedAtSeconds) {
+        if (!loadingSessionActive(ticket)) {
+            return;
+        }
+        worldStartTimeSeconds = startedAtSeconds;
+        world = loadedWorld;
+        setCameraToSpawn();
+        publishLoadingScreen(LoadingScreenViewModel.loadingWorld(1.0));
+        gameState = GameState.PLAYING;
+        setStatus("Singleplayer world loaded");
+        setCursorForState();
+        camera.resetMouseTracking();
+        updateWindowTitle();
+    }
+
+    private void completeMultiplayerLoad(int ticket, String host, ClientWorld connectedWorld, GameClientConnection connected, double startedAtSeconds) {
+        if (!loadingSessionActive(ticket)) {
+            connected.close();
+            return;
+        }
+        worldStartTimeSeconds = startedAtSeconds;
+        world = connectedWorld;
+        connection = connected;
+        onlineMode = true;
+        setCameraToSpawn();
+        gameState = GameState.PLAYING;
+        setStatus("Connected to " + host + ":" + connectionOptions.port());
+        setCursorForState();
+        camera.resetMouseTracking();
+        updateWindowTitle();
+    }
+
+    private void failLoadingAsync(int ticket, String message) {
+        publishLoadingScreen(LoadingScreenViewModel.error(message));
+        enqueueMainThread(() -> {
+            if (!loadingSessionActive(ticket)) {
+                return;
+            }
+            closeGameSession();
+            gameState = GameState.MAIN_MENU;
+            setStatus(message);
+            setCursorForState();
+            updateWindowTitle();
+        });
+    }
+
+    private void enqueueMainThread(Runnable action) {
+        if (action != null) {
+            mainThreadActions.add(action);
+        }
+    }
+
+    private void runMainThreadActions() {
+        Runnable action;
+        while ((action = mainThreadActions.poll()) != null) {
+            action.run();
+        }
+    }
+
+    private boolean loadingSessionActive(int ticket) {
+        return loadingSession.get() == ticket;
+    }
+
+    private static void startDaemonThread(String name, Runnable task) {
+        Thread thread = new Thread(task, name);
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    static int initialSingleplayerLoadRadius(ChunkStreamingRings rings) {
+        if (rings == null) {
+            return 0;
+        }
+        return Math.max(0, Math.min(rings.simulationRadiusChunks(), SINGLEPLAYER_SPAWN_LOAD_RADIUS_CAP));
+    }
+
+    static int loadingChunkTarget(int radiusChunks) {
         int radius = Math.max(0, radiusChunks);
         int diameter = radius * 2 + 1;
         return diameter * diameter;

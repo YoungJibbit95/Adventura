@@ -20,6 +20,15 @@ class ChunkSectionDirtyTest {
     }
 
     @Test
+    void lavaChangesUseTheSameFluidDirtyAspectAsWater() {
+        ChunkSection section = new ChunkSection(0);
+
+        section.setBlockId(4, 5, 6, Blocks.LAVA);
+
+        assertTrue(section.isDirty(ChunkSection.DirtyAspect.FLUID));
+    }
+
+    @Test
     void lightAndBlockEntityDirtyBitsDoNotForceGeometryDirty() {
         ChunkSection section = new ChunkSection(4);
 

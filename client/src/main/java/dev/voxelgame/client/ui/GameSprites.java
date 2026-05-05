@@ -1,13 +1,35 @@
 package dev.voxelgame.client.ui;
 
+import dev.voxelgame.common.item.Items;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 public final class GameSprites implements AutoCloseable {
+    public static final String ITEM_TEXTURE_ROOT = "assets/game/textures/item/";
+    public static final String ITEMS_TEXTURE_ROOT = "assets/game/textures/items/";
+    public static final String BLOCK_TEXTURE_ROOT = "assets/game/textures/block/";
+    public static final String BLOCKS_TEXTURE_ROOT = "assets/game/textures/blocks/";
+    public static final String ASSET_BLOCKS_TEXTURE_ROOT = "assets/game/blocks/";
+    public static final String ASSET_MINERALS_TEXTURE_ROOT = "assets/game/minerals/";
+    public static final String ASSET_DROP_TEXTURE_ROOT = "assets/game/";
+    public static final int INDIVIDUAL_ITEM_MAX_TEXTURE_SIZE = 128;
+    private static final List<String> OPTIONAL_ITEM_KEYS = List.of(
+            "voxel:feathers",
+            "voxel:stick",
+            "voxel:snow",
+            "voxel:sleeping_mat",
+            "voxel:tree_stump"
+    );
+
     private final Map<String, UiSprite> itemSprites = new HashMap<>();
     private final Map<String, UiSprite> hudSprites = new HashMap<>();
     private final Set<UiSpriteSheet> sheets = new LinkedHashSet<>();
@@ -21,7 +43,8 @@ public final class GameSprites implements AutoCloseable {
         UiSpriteSheet blocks = sprites.sheet("assets/game/blocks_tiles_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER);
         UiSpriteSheet tools = sprites.sheet("assets/game/tools_weapons_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER);
         UiSpriteSheet food = sprites.sheet("assets/game/nature_food_sheet.png", UiSpriteSheet.BackgroundMode.OPAQUE);
-        UiSpriteSheet ores = sprites.sheet("assets/game/ores_materials_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER);
+        UiSpriteSheet ores = sprites.optionalSheet("assets/game/ores_materials_sheet.png", UiSpriteSheet.BackgroundMode.EDGE_CHECKER)
+                .orElse(blocks);
 
         sprites.hud("heart_full", ui.sprite(31, 37, 68, 58));
         sprites.hud("heart_half", ui.sprite(129, 37, 68, 58));
@@ -108,6 +131,11 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:raw_iron", ores.sprite(372, 519, 130, 95));
         sprites.item("voxel:copper_ingot", ores.sprite(49, 735, 132, 82));
         sprites.item("voxel:iron_ingot", ores.sprite(374, 735, 132, 82));
+        sprites.item("voxel:gold_ingot", ores.sprite(374, 735, 132, 82));
+        sprites.item("voxel:platin_ingot", ores.sprite(374, 735, 132, 82));
+        sprites.item("voxel:titan_ingot", ores.sprite(374, 735, 132, 82));
+        sprites.item("voxel:ruby_shard", ores.sprite(961, 519, 132, 116));
+        sprites.item("voxel:sapphire_shard", ores.sprite(961, 519, 132, 116));
         sprites.item("voxel:glow_crystal", ores.sprite(961, 519, 132, 116));
         sprites.item("voxel:ancient_fragment", ores.sprite(961, 519, 132, 116));
         sprites.item("voxel:ruin_key", ores.sprite(961, 519, 132, 116));
@@ -118,9 +146,18 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:copper_ore", ores.sprite(46, 146, 130, 132));
         sprites.item("voxel:iron_ore", ores.sprite(377, 146, 130, 132));
         sprites.item("voxel:coal_ore", ores.sprite(742, 146, 130, 132));
+        sprites.item("voxel:gold_ore", ores.sprite(377, 146, 130, 132));
+        sprites.item("voxel:platin_ore", ores.sprite(377, 146, 130, 132));
+        sprites.item("voxel:ruby_ore", ores.sprite(1028, 147, 133, 130));
+        sprites.item("voxel:sapphire_ore", ores.sprite(1028, 147, 133, 130));
+        sprites.item("voxel:titan_ore", ores.sprite(377, 146, 130, 132));
         sprites.item("voxel:clay_deposit", ores.sprite(1306, 147, 130, 132));
 
         sprites.item("voxel:stone_sword", tools.sprite(76, 123, 150, 132));
+        sprites.item("voxel:iron_sword", tools.sprite(76, 123, 150, 132));
+        sprites.item("voxel:platin_sword", tools.sprite(76, 123, 150, 132));
+        sprites.item("voxel:sapphire_sword", tools.sprite(76, 123, 150, 132));
+        sprites.item("voxel:titan_sword", tools.sprite(76, 123, 150, 132));
         sprites.item("voxel:stone_axe", tools.sprite(254, 116, 145, 145));
         sprites.item("voxel:stone_pickaxe", tools.sprite(438, 116, 145, 145));
         sprites.item("voxel:copper_axe", tools.sprite(621, 115, 145, 145));
@@ -160,7 +197,30 @@ public final class GameSprites implements AutoCloseable {
         sprites.item("voxel:herb_planter", food.sprite(1170, 677, 86, 84));
         sprites.item("voxel:cactus", blocks.sprite(1306, 259, 150, 158));
 
+        sprites.overrideItemSpritesFromIndividualAssets();
         return sprites;
+    }
+
+    public static List<String> itemTextureCandidates(String itemKey) {
+        if (itemKey == null || itemKey.isBlank()) {
+            return List.of();
+        }
+        String name = itemKey.substring(itemKey.indexOf(':') + 1);
+        List<String> baseNames = itemTextureBaseNames(name);
+        List<String> candidates = new ArrayList<>();
+        for (String baseName : baseNames) {
+            for (String root : List.of(ITEM_TEXTURE_ROOT, ITEMS_TEXTURE_ROOT, ASSET_MINERALS_TEXTURE_ROOT)) {
+                addUnique(candidates, root + baseName + ".png");
+            }
+        }
+        for (String baseName : baseNames) {
+            for (String suffix : itemBlockSuffixes(baseName)) {
+                for (String root : List.of(BLOCK_TEXTURE_ROOT, BLOCKS_TEXTURE_ROOT, ASSET_BLOCKS_TEXTURE_ROOT, ASSET_DROP_TEXTURE_ROOT)) {
+                    addUnique(candidates, root + baseName + suffix + ".png");
+                }
+            }
+        }
+        return candidates;
     }
 
     public Optional<UiSprite> item(String itemKey) {
@@ -194,8 +254,20 @@ public final class GameSprites implements AutoCloseable {
         }
     }
 
+    private Optional<UiSpriteSheet> optionalSheet(String resourcePath, UiSpriteSheet.BackgroundMode backgroundMode, int maxDimension) {
+        try {
+            return Optional.of(sheet(resourcePath, backgroundMode, maxDimension));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
     private UiSpriteSheet sheet(String resourcePath, UiSpriteSheet.BackgroundMode backgroundMode) {
-        UiSpriteSheet sheet = UiSpriteSheet.load(resourcePath, backgroundMode);
+        return sheet(resourcePath, backgroundMode, 0);
+    }
+
+    private UiSpriteSheet sheet(String resourcePath, UiSpriteSheet.BackgroundMode backgroundMode, int maxDimension) {
+        UiSpriteSheet sheet = UiSpriteSheet.load(resourcePath, backgroundMode, maxDimension);
         sheets.add(sheet);
         return sheet;
     }
@@ -206,5 +278,88 @@ public final class GameSprites implements AutoCloseable {
 
     private void hud(String key, UiSprite sprite) {
         hudSprites.put(key, sprite);
+    }
+
+    private void overrideItemSpritesFromIndividualAssets() {
+        Set<String> keys = new LinkedHashSet<>(itemSprites.keySet());
+        Items.createDefaultRegistry().values().forEach(item -> keys.add(item.key()));
+        keys.addAll(OPTIONAL_ITEM_KEYS);
+        for (String key : keys) {
+            for (String candidate : itemTextureCandidates(key)) {
+                if (!resourceExists(candidate)) {
+                    continue;
+                }
+                Optional<UiSpriteSheet> sheet = optionalSheet(candidate, UiSpriteSheet.BackgroundMode.EDGE_CHECKER_TRIM, INDIVIDUAL_ITEM_MAX_TEXTURE_SIZE);
+                if (sheet.isPresent()) {
+                    item(key, sheet.get().fullSprite());
+                    break;
+                }
+            }
+        }
+    }
+
+    private static List<String> itemTextureBaseNames(String name) {
+        List<String> baseNames = new ArrayList<>();
+        addUnique(baseNames, name);
+        switch (name) {
+            case "grass_block" -> {
+                addUnique(baseNames, "grass");
+                addUnique(baseNames, "mossy_grass");
+            }
+            case "skyroot_log" -> addUnique(baseNames, "oak_log");
+            case "skyroot_leaves" -> addUnique(baseNames, "oak_leaves");
+            case "pine_log" -> addUnique(baseNames, "spruce_log");
+            case "pine_leaves" -> addUnique(baseNames, "spruce_leaves");
+            case "mossy_stone" -> {
+                addUnique(baseNames, "cobblestone");
+                addUnique(baseNames, "cracked_cobblestone");
+            }
+            case "mossy_path" -> {
+                addUnique(baseNames, "mossy_grass");
+                addUnique(baseNames, "myzelium");
+            }
+            case "ice" -> addUnique(baseNames, "ice_block");
+            case "skyroot_planks" -> addUnique(baseNames, "oak_planks");
+            case "pine_planks" -> addUnique(baseNames, "spruce_planks");
+            case "snowy_grass_block" -> {
+                addUnique(baseNames, "snowy_grass");
+                addUnique(baseNames, "dirt");
+            }
+            case "stone_bricks" -> addUnique(baseNames, "stone_brick_block");
+            case "mossy_stone_bricks" -> addUnique(baseNames, "mossy_stone_brick_block");
+            case "fancy_stone_bricks" -> addUnique(baseNames, "fancy_stone_brick_block");
+            case "mossy_fancy_stone_bricks" -> addUnique(baseNames, "mossy_fancy_stone_brick_block");
+            case "glass" -> addUnique(baseNames, "glass_block");
+            case "platinum_ingot" -> addUnique(baseNames, "platin_ingot");
+            case "titanium_ingot" -> addUnique(baseNames, "titan_ingot");
+            case "tree_stump" -> addUnique(baseNames, "oak_log");
+            default -> {
+            }
+        }
+        return baseNames;
+    }
+
+    private static List<String> itemBlockSuffixes(String baseName) {
+        if (baseName.endsWith("_log")) {
+            return List.of("_side", "_top", "");
+        }
+        if (baseName.equals("grass_block") || baseName.equals("grass") || baseName.equals("mossy_grass") || baseName.equals("myzelium")) {
+            return List.of("_top", "_side", "");
+        }
+        return List.of("", "_top", "_side", "_bottom");
+    }
+
+    private static void addUnique(List<String> values, String value) {
+        if (!values.contains(value)) {
+            values.add(value);
+        }
+    }
+
+    private static boolean resourceExists(String path) {
+        try (InputStream input = GameSprites.class.getClassLoader().getResourceAsStream(path)) {
+            return input != null;
+        } catch (IOException e) {
+            return false;
+        }
     }
 }

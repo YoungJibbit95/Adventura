@@ -51,6 +51,20 @@ public final class Items {
         block(registry, (short) 85, "voxel:forge");
         block(registry, (short) 100, "voxel:spore_blossom");
         block(registry, (short) 102, "voxel:lava");
+        block(registry, (short) 103, "voxel:red_sand");
+        block(registry, (short) 104, "voxel:farmland");
+        block(registry, (short) 105, "voxel:snowy_grass_block");
+        block(registry, (short) 106, "voxel:pine_planks");
+        block(registry, (short) 107, "voxel:stone_bricks");
+        block(registry, (short) 108, "voxel:mossy_stone_bricks");
+        block(registry, (short) 109, "voxel:fancy_stone_bricks");
+        block(registry, (short) 110, "voxel:mossy_fancy_stone_bricks");
+        block(registry, (short) 111, "voxel:gold_ore");
+        block(registry, (short) 112, "voxel:platin_ore");
+        block(registry, (short) 113, "voxel:ruby_ore");
+        block(registry, (short) 114, "voxel:sapphire_ore");
+        block(registry, (short) 115, "voxel:titan_ore");
+        block(registry, (short) 121, "voxel:glass");
         registry.register((short) 20, "voxel:coal", new ItemType((short) 20, "voxel:coal", 64, ToolType.NONE, 0, null));
         registry.register((short) 21, "voxel:raw_iron", new ItemType((short) 21, "voxel:raw_iron", 64, ToolType.NONE, 0, null));
         registry.register((short) 22, "voxel:raw_copper", new ItemType((short) 22, "voxel:raw_copper", 64, ToolType.NONE, 0, null));
@@ -111,6 +125,15 @@ public final class Items {
         registry.register((short) 98, "voxel:glow_mushroom_cap", new ItemType((short) 98, "voxel:glow_mushroom_cap", 16, ToolType.NONE, 0, null, 2, 1));
         registry.register((short) 99, "voxel:glow_mushroom_stew", new ItemType((short) 99, "voxel:glow_mushroom_stew", 8, ToolType.NONE, 0, null, 9, 4));
         registry.register((short) 101, "voxel:spore_tea", new ItemType((short) 101, "voxel:spore_tea", 8, ToolType.NONE, 0, null, 5, 6));
+        registry.register((short) 116, "voxel:gold_ingot", new ItemType((short) 116, "voxel:gold_ingot", 64, ToolType.NONE, 0, null));
+        registry.register((short) 117, "voxel:platin_ingot", new ItemType((short) 117, "voxel:platin_ingot", 64, ToolType.NONE, 0, null));
+        registry.register((short) 118, "voxel:ruby_shard", new ItemType((short) 118, "voxel:ruby_shard", 64, ToolType.NONE, 0, null));
+        registry.register((short) 119, "voxel:sapphire_shard", new ItemType((short) 119, "voxel:sapphire_shard", 64, ToolType.NONE, 0, null));
+        registry.register((short) 120, "voxel:titan_ingot", new ItemType((short) 120, "voxel:titan_ingot", 64, ToolType.NONE, 0, null));
+        registry.register((short) 122, "voxel:iron_sword", new ItemType((short) 122, "voxel:iron_sword", 1, ToolType.NONE, 220, null));
+        registry.register((short) 123, "voxel:platin_sword", new ItemType((short) 123, "voxel:platin_sword", 1, ToolType.NONE, 340, null));
+        registry.register((short) 124, "voxel:sapphire_sword", new ItemType((short) 124, "voxel:sapphire_sword", 1, ToolType.NONE, 280, null));
+        registry.register((short) 125, "voxel:titan_sword", new ItemType((short) 125, "voxel:titan_sword", 1, ToolType.NONE, 520, null));
         aliases(registry);
         return registry;
     }
@@ -123,6 +146,19 @@ public final class Items {
         registry.registerAlias("voxel:wild_berries", "voxel:berries");
         registry.registerAlias("voxel:planks", "voxel:skyroot_planks");
         registry.registerAlias("voxel:wooden_plank", "voxel:skyroot_planks");
+        registry.registerAlias("voxel:spruce_planks", "voxel:pine_planks");
+        registry.registerAlias("voxel:snowy_grass", "voxel:snowy_grass_block");
+        registry.registerAlias("voxel:stone_brick_block", "voxel:stone_bricks");
+        registry.registerAlias("voxel:mossy_stone_brick_block", "voxel:mossy_stone_bricks");
+        registry.registerAlias("voxel:fancy_stone_brick_block", "voxel:fancy_stone_bricks");
+        registry.registerAlias("voxel:mossy_fancy_stone_brick_block", "voxel:mossy_fancy_stone_bricks");
+        registry.registerAlias("voxel:platinum_ore", "voxel:platin_ore");
+        registry.registerAlias("voxel:titanium_ore", "voxel:titan_ore");
+        registry.registerAlias("voxel:platinum_ingot", "voxel:platin_ingot");
+        registry.registerAlias("voxel:titanium_ingot", "voxel:titan_ingot");
+        registry.registerAlias("voxel:platinum_sword", "voxel:platin_sword");
+        registry.registerAlias("voxel:titanium_sword", "voxel:titan_sword");
+        registry.registerAlias("voxel:glass_block", "voxel:glass");
         registry.registerAlias("voxel:iron_ore", "voxel:raw_iron");
         registry.registerAlias("voxel:copper_ore", "voxel:raw_copper");
     }

@@ -7,9 +7,11 @@ import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.ItemType;
 import dev.voxelgame.common.item.Items;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
 import dev.voxelgame.common.physics.EnvironmentHazardRules;
 import dev.voxelgame.common.physics.FluidPhysics;
 import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.PlayerPhysicsConfig;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.PartialShapeImpactResolver;
 import dev.voxelgame.common.physics.ProjectileBounds;
@@ -164,6 +166,18 @@ class ServerWorldTest {
         world.setBlock(8, 66, 8, Blocks.WATER);
         PlayerWaterState submerged = world.playerWaterState(8.5, eyeY, 8.5, PlayerBounds.DEFAULT);
         assertTrue(submerged.headUnderwater());
+    }
+
+    @Test
+    void playerSurfaceUsesAuthoritativeBlockBelowFeet() {
+        ServerWorld world = new ServerWorld(123L);
+        world.setBlock(8, 64, 8, Blocks.SNOW);
+        world.setBlock(8, 65, 8, Blocks.AIR);
+
+        BlockSurfacePhysics.SurfaceMaterial surface = world.playerSurface(8.5, 66.62, 8.5, PlayerPhysicsConfig.defaults());
+
+        assertEquals(BlockSurfacePhysics.SNOW, surface);
+        assertEquals(BlockSurfacePhysics.DEFAULT, world.surfaceAt(Double.NaN, 64.0, 8.5));
     }
 
     @Test

@@ -11,12 +11,12 @@ export function Topbar({ activeTab, notice, onOpenWorkspace }) {
   return (
     <header className="topbar">
       <div>
-        <span className="eyebrow">AdventureCraft Style</span>
+        <span className="eyebrow">Adventura Runtime</span>
         <h2>{titles[activeTab] || "Adventura"}</h2>
       </div>
       <div className="top-actions">
         {notice && <span className="notice">{notice}</span>}
-        <button className="icon-button" type="button" onClick={onOpenWorkspace} aria-label="Workspace öffnen">
+        <button className="icon-button" type="button" onClick={onOpenWorkspace} aria-label="Workspace oeffnen">
           <FolderOpen size={18} />
         </button>
       </div>

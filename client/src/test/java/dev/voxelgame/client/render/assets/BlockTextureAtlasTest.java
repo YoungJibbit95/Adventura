@@ -22,8 +22,34 @@ class BlockTextureAtlasTest {
 
         assertTrue(grassTop.contains("assets/game/textures/block/grass_block_top.png"));
         assertTrue(grassTop.contains("assets/game/textures/block/grass_top.png"));
+        assertTrue(grassTop.contains("assets/game/blocks/grass_block_top.png"));
+        assertTrue(grassTop.contains("assets/game/grass_block_top.png"));
         assertTrue(plankSide.contains("assets/game/textures/block/skyroot_planks_side.png"));
         assertTrue(plankSide.contains("assets/game/textures/blocks/skyroot_planks.png"));
+    }
+
+    @Test
+    void exposesAliasCandidatesForCurrentAssetDropNames() {
+        List<String> skyrootSide = BlockTextureAtlas.textureCandidates("voxel:skyroot_log", BlockTextureAtlas.TextureFace.SIDE);
+        List<String> pineTop = BlockTextureAtlas.textureCandidates("voxel:pine_log", BlockTextureAtlas.TextureFace.TOP);
+        List<String> mossyPathTop = BlockTextureAtlas.textureCandidates("voxel:mossy_path", BlockTextureAtlas.TextureFace.TOP);
+        List<String> iceSide = BlockTextureAtlas.textureCandidates("voxel:ice", BlockTextureAtlas.TextureFace.SIDE);
+        List<String> planksSide = BlockTextureAtlas.textureCandidates("voxel:skyroot_planks", BlockTextureAtlas.TextureFace.SIDE);
+        List<String> pinePlanksSide = BlockTextureAtlas.textureCandidates("voxel:pine_planks", BlockTextureAtlas.TextureFace.SIDE);
+        List<String> snowyGrassBottom = BlockTextureAtlas.textureCandidates("voxel:snowy_grass_block", BlockTextureAtlas.TextureFace.BOTTOM);
+        List<String> stoneBricksSide = BlockTextureAtlas.textureCandidates("voxel:stone_bricks", BlockTextureAtlas.TextureFace.SIDE);
+        List<String> glassSide = BlockTextureAtlas.textureCandidates("voxel:glass", BlockTextureAtlas.TextureFace.SIDE);
+
+        assertTrue(skyrootSide.contains("assets/game/oak_log_side.png"));
+        assertTrue(skyrootSide.contains("assets/game/blocks/oak_log_side.png"));
+        assertTrue(pineTop.contains("assets/game/spruce_log_top.png"));
+        assertTrue(mossyPathTop.contains("assets/game/mossy_grass_top.png"));
+        assertTrue(iceSide.contains("assets/game/ice_block.png"));
+        assertTrue(planksSide.contains("assets/game/oak_planks.png"));
+        assertTrue(pinePlanksSide.contains("assets/game/spruce_planks.png"));
+        assertTrue(snowyGrassBottom.contains("assets/game/dirt.png"));
+        assertTrue(stoneBricksSide.contains("assets/game/stone_brick_block.png"));
+        assertTrue(glassSide.contains("assets/game/blocks/glass_block.png"));
     }
 
     @Test
@@ -56,6 +82,30 @@ class BlockTextureAtlasTest {
     }
 
     @Test
+    void removesConnectedNeutralEdgeBackgroundFromIndividualTextures() {
+        BufferedImage image = new BufferedImage(5, 5, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                image.setRGB(x, y, 0xFFFFFFFF);
+            }
+        }
+        for (int y = 1; y <= 3; y++) {
+            for (int x = 1; x <= 3; x++) {
+                image.setRGB(x, y, 0xFF884422);
+            }
+        }
+        image.setRGB(2, 2, 0xFFFFFFFF);
+
+        BufferedImage cleaned = BlockTextureAtlas.sanitizeIndividualTexture(image);
+
+        assertEquals(3, cleaned.getWidth());
+        assertEquals(3, cleaned.getHeight());
+        assertEquals(0xFF884422, cleaned.getRGB(0, 0));
+        assertEquals(0xFFFFFFFF, cleaned.getRGB(1, 1));
+        assertEquals(0xFF884422, cleaned.getRGB(2, 2));
+    }
+
+    @Test
     void reportsNoMissingTextureMappingsForRegisteredBlocks() {
         List<String> missing = BlockTextureAtlas.missingTextureBlocks(Blocks.createDefaultRegistry());
 
@@ -73,6 +123,8 @@ class BlockTextureAtlasTest {
         assertEquals(BlockTextureAtlas.TILE_PADDING_PIXELS, report.tilePaddingPixels());
         assertEquals(BlockTextureAtlas.UV_INSET_PIXELS, report.uvInsetPixels(), 0.0001f);
         assertEquals(BlockTextureAtlas.ATLAS_FILTER_MODE, report.filterMode());
+        assertEquals(BlockTextureAtlas.INDIVIDUAL_ASSET_EDGE_CLEANUP_MODE, report.edgeCleanupMode());
+        assertTrue(report.tileContentSize() <= BlockTextureAtlas.MAX_TILE_CONTENT_SIZE);
         assertTrue(report.textureCount() > 0);
         assertTrue(report.materialCount() > Blocks.LAVA);
         assertEquals(BlockTextureAtlas.MAX_BLOCK_ID, report.materialCapacity());
@@ -96,9 +148,31 @@ class BlockTextureAtlasTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertTrue(grassTop.contains("#grass_top,"));
-        assertTrue(grassSide.contains("#grass_side,"));
+        assertTrue(grassTop.contains("grass_top") || grassTop.contains("grass_block_top"));
+        assertTrue(grassSide.contains("grass_side") || grassSide.contains("grass_block_side"));
         assertNotEquals(grassTop, grassSide);
+    }
+
+    @Test
+    void usesAvailableFlatAssetDropTexturesBeforeBundledSheetFallbacks() {
+        BlockTextureAtlas.AtlasValidationReport report = BlockTextureAtlas.validationReport(Blocks.createDefaultRegistry());
+
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:coal_ore.side assets/game/blocks/coal_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:copper_ore.side assets/game/blocks/copper_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:iron_ore.side assets/game/blocks/iron_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:gold_ore.side assets/game/blocks/gold_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:platin_ore.side assets/game/blocks/platin_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:ruby_ore.side assets/game/blocks/ruby_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:sapphire_ore.side assets/game/blocks/sapphire_ore.png ")));
+        assertTrue(report.uvRectDebugLines().stream().anyMatch(line ->
+                line.startsWith("voxel:titan_ore.side assets/game/blocks/titan_ore.png ")));
     }
 
     @Test

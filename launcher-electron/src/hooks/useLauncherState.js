@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultSettings, modeLabels } from "../data/launcherData";
 import { adventuraApi } from "../lib/adventuraApi";
+
+const logLimit = 180;
+const initialProcessStatus = {
+  client: { running: false, pid: null },
+  server: { running: false, pid: null }
+};
 
 const initialLog = {
   time: new Date().toLocaleTimeString("de-DE"),
@@ -18,9 +24,14 @@ export function useLauncherState() {
   const [busyMode, setBusyMode] = useState("");
   const [preflight, setPreflight] = useState(null);
   const [preflightBusy, setPreflightBusy] = useState(false);
+  const [processStatus, setProcessStatus] = useState(initialProcessStatus);
+  const noticeTimerRef = useRef(0);
+  const busyTimerRef = useRef(0);
+  const preflightRequestRef = useRef(0);
 
   useEffect(() => {
-    let cleanup = () => {};
+    let logCleanup = () => {};
+    let statusCleanup = () => {};
     let mounted = true;
 
     adventuraApi.getRuntimeInfo().then((info) => {
@@ -43,13 +54,25 @@ export function useLauncherState() {
         setSettings(defaultSettings);
         runPreflight(defaultSettings, false);
       });
-    cleanup = adventuraApi.onLog((entry) => {
-      setLogs((current) => [...current.slice(-140), entry]);
+    adventuraApi.getStatus()
+      .then((status) => mounted && setProcessStatus(status))
+      .catch(() => mounted && setProcessStatus(initialProcessStatus));
+    logCleanup = adventuraApi.onLog((entry) => {
+      setLogs((current) => {
+        const retained = current.length >= logLimit ? current.slice(-(logLimit - 1)) : current;
+        return [...retained, entry];
+      });
+    });
+    statusCleanup = adventuraApi.onStatus((status) => {
+      setProcessStatus(status);
     });
 
     return () => {
       mounted = false;
-      cleanup();
+      logCleanup();
+      statusCleanup();
+      window.clearTimeout(noticeTimerRef.current);
+      window.clearTimeout(busyTimerRef.current);
     };
   }, []);
 
@@ -85,13 +108,17 @@ export function useLauncherState() {
       const saved = await adventuraApi.saveSettings(settings);
       setSettings(saved);
       const result = await adventuraApi.launch({ mode, settings: saved });
-      showNotice(result.ok ? `${modeLabels[mode]} startet` : result.message, 2600);
+      showNotice(result.ok ? `${modeLabels[mode]} startet` : result.message || "Start fehlgeschlagen", 2600);
+      if (!result.ok && !result.alreadyRunning) {
+        setActiveTab("terminal");
+      }
       runPreflight(saved, false);
     } catch (error) {
       showNotice(`Startfehler: ${error.message}`, 3000);
       setActiveTab("terminal");
     } finally {
-      window.setTimeout(() => setBusyMode(""), 700);
+      window.clearTimeout(busyTimerRef.current);
+      busyTimerRef.current = window.setTimeout(() => setBusyMode(""), 700);
     }
   }
 
@@ -118,32 +145,41 @@ export function useLauncherState() {
   }
 
   async function runPreflight(nextSettings = settings, showTab = true) {
+    const requestId = preflightRequestRef.current + 1;
+    preflightRequestRef.current = requestId;
     setPreflightBusy(true);
     if (showTab) {
       setActiveTab("terminal");
     }
     try {
       const result = await adventuraApi.preflight({ settings: nextSettings });
-      setPreflight(result);
+      if (requestId === preflightRequestRef.current) {
+        setPreflight(result);
+      }
       if (showTab) {
         showNotice(result.ok ? "Preflight ok" : "Preflight hat Fehler", 2200);
       }
     } catch (error) {
-      setPreflight({
-        ok: false,
-        checks: [
-          { label: "Preflight", status: "error", detail: error.message }
-        ]
-      });
+      if (requestId === preflightRequestRef.current) {
+        setPreflight({
+          ok: false,
+          checks: [
+            { label: "Preflight", status: "error", detail: error.message }
+          ]
+        });
+      }
       showNotice(`Preflight Fehler: ${error.message}`, 2600);
     } finally {
-      setPreflightBusy(false);
+      if (requestId === preflightRequestRef.current) {
+        setPreflightBusy(false);
+      }
     }
   }
 
   function showNotice(message, duration = 1800) {
+    window.clearTimeout(noticeTimerRef.current);
     setNotice(message);
-    window.setTimeout(() => setNotice(""), duration);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(""), duration);
   }
 
   return {
@@ -157,6 +193,7 @@ export function useLauncherState() {
     summary,
     preflight,
     preflightBusy,
+    processStatus,
     updateField,
     updateNumber,
     save,

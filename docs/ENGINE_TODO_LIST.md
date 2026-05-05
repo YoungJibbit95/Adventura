@@ -60,6 +60,10 @@ Adventura soll als Voxel-Engine:
 
 ### Offen
 
+- ~~Launcher-/Runtime-Startpfad fuer Windows, macOS und Linux absichern.~~
+  Erledigt: 2026-05-05, `launcher-electron/electron/platform.cjs` kapselt Plattformnamen, Startscript-Namen, Java-21-Runtime-Aufloesung, Unix-Executable-Bits und Child-Environment. Launcher-Preflight meldet jetzt Plattform und Java-Quelle.
+  Verifikation: `npm run test:platform`; `npm run build` im Launcher; `./gradlew.bat buildGame --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=platform_ui_build_1`.
+- MacOS Full Compatibility End-to-End-Smoke auf echter macOS-Maschine/CI bleibt offen.
 - ~~Test-Binary-Result-Pfad gegen parallele `cleanTest`-Laeufe isolieren.~~
   Erledigt: 2026-05-01, `binaryResultsDirectory` nutzt eine Run-ID aus `-PadventuraTestRunId`, `-Dadventura.testRunId` oder automatisch generierter UUID.
   Verifikation: Gradle-Konfiguration kompiliert bis `compileTestJava`; `ContentTagRegistryTest` erzeugte XML/HTML mit 8 Tests, 0 Fehlern.
@@ -159,6 +163,12 @@ Chunkgen, Lighting, Meshing, Save IO und Netzwerkaufbereitung sollen budgetiert 
   - `./gradlew :common:test --tests dev.voxelgame.common.engine.EngineJobModelTest --no-daemon --max-workers=1 --rerun-tasks`
   - `./gradlew :client:test --tests dev.voxelgame.client.EngineFrameStatsTest --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --no-daemon --max-workers=1 --rerun-tasks`
 
+### Erreicht 2026-05-05
+
+- Chunk-Generation besitzt jetzt eigene Chunk- und Millisekunden-Budgets statt nur indirekt am Mesh-Budget zu haengen.
+- Langsame Frames drosseln Preview-Chunkgen adaptiv, damit Streaming-Arbeit bei Stottern sofort kleiner wird.
+- `EngineFrameStats.Budgets` und Debug-HUD zeigen das aktuelle Chunkgen-Budget neben Mesh-, Upload-, Unload- und GPU-Release-Budgets.
+
 ### Akzeptanz
 
 - ~~schnelle Spieleraktion gewinnt gegen Preview-Arbeit.~~
@@ -232,6 +242,21 @@ Chunk-Load/Unload soll vorhersehbar und stutterarm sein.
   - `./gradlew :common:test --tests dev.voxelgame.common.world.ChunkStreamingRingsTest --no-daemon --max-workers=1 --rerun-tasks`
   - `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --tests dev.voxelgame.client.GameSettingsTest --no-daemon --max-workers=1 --rerun-tasks`
   - `./gradlew :server:test --tests dev.voxelgame.server.net.ServerConnectionHandlerTest --no-daemon --max-workers=1 --rerun-tasks`
+
+### Erreicht 2026-05-05
+
+- ~~Singleplayer-Entry blockiert den Render-Thread nicht mehr waehrend Worldgen/Connect.~~ Loader-Worker veroeffentlichen nur noch `LoadingScreenViewModel`-Fortschritt und uebergeben fertige World/Connection per Main-Thread-Queue.
+- ~~Initialer Singleplayer-Load laedt nicht mehr den kompletten Render-/Preview-Radius vorab.~~ Der Startpfad laedt den kleinen Simulation-/Spawn-Ring, maximal Radius 2 bzw. 25 Chunks; der restliche Preview-Ring streamt budgetiert im normalen Spiel.
+- ~~Loading-Screens rendern echte Fortschrittsphasen statt Cross-Thread-GL-Frames.~~ GLFW/OpenGL bleibt im Render-Thread, Singleplayer zeigt `STREAMING_SPAWN` mit Chunk-Zaehler.
+- ~~Preview-Chunkgen ist pro Frame zeit- und mengenbudgetiert.~~ `ClientWorld.ensurePreviewAround(..., maxMilliseconds)` stoppt nach Chunk-/Zeitbudget, macht aber mindestens einen erlaubten Chunk Fortschritt.
+- ~~Chunkgen-Budgets reagieren auf langsame Frames.~~ `GameSettings.effectiveChunkGenerationBudgetChunks(...)` und `effectiveChunkGenerationBudgetMilliseconds(...)` reduzieren Streaming-Arbeit bei teuren Frames.
+- ~~Lighting fuer neu generierte Preview-Batches wird zusammengefasst.~~ Neue Chunks werden als Batch beleuchtet und als ein Light-Job gemessen, statt pro Chunk mehrere Full-Rebuilds zu starten.
+- ~~Preview-Chunkgen loest keine Remesh-Kaskade mehr fuer noch ungeladene Nachbarn aus.~~ Neue Preview-Chunks markieren nur sich selbst und bereits geladene kardinale Nachbarn dirty.
+- ~~Layer-Meshing ueberspringt leere Render-Layer.~~ `ChunkRenderLayerPresence` scannt Chunk-Sections einmal und verhindert Opaque/Cutout/Translucent-Builds, wenn ein Layer im Chunk nicht vorkommt.
+- Verifikation:
+  - `./gradlew :client:test --tests dev.voxelgame.client.viewmodel.LoadingScreenViewModelTest --tests dev.voxelgame.client.GameClientUiLayoutTest --tests dev.voxelgame.client.world.ClientWorldSpawnTest --no-daemon --max-workers=1`
+  - `./gradlew :client:test --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.EngineFrameStatsTest --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --no-daemon --max-workers=1`
+  - `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --tests dev.voxelgame.client.GameClientUiLayoutTest --no-daemon --max-workers=1 -PadventuraTestRunId=world_chunk_melee_ui_3`
 
 ### Akzeptanz
 
@@ -314,18 +339,28 @@ GPU-Arbeit soll mit Section- und Layer-Daten skalieren.
 
 ### Aufgaben
 
-- Mesh-Ausgabe auf Section-Parts erweitern: `sectionY`, `layer`, `indexOffset`, `indexCount`, `bounds`.
-- pro Chunk mehrere Draw-Ranges oder mehrere `GpuChunkMesh`-Parts pruefen.
-- GPU-Upload-Staging-Buffer einfuehren.
+- ~~Mesh-Ausgabe auf Section-Parts erweitern: `sectionY`, `layer`, `indexOffset`, `indexCount`, `bounds`.~~ `ChunkMesh.SectionPart`
+- ~~pro Chunk mehrere Draw-Ranges oder mehrere `GpuChunkMesh`-Parts pruefen.~~ `GpuChunkMesh.drawParts(...)` nutzt `glDrawElements` mit Element-Buffer-Byte-Offsets pro sichtbarem Section-Part.
+- ~~CPU-seitige TerrainUploadQueue als Upload-Staging einfuehren.~~ Echter persistenter GL-Staging-/Ringbuffer bleibt separater Low-Level-Schritt.
 - persistente oder ringfoermige Upload-Buffer evaluieren.
-- Upload-Budget in Bytes und Millisekunden messen.
+- ~~Upload-Budget in Bytes und Millisekunden messen.~~ `TerrainUploadQueue.UploadResult` liefert hochgeladene Bytes, Pending-Bytes und elapsed ms.
 - Partial Rebuilds nur fuer betroffene Sections vorbereiten.
+
+### Erreicht 2026-05-05
+
+- `ChunkMesher` baut SOLID/CUTOUT/TRANSLUCENT pro vertikaler Section als zusammenhaengende Index-Range und haelt Bounds je Part fest.
+- Greedy-Meshing laeuft jetzt sectionweise, damit Merge-Flaechen nicht ueber Section-Grenzen hinweg unteilbare Draw-Ranges erzeugen.
+- `GpuChunkMesh` speichert Section-Parts und kann sichtbare Ranges mit korrekten Element-Buffer-Offsets zeichnen.
+- `TerrainUploadQueue` staged `LayeredMeshBuild`-Snapshots vor dem GL-Upload, dedupt pro `ChunkPos`, sortiert nach Kamera-Prioritaet und draned unter ms-Budget mit mindestens einem Upload pro erlaubtem Frame.
+- `WorldRenderer.releaseChunks(...)` cancelt pending Uploads fuer entladene Chunks, bevor GPU-Ressourcen freigegeben werden.
+- Verifikation: `ChunkMesherTest.visibleFaceMeshingEmitsContiguousSectionParts`, `ChunkMesherTest.sectionPartMeshingKeepsSectionBoundaryFacesCulledByNeighborBlocks`.
+- Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.render.TerrainUploadQueueTest --tests dev.voxelgame.client.render.WorldRendererTest --no-daemon --max-workers=1`.
 
 ### Akzeptanz
 
 - Blockaenderung in einer Hoehle rebuildet nicht den gesamten hohen Chunk, wenn nicht noetig.
 - Upload-Spikes sind im HUD sichtbar und budgetiert.
-- Section-Parts koennen einzeln gecullt werden.
+- ~~Section-Parts koennen einzeln gecullt werden.~~
 
 ## P3.3 Occlusion und Visibility Taktiken
 
@@ -335,12 +370,19 @@ Nicht sichtbare Chunk-Sections sollen moeglichst frueh aussortiert werden.
 
 ### Aufgaben
 
-- Frustum-Culling pro Section-Part.
-- Distance-Culling pro Ring.
+- ~~Frustum-Culling pro Section-Part.~~ `VisibilityCollector.partCulling(...)` testet Part-Bounds, `TerrainRenderer` zeichnet nur sichtbare Parts eines sichtbaren Mesh-Layers.
+- ~~Distance-Culling pro Ring.~~ Terrain-Layer bleiben vor dem Part-Culling an die Render-Distance gebunden.
 - optional Software-Occlusion mit grobem Height-/Column-Buffer pruefen.
 - optional HZB/Occlusion-Queries nur nach stabilem Pass-System evaluieren.
-- debugbare Culling-Grundzaehler: Distance, Frustum, Occlusion, Empty.
+- debugbare Culling-Grundzaehler: Distance, Frustum, Occlusion, Empty. Distance/Bounds und Section-Part R/C/L sind sichtbar; Occlusion-/Empty-Detailzaehler bleiben offen.
 - Culling-Smokes fuer Hoehlen, Berge, Dichte Waelder, Ruinen.
+
+### Erreicht 2026-05-05
+
+- Chunk-/Layer-Culling bleibt als grober erster Filter bestehen; danach entscheidet der Renderer pro Section-Part, welche Draw-Range wirklich gezeichnet wird.
+- Draw Calls und Triangle-Stats zaehlen dadurch die tatsaechlich sichtbaren Section-Ranges statt immer den ganzen hohen Chunk-Layer.
+- `RenderPassStats`, `WorldRenderer.RenderStats`, `EngineFrameStats.Rendering` und Debug-HUD melden geladene/gerenderte/gekullte Section-Parts als `SPART R/C/L`.
+- Verifikation: `VisibilityCollectorTest.cullsSectionPartsIndependentlyByBounds`, `WorldRendererTest`.
 
 ### Akzeptanz
 
@@ -367,6 +409,12 @@ Materialdaten, Shader-Uniforms und Render-Layer sollen langfristig skalieren.
   - damage overlay.
 - fehlende Materialdaten als Start-/Testfehler behandeln, nicht nur Debug-Zahl.
 - Shader-Reload-Smoke mit allen Debug Views.
+
+### Erreicht 2026-05-05
+
+- Die Material-LUT-Roughness wird fuer Wasser, Lava, Eis, Glas, Ores, Glow Crystal und Ancient Lantern bewusst gesetzt und im Terrain-Shader gelesen.
+- `chunk.frag` nutzt `materialRoughness()` und `applyMaterialSheen(...)` fuer datengetriebenen Oberflaechen-Sheen statt neuer Block-ID-Sonderfaelle.
+- Verifikation: `BlockRenderPropertiesTest.reflectiveBlocksExposeLowerRoughnessForShaderSheen`, `TerrainLightingShaderContractTest`.
 
 ### Akzeptanz
 
@@ -406,12 +454,28 @@ Lighting soll inkrementell und budgetiert bleiben, auch bei vielen Spieleraktion
 
 ### Aufgaben
 
-- Light-Dirty-Regions von Geometry-Dirty-Regions trennen.
-- Sky-Light-Column-Cache pruefen.
+- ~~Light-Dirty-Regions von Geometry-Dirty-Regions trennen.~~ `ChunkSection.DirtyAspect.LIGHT` bleibt getrennt von Geometry/Fluid/BlockEntity und wird bei Light-Aenderungen separat markiert.
+- ~~Sky-Light-Column-Cache pruefen.~~ Direktes Sky-Light-Seeding trennt offene Columns von Boundary-Propagation; ein persistenter Column-Cache bleibt nur bei Bedarf sinnvoll.
 - Block-Light-Add/Remove als Job vorbereiten.
-- Fallback Full-Rebuild nur fuer betroffene Region.
-- Light-Update-Zeit pro Job messen.
-- Tests fuer viele Lanterns, Cave Roofs, Wasser und Chunkgrenzen.
+- ~~Fallback Full-Rebuild nur fuer betroffene Region.~~ Batch-Rebuilds bilden eine vereinigte betroffene Chunk-Region und propagieren Block-Light nur innerhalb geladener betroffener Chunks.
+- ~~Light-Update-Zeit pro Job messen.~~ Chunk-/Block-Light-Arbeit wird ueber `ChunkBuildQueue.recordLighting(...)` im Job-HUD sichtbar; neue Chunk-Batches zaehlen als ein Light-Job.
+- Tests fuer viele Lanterns, ~~Cave Roofs, Wasser und Chunkgrenzen~~. Cave Roofs, Wasser und Chunkgrenzen sind abgedeckt; Lantern-/Campfire-Stress bleibt unter Noch offen.
+
+### Erreicht 2026-05-05
+
+- `LightEngine.rebuildChunkLighting(world, centers)` kann mehrere Chunk-Zentren in einem Durchlauf aktualisieren und vermeidet doppelte Source-Scans fuer angrenzende Preview-Chunks.
+- Client-Preview-Generation ruft Lighting pro neuem Chunk-Batch einmal auf; das reduziert Chunk-Loading-Spikes waehrend Bewegung.
+- Betroffene Light-Chunks werden direkt ueber die 3x3-Nachbarschaft der Center aufgeloest, statt bei jedem Rebuild alle geladenen Chunks zu scannen.
+- Block-Light-Emitter-Scans iterieren nur noch non-empty Sections und lokale Section-Arrays; leere Luft-Sections langer Chunks werden uebersprungen.
+- Direktes Sky-Light-Seeding setzt offene vertikale Columns ohne jede Luftzelle als Propagation-Node zu queuen.
+- Boundary-Seeds werden nur erzeugt, wenn horizontale Nachbarn wirklich verbessert werden koennen; offene Tall-Air-Chunks haben dadurch 0 Sky-Propagation-Nodes.
+- Seitliche Sky-Light-Propagation nutzt dieselben transparenten Materialdaempfungen wie das vertikale Seeding, damit Wasser/Leaves unter Ueberhaengen nicht wie Luft leuchten.
+- `LightEngine.WorkStats` macht betroffene Chunks, Sky-Cells, Boundary-Seeds, gescannte Emitter-Sections, besuchte Blocks, Emitter-Seeds und Propagation-Nodes testbar.
+- Verifikation: `LightEngineTest.batchRebuildLightsMergedChunkRegionOnce`, `LightEngineTest.affectedChunkLookupIgnoresFarLoadedChunksWithoutScanningTheWorld`, `LightEngineTest.blockLightEmitterScanSkipsEmptySectionsInTallChunks`, `LightEngineTest.openSkyLightSeedingAvoidsPropagationQueueForTallAirChunks`, `LightEngineTest.skyLightBoundarySeedingTargetsOnlyColumnsThatCanImproveNeighbors`, `LightEngineTest.lateralSkyLightPropagationAppliesTransparentBlockAttenuation`, `ClientWorldMeshInvalidationTest.previewGenerationCanBeBudgetedAcrossFrames`.
+
+### Noch offen
+
+- Expliziter Stress-Test fuer viele gleichzeitig platzierte Lanterns/Campfires in sichtbaren Chunks.
 
 ### Akzeptanz
 
@@ -471,16 +535,22 @@ Physics soll stabile Kosten haben, auch bei komplexen Chunks.
 
 ### Aufgaben
 
-- Chunk-/Section-Collision-Cache aus Blockdaten ableiten.
-- Cache bei Block-Updates invalidieren.
-- Broadphase fuer Entities und Projectiles pro Chunk/Section.
-- Debug-View fuer Collision Sections.
+- ~~Chunk-/Section-Collision-Cache aus Blockdaten ableiten.~~ `CollisionShapeCache` erzeugt Movement- und Projectile-Shapes sectionweise aus Blockdaten.
+- ~~Cache bei Block-Updates invalidieren.~~ Client und Server invalidieren betroffene Section-Caches bei Block-/Chunk-Updates und Unload.
+- ~~Broadphase fuer Entities und Projectiles pro Chunk/Section.~~ Player-/Entity-/Projectile-Shape-Queries laufen ueber denselben sectionweisen Cache-Pfad.
+- ~~Debug-View fuer Collision Sections.~~ Debug-Bounds bleiben vorhanden; das HUD zeigt zusaetzlich Collision-Cache-Sections, Shapes, Limit und Evictions.
 - Tests fuer negative Y, Kanten, Treppen/Slabs falls eingefuehrt.
+
+### Erreicht 2026-05-05
+
+- `CollisionShapeCache` besitzt eine LRU-Retention pro Shape-Set, damit lange Explore-Sessions alte Section-Shapes freigeben.
+- `CollisionShapeCache.CacheStats` meldet Sections, Shapes, Retention-Limit und Evictions; `GameClient` zeigt diese Werte in der `PHYS`-HUD-Zeile.
+- Verifikation: `CollisionShapeCacheTest.cacheEvictsLeastRecentlyUsedSectionsWithinBudget`, `GameSettingsTest`, `EngineFrameStatsTest`.
 
 ### Akzeptanz
 
 - Player/Entity/Projectile-Queries nutzen dieselben Collision-Regeln.
-- keine unbounded allocations im Physics-Step.
+- ~~keine unbounded allocations im Physics-Step.~~ Section-Shape-Caches sind pro Shape-Set begrenzt und raeumen alte Eintraege LRU-basiert.
 
 ## P5.2 Fluid Runtime V2
 
@@ -490,18 +560,49 @@ Wasser soll spielbar, renderbar und physikalisch konsistent sein.
 
 ### Aufgaben
 
-- Fluid-Flags im World/Chunk Cache zentralisieren.
+- ~~Fluid-Flags im World/Chunk Cache zentralisieren.~~ `ChunkTerrainCache.FluidSurface` und `FluidBlocks` sind der gemeinsame Contract fuer Terrain-Surface und Block-Fluid-Erkennung.
 - Flow nur einfuehren, wenn Budget und Save-Modell klar sind.
-- Water surface data fuer Rendering vorbereiten:
-  - shore mask.
-  - depth hint.
-  - optional foam flag.
-- Physics und Rendering nutzen dieselbe Fluid-Erkennung.
+- ~~Water surface data fuer Rendering vorbereiten:~~
+  - ~~shore mask.~~
+  - ~~depth hint.~~
+  - ~~optional foam flag.~~
+- ~~Physics und Rendering nutzen dieselbe Fluid-Erkennung.~~ Terrain-Queries laufen ueber `ChunkTerrainCache.FluidSurface`; Wasser/Lava-Block-Erkennung laeuft ueber `FluidBlocks`.
+
+### Erreicht 2026-05-05
+
+- `ChunkTerrainCache` speichert pro Column kompakte Fluid-Surface-Daten: Depth-Hint, Shore-Mask und Foam-Flag.
+- `FluidSurfacePlanner` berechnet diese Daten seed-stabil aus Worldgen-Hoehen und sampelt nur Chunk-Grenzen ueber den Generator nach.
+- `ClientWorld` bietet `terrainFluidSurfaceAt(...)`, `terrainFluidDepthHintAt(...)`, `terrainShoreMaskAt(...)` und `terrainFluidSurfaceFlagsAt(...)` fuer Rendering/Diagnostics/Physics-UI an.
+- `FluidBlocks` zentralisiert Wasser-/Lava-Erkennung fuer ServerWorld, ClientWorld, Collision-Shapes und Section-Fluid-Dirtying.
+- Verifikation:
+  - `./gradlew :common:test --tests dev.voxelgame.common.world.ChunkTerrainCacheTest --tests dev.voxelgame.common.world.OverworldGeneratorTest --tests dev.voxelgame.common.world.ChunkSectionDirtyTest --tests dev.voxelgame.common.block.FluidBlocksTest --tests dev.voxelgame.common.world.gen.FluidSurfacePlannerTest --no-daemon --max-workers=1`
+  - `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --tests dev.voxelgame.client.world.ClientWorldCollisionTest --no-daemon --max-workers=1`
+  - `./gradlew :server:test --tests dev.voxelgame.server.world.ServerWorldTest --no-daemon --max-workers=1`
 
 ### Akzeptanz
 
 - Spieler, Partikel und Rendering stimmen bei Wasser/Unterwasser ueberein.
 - Low-Preset kann Wasserkosten sichtbar reduzieren.
+
+## P5.3 Surface Physics V1
+
+### Ziel
+
+Blockoberflaechen sollen Movement-Feel beeinflussen, ohne dass Client oder Server eigene Sonderfaelle fuer Eis, Schnee, Sand oder Wege pflegen.
+
+### Erreicht 2026-05-05
+
+- `BlockSurfacePhysics` ist der Common-Contract fuer Surface-Materialien und mappt registrierte Blocks auf Reibungs-, Beschleunigungs-, Speed- und Jump-Multiplikatoren.
+- `PlayerPhysics.stepSurvival(...)` akzeptiert optional eine `SurfaceQuery`; alte Aufrufer bleiben kompatibel, neue Server-/Client-Integrationen koennen dieselbe Regelquelle nutzen.
+- `ClientWorld.surfaceAt(...)` und `ServerWorld.surfaceAt(...)` stellen die Runtime-Sampler fuer Prediction und Autoritaet bereit; `ClientPlayerController` gibt die Query direkt an `PlayerPhysics`.
+- `PlayerMovementRules` besitzt einen Surface-aware Survival-Speed-Envelope, den `ServerConnectionHandler` bei Movement-Validation nutzt.
+- Das Debug-HUD zeigt Surface-Key, Speed- und Friction-Multiplikator in der `PHYS`-Zeile.
+- Verifikation: `BlockSurfacePhysicsTest`, `PlayerPhysicsTest.survivalStepUsesSurfaceFrictionForIceSliding`, `PlayerPhysicsTest.survivalStepUsesSurfaceSpeedForSnowAndPaths`, `PlayerPhysicsTest.survivalStepUsesLandingSurfaceForBufferedJump`, `PlayerPhysicsTest.movementRulesUseSurfaceSpeedForServerDeltas`, `ClientWorldCollisionTest.playerSurfaceUsesLoadedBlockBelowFeet`, `ServerWorldTest.playerSurfaceUsesAuthoritativeBlockBelowFeet`.
+
+### Naechste Schritte
+
+- Surface-Multiplikatoren in Replay-Metadaten aufnehmen, sobald Player-Movement-Replays erweitert werden.
+- StatusEffect-Multiplikatoren und Surface-Multiplikatoren in einer gemeinsamen Debug-Zusammenfassung anzeigen.
 
 ---
 
@@ -704,6 +805,7 @@ Nicht alle Diagnosen muessen ins kleine HUD.
 - ~~Draw Calls pro Pass.~~ Terrain-Pass-/Layer-Werte sind sichtbar; Nicht-Terrain-Paesse bleiben P3.1-Diagnostics-Ausbau.
 - ~~Triangles pro Pass.~~ Terrain-Pass-/Layer-Werte sind sichtbar; Nicht-Terrain-Paesse bleiben P3.1-Diagnostics-Ausbau.
 - ~~Particle Count.~~ Particle Budget Usage ist sichtbar.
+- ~~Ambient Particle Source Scans.~~ `GameSettings.ambientParticleSourceScanIntervalSeconds()` koppelt die Scan-Frequenz an Particle Quality, damit Low/Custom-Presets weniger World-Scan-Arbeit ausloesen.
 - 🔴 Entity Tickzeit braucht P8.1/P8.2: Entities brauchen einen Tick-Scheduler, der pro Entity-Klasse `started/finished/skipped` und `tickMilliseconds` misst. `EngineFrameStats.Entities` sollte danach `entityTickMilliseconds`, `averageEntityTickMilliseconds` und `entityBudgetUsage` bekommen; Server-Stats muessen dieselbe Zahl fuer Multiplayer liefern.
 - ~~Netzwerk bytes/s.~~ HUD-Budget nutzt aktuelle Packet-Rate mal durchschnittliche Packet-Groesse als sichtbare Schaetzung.
 - ~~🔴 Save Queue ms/s braucht P6.1: Die Save-Queue soll Writes als `save.write` Jobs messen, pro Sekunde `queuedWrites`, `writtenBytes`, `writeMilliseconds`, `averageWriteMilliseconds` und `failedWrites` melden und diese Werte an `EngineFrameStats.Budgets`/Diagnostics weiterreichen.~~
@@ -715,6 +817,7 @@ Nicht alle Diagnosen muessen ins kleine HUD.
 - Das Debug-HUD zeigt eine `BUD`-Zeile fuer Frame, Chunkgen, Light, Mesh, GPU-ms, GPU-Bytes, Draw, Triangles, Particles, Entities, Save und Network.
 - Section-Dirty-Budgets sind direkt daneben in der `SECTIONS`-Zeile sichtbar.
 - Verifikation: `./gradlew :client:test --tests dev.voxelgame.client.EngineFrameStatsTest --no-daemon --max-workers=1 --rerun-tasks`
+- Verifikation 2026-05-05: `GameSettingsTest.particleQualityAlsoBudgetsAmbientSourceScans`.
 
 ### Akzeptanz
 
@@ -1014,3 +1117,303 @@ Items, Blocks, Entities, Actions, Loot, Stations und Render-/Physics-Eigenschaft
 - Jede neue Engine-Aufgabe nennt Owner und betroffene TODO-Liste.
 - Agenten arbeiten nach eigener Liste plus `docs/IMPLEMENTATION_PLAN.md`.
 - Cross-Owner-Aenderungen bekommen vorher kleine Interface- oder Contract-PRs.
+
+---
+
+# P14 - Finished Game Engine Roadmap 2026-05-05
+
+Owner: Project Manager, Lead Engine Developer, Main Networking Dev, Physics und Engine Worker. Game-Design-Schnittstellen gehoeren dem Lead Game Design Engineer.
+
+Dieser Block ist aus dem aktuellen Code- und Docs-Ueberblick abgeleitet. Ziel ist nicht "mehr Engine um der Engine willen", sondern die fehlenden Runtime-Saeulen fuer ein fertiges Adventura: serverautoritativ, lange spielbar, debuggbar, speicherbar und bereit fuer mehr Content ohne neue Monolithen.
+
+## P14.0 Bestandsaufnahme aus dem Code
+
+Vorhanden:
+
+- Serverautoritative Netty-Basis mit Protocol Contracts, PacketCodec-Tests, Interest-Filtern und ersten GameplayEvents.
+- Common-Contracts fuer Actions, Tags, StatusEffects, Milestones, Stations, Journal, BiomeProgression und Cozy-Life.
+- Client-/Server-Worlds mit Chunk Sections, LightEngine, CollisionShapeCache, physics tickets, chunk build queue and render budgets.
+- Render Pipeline V3-Grundlage mit RenderPassPlan, RenderStateGuard, TerrainRenderer, VisibilityCollector, Material LUT, Atlas Validation, Debug Views and performance presets.
+- Physics V2-Grundlage mit player/entity/projectile/fluid paths, partial-shape impacts, replay recorder and golden regression hooks.
+- SaveQueue, PlayerSave, WorldSave, BlockEntityStore and RegionFileLayout as persistence V2 starting points.
+
+Fehlt fuer ein fertiges Spiel:
+
+- Einheitliche Runtime-Services fuer Actions, Progression, Stations, Entity Brains, Base Facts, World Events and Diagnostics.
+- Durchgehende serverseitige Producer fuer Milestones, Journal, Goals, Recipe History, Structure Discoveries, Creature Discoveries and Rare Loot.
+- Revisionierte BlockEntity-/Station-Transactions statt station-spezifischer Einzelpfade.
+- Daten- und Balancing-Validation, die Items/Blocks/Recipes/Loot/Biomes/Structures/Assets/Save-Aliase zusammen prueft.
+- Langzeit-Budgets fuer Entity AI, Station Jobs, Save IO, worldgen, mesh upload and memory retention.
+
+## P14.1 Runtime Service Boundaries
+
+### Ziel
+
+Die Kernmechaniken sollen nicht weiter in `GameClient`, `ServerConnectionHandler`, `ServerWorld` oder `OverworldGenerator` wachsen. Neue Features brauchen kleine Runtime-Services mit klaren Contracts.
+
+### Aufgaben
+
+- `server.actions.ActionRuntime` planen:
+  - registry of action handlers.
+  - maps packets/intents to `ActionRequest`.
+  - returns accepted/rejected `ActionExecutionResult`.
+  - emits `GameplayEvent`s and inventory/world/station mutations.
+  - owns cooldown/cost/durability timing, while Common owns validation rules.
+- `server.progression.ProgressionRuntime` planen:
+  - milestone unlocks.
+  - goal completion.
+  - journal entry unlocks.
+  - recipe history.
+  - biome/structure/creature discoveries.
+  - rare-find flags.
+  - idempotent save-key writes.
+- `server.stations.StationRuntime` planen:
+  - block entity snapshots.
+  - station revisions.
+  - active jobs.
+  - public/private state split.
+  - server transaction ids.
+  - standard reject reasons.
+- `server.entity.EntityBrainRuntime` planen:
+  - AI tick scheduler.
+  - behavior state machines.
+  - perception/flee/follow/feed/attack tells.
+  - parking outside active simulation tickets.
+  - per-biome/structure encounter budgets.
+- `common.diagnostics` oder equivalent telemetry DTOs definieren:
+  - frame/render/chunk/light.
+  - physics/collision/entity.
+  - network/interest/action.
+  - save/station/progression.
+  - worldgen/loot/discovery.
+
+### Akzeptanz
+
+- Neue Featurearbeit nennt den Runtime-Service, der sie besitzt.
+- `ServerConnectionHandler` routet mehr und entscheidet weniger.
+- Jeder Service hat mindestens einen Contract-Test oder Service-Test.
+
+## P14.2 ActionRuntime V2
+
+### Ziel
+
+Alle moment-to-moment interactions laufen langfristig ueber denselben serverautoritativen Pfad.
+
+### Zu migrierende Actions
+
+- `EatAction`: item food, hunger/heal/status, cooldown, feedback.
+- `BlockInteractAction`: harvestables, campfire fuel, storage open, station inspect.
+- `FeedEntityAction`: favorite food, daily cap, cooldown, friendship state, reject reasons.
+- ~~`MeleeAttackAction`: range, damage source, item-driven damage/cooldown/knockback, durability cost and drops.~~
+- `MeleeAttackAction`: no-kill creature rules and full ActionRuntime result object remain open.
+- `ProjectileShootAction`: already first slice; extend to ammo, charge, bows, thrown items, cooldown data.
+- `CraftAction`: inventory/workbench/forge recipe validation, missing station, transaction id.
+- `CookAction`: campfire/cooking pot/forge jobs, fuel/heat/time/output claims.
+- `SleepAction`: sleeping mat, night, comfort, shelter, danger, multiplayer readiness.
+- `RepairUpgradeAction`: tool repair, durability, future rare upgrades.
+- `AncientUseAction`: sealed ruins, ruin key/seal/fragment, altar acceptance and lore events.
+
+### Erreicht 2026-05-05
+
+- `WeaponItemRules` liefert den ersten Common-Read-Contract fuer `MeleeAttackAction`: Weapon-Erkennung, Damage, Cooldown, Knockback und spezielle Flags fuer schnelle/kristalline Waffen.
+- Mineral-Schwerter sind als langlebige Items und Forge-Recipes registriert; der spaetere ActionRuntime-Slice muss diesen Contract serverautoritativ fuer Range, DamageSource, Durability und GameplayEvents verwenden.
+- `MeleeAttackRules` erweitert den Common-Contract um Reichweite, Ziel-Akzeptanz, Tool-/Hand-Fallback und Durability-Kosten; `ServerConnectionHandler` nutzt diesen Contract fuer autoritative Entity-Attacks.
+- Verifikation: `WeaponItemRulesTest`, `MeleeAttackRulesTest`, `ItemRegistryDataTest.mineralSwordItemsAreDurableWeaponsWithCanonicalAliases`, `CraftingRecipeTest.mineralSwordsExtendWorkbenchAndForgeProgression`.
+
+### Engine Requirements
+
+- Intent rate limits move from scattered constants into action metadata where possible.
+- Action result includes:
+  - accepted/rejected.
+  - stable reason key.
+  - affected inventory slots.
+  - affected block/entity/station ids.
+  - emitted gameplay events.
+  - optional cooldown until timestamp.
+- Debug HUD/Diagnostics can show action rejects per type.
+- Replay/Smoke can record action sequence and expected authoritative results.
+
+### Akzeptanz
+
+- Two-client tests cannot duplicate station outputs or creature feeding rewards.
+- Client can show pending/accepted/rejected without guessing.
+- Adding a new action does not add a large new branch to `ServerConnectionHandler`.
+
+## P14.3 Station And BlockEntity Runtime
+
+### Ziel
+
+Storage, Campfire, Workbench, CookingPot, Forge and future AncientAltar become one revisioned BlockEntity runtime instead of isolated packets and local UI assumptions.
+
+### Aufgaben
+
+- `BlockEntitySnapshot` V1:
+  - type key.
+  - position.
+  - revision.
+  - public state.
+  - private viewer state.
+  - dirty flags.
+  - schema version.
+- `StationSnapshot` V1:
+  - station key.
+  - slot groups.
+  - fuel.
+  - heat.
+  - active recipe/job.
+  - progress total/remaining.
+  - output claim token.
+  - error/reject key.
+- Packets:
+  - open snapshot.
+  - delta update.
+  - close.
+  - transaction request.
+  - transaction result.
+- Save:
+  - store station payload by block entity.
+  - preserve unknown payloads for migration.
+  - write active job progress.
+  - idempotent generated loot markers.
+- Tests:
+  - two clients open same storage.
+  - stale revision rejected.
+  - output claim is once-only.
+  - save/load active campfire/cooking/forge job.
+  - block break removes or drops station inventory safely.
+
+### Akzeptanz
+
+- Station UIs are trustworthy online.
+- No recipe output can be claimed twice.
+- Save/load keeps active station state and unknown future payloads safely.
+
+## P14.4 Entity Simulation And AI Budgets
+
+### Ziel
+
+Ambient entities already exist, but finished gameplay needs scalable brains, not just movement snapshots.
+
+### Aufgaben
+
+- Add behavior state contracts:
+  - idle.
+  - wander.
+  - graze.
+  - flee.
+  - follow.
+  - feed cooldown.
+  - observe/hint.
+  - agitated.
+  - attack windup.
+  - stunned/recover.
+- Add perception facts:
+  - nearest player.
+  - favorite food held.
+  - nearby comfort source.
+  - nearby danger/source of damage.
+  - home anchor.
+  - structure encounter marker.
+- Add budgets:
+  - active brain ticks per server tick.
+  - parked entities outside player simulation tickets.
+  - spawn/despawn caps per region.
+  - encounter caps per structure.
+- Add multiplayer ownership rules:
+  - one accepted feed per cooldown.
+  - resource shed locks.
+  - ~~damage invulnerability window already present, but expose diagnostics.~~ Melee attacks now share the server damage path and item-driven cooldowns; richer diagnostics remain open.
+  - no client-side creature rewards.
+- Add diagnostics:
+  - active/parked ambient.
+  - brain ticks.
+  - blocked moves.
+  - feed rejects.
+  - encounter spawns.
+
+### Akzeptanz
+
+- Creatures feel alive without uncontrolled tick cost.
+- Rare dangers are telegraphed and server-owned.
+- Cozy creatures remain useful without becoming grind dispensers.
+
+## P14.5 World Runtime And Long-Session Stability
+
+### Ziel
+
+The engine must support long exploration, return-to-base loops and save/load without memory growth or content drift.
+
+### Aufgaben
+
+- Chunk lifecycle:
+  - split simulation, render, retain and save interests.
+  - record why a chunk is kept loaded.
+  - release GPU, collision and entity runtime data by budget.
+- Worldgen runtime:
+  - move Overworld passes behind services.
+  - keep seed-stable tests for every extraction.
+  - expose generation metrics to debug/profiling reports.
+- Region persistence:
+  - implement region reader/writer after layout contract.
+  - migrate block diffs and block entity payloads.
+  - corruption quarantine and backup.
+- World events:
+  - day/night state.
+  - weather state.
+  - one-shot structure/loot/discovery markers.
+  - generated encounter state.
+- Long-session smoke:
+  - 20 minute explore.
+  - return to base.
+  - save/restart/rejoin.
+  - verify storage, stations, comfort, discoveries, entities and chunks.
+
+### Akzeptanz
+
+- Memory and runtime resources stay bounded during long explore.
+- Saved worlds do not lose base/station/progression facts.
+- Debug output explains retained chunks and parked entities.
+
+## P14.6 Content Validation And Build Gates
+
+### Ziel
+
+More content should make the game richer, not more fragile.
+
+### Aufgaben
+
+- Build an `adventuraContentReport` tool/task that checks:
+  - item/block ids and aliases.
+  - content tags.
+  - recipe ingredients and outputs.
+  - station unlocks.
+  - loot table item keys.
+  - structure marker keys.
+  - biome progression references.
+  - asset icon/texture availability.
+  - save migration aliases.
+- Add warning levels:
+  - release blocker.
+  - alpha blocker.
+  - content warning.
+  - cosmetic asset warning.
+- Add balancing surfaces:
+  - first-tool average resource count.
+  - campfire fuel availability.
+  - cooking pot route resources.
+  - forge route resources.
+  - rare loot odds.
+  - comfort value caps.
+- Add CI/release gates:
+  - focused module tests.
+  - content report.
+  - physics regression.
+  - protocol golden tests.
+  - long-explore smoke checklist.
+  - first-session smoke checklist.
+
+### Akzeptanz
+
+- Missing content dependencies are found before runtime.
+- Balancing changes have visible numbers.
+- Release notes can name measured risks instead of guesses.

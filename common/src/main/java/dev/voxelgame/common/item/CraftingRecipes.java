@@ -97,6 +97,13 @@ public final class CraftingRecipes {
         short berryBush = items.requireByKey("voxel:berry_bush").id();
         short mossyPath = items.requireByKey("voxel:mossy_path").id();
         short mossyStone = items.requireByKey("voxel:mossy_stone").id();
+        short platinIngot = items.requireByKey("voxel:platin_ingot").id();
+        short sapphireShard = items.requireByKey("voxel:sapphire_shard").id();
+        short titanIngot = items.requireByKey("voxel:titan_ingot").id();
+        short ironSword = items.requireByKey("voxel:iron_sword").id();
+        short platinSword = items.requireByKey("voxel:platin_sword").id();
+        short sapphireSword = items.requireByKey("voxel:sapphire_sword").id();
+        short titanSword = items.requireByKey("voxel:titan_sword").id();
 
         return List.of(
                 recipe(
@@ -434,6 +441,59 @@ public final class CraftingRecipes {
                         new ItemStack(ironPickaxe, 1),
                         CraftingStationType.WORKBENCH,
                         0,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:iron_sword",
+                        "Assemble Iron Sword",
+                        List.of(
+                                new CraftingRecipe.Ingredient(ironIngot, 2),
+                                new CraftingRecipe.Ingredient(toolHandle, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(ironSword, 1),
+                        CraftingStationType.WORKBENCH,
+                        0,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:platin_sword",
+                        "Forge Platin Sword",
+                        List.of(
+                                new CraftingRecipe.Ingredient(platinIngot, 2),
+                                new CraftingRecipe.Ingredient(ironSword, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(platinSword, 1),
+                        CraftingStationType.FORGE,
+                        220,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:sapphire_sword",
+                        "Bind Sapphire Sword",
+                        List.of(
+                                new CraftingRecipe.Ingredient(sapphireShard, 3),
+                                new CraftingRecipe.Ingredient(ironSword, 1),
+                                new CraftingRecipe.Ingredient(glowCrystal, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 1)
+                        ),
+                        new ItemStack(sapphireSword, 1),
+                        CraftingStationType.FORGE,
+                        240,
+                        CraftingCategory.TOOLS
+                ),
+                stationRecipe(
+                        "voxel:titan_sword",
+                        "Forge Titan Sword",
+                        List.of(
+                                new CraftingRecipe.Ingredient(titanIngot, 2),
+                                new CraftingRecipe.Ingredient(platinSword, 1),
+                                new CraftingRecipe.Ingredient(leatherStrip, 2)
+                        ),
+                        new ItemStack(titanSword, 1),
+                        CraftingStationType.FORGE,
+                        280,
                         CraftingCategory.TOOLS
                 ),
                 stationRecipe(

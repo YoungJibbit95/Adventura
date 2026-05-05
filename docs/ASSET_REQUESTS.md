@@ -2,7 +2,7 @@
 
 Generate original, non-Minecraft assets with a consistent cozy voxel-survival style. Keep filenames lowercase with underscores and provide a license note for every batch.
 
-Preferred delivery for future replacements: individual PNG files under `client/src/main/resources/assets/game/`. For block textures use `textures/block/<block_name>.png`; add `_top`, `_side` or `_bottom` suffixes only when the faces need different art. The current bundled sprite sheets are supported as fallback sources, so you can also keep adding sheets when that is more convenient.
+Preferred delivery for future replacements: individual PNG files under `client/src/main/resources/assets/game/`. For block textures use `blocks/<block_name>.png` during the current migration or `textures/block/<block_name>.png` for finalized paths; add `_top`, `_side` or `_bottom` suffixes only when the faces need different art. For material icons use `minerals/<item_name>.png`. The current bundled sprite sheets are supported as fallback sources, so you can also keep adding sheets when that is more convenient.
 
 ## Asset QA Pass 2026-05-01
 
@@ -16,22 +16,25 @@ Do not delete asset TODOs just because they are specified here. A TODO can only 
 - `client/src/main/resources/assets/game/blocks_tiles_sheet.png`, 1536x1024 RGBA: terrain/block fallback slices.
 - `client/src/main/resources/assets/game/tools_weapons_sheet.png`, 1536x1024 RGBA: tool/weapon fallback icons.
 - `client/src/main/resources/assets/game/nature_food_sheet.png`, 1536x1024 RGBA: food, plants, fuel and cozy resource fallback icons.
-- `client/src/main/resources/assets/game/ores_materials_sheet.png`, 1536x1024 RGBA: ore, ingot, crystal and forge fallback icons.
+- `client/src/main/resources/assets/game/ores_materials_sheet.png`, optional legacy sheet if present: ore, ingot, crystal and forge fallback icons.
 - `client/src/main/resources/assets/game/license_readme.txt`: current bundled sheets are marked CC0/Public Domain.
+- `client/src/main/resources/assets/game/blocks/` is the active migration folder for block textures. It currently maps terrain, wood, water, glass, stone brick variants, red sand, farmland, snowy grass and ore blocks including coal/copper/iron/gold/platin/ruby/sapphire/titan.
+- `client/src/main/resources/assets/game/minerals/` is the active migration folder for item icons: coal, copper/iron/gold/platin/titan ingots, ruby shard and sapphire shard.
 
-There are currently no individual PNG overrides under `textures/block/`, `textures/item/`, `textures/entity/`, `ui/` or `audio/`. All block visuals are therefore sheet fallback based.
+There are currently no individual PNG overrides under `textures/block/`, `textures/item/`, `textures/entity/`, `ui/` or `audio/`, but the renderer now supports `blocks/`, `minerals/` and root-level drop PNGs as a migration path. Sheet fallbacks remain active for every block without a matching individual texture.
 
 ### Verified Atlas Status
 
-- `BlockTextureAtlas` validation passes for registered blocks: 53 texture slices, 51/4096 material slots, atlas 1472x1288, tile 182 plus 1px padding, `UV_INSET_PIXELS = 0.5`, filter `nearest-no-mip`.
+- `BlockTextureAtlas` validation passes for registered blocks with `blocks/` and root-level drop texture aliases plus sheet fallbacks. Large drop textures are normalized to `MAX_TILE_CONTENT_SIZE = 256`, with 1px padding, `UV_INSET_PIXELS = 0.5`, filter `nearest-no-mip`, and resampling `nearest-upscale-bilinear-downscale`.
+- `AssetAtlasReport` currently reports registered blocks with individual texture coverage, fallback sheet coverage for all registered non-air blocks, and 0 blocks missing full coverage.
 - Missing block textures: none.
-- Duplicate atlas mappings: none.
+- Duplicate atlas mappings: none. Individual override files intentionally suppress sheet fallback duplicate warnings.
 - Missing material metadata: none.
-- Atlas QA tool reference was stale and has been aligned with the current fallback sheets.
+- Atlas QA tool resolves the repo asset root correctly from `:tools:run atlas-report` and reports unmapped root/`blocks/` PNGs. Stable terrain/mineral names from this drop are mapped; generic export filenames should be renamed to registry-style names before mapping.
 
 ### Current Missing or Broken References
 
-- Missing item icon mappings in `GameSprites`: `voxel:feathers`, `voxel:stick`, `voxel:snow`, `voxel:sleeping_mat`, `voxel:tree_stump`.
+- Missing item icon source files for optional keys in `GameSprites`: `voxel:feathers`, `voxel:stick`, `voxel:snow`, `voxel:sleeping_mat`, `voxel:tree_stump`.
 - Extra sprite mappings not registered as standalone inventory items: `voxel:campfire_active`, `voxel:campfire_burned_out`, `voxel:coal_ore`, `voxel:copper_ore`, `voxel:glow_mushroom`, `voxel:iron_ore`, `voxel:water`. These are block/state helpers, not currently broken.
 - No individual entity skins exist. Entities are procedural colored box models.
 - No particle sprite atlas exists. Particles are colored quads, so "particle asset" TODOs are currently specification-only until a particle atlas loader exists.
@@ -42,9 +45,10 @@ There are currently no individual PNG overrides under `textures/block/`, `textur
 - Block override path: `client/src/main/resources/assets/game/textures/block/<block_name>.png`.
 - Face-specific block path: `_top`, `_side`, `_bottom`; example `textures/block/grass_block_top.png`, `textures/block/grass_block_side.png`, `textures/block/grass_block_bottom.png`.
 - Compatibility alias `textures/blocks/` is supported, but new work should use `textures/block/`.
+- Temporary migration paths: files under `client/src/main/resources/assets/game/blocks/<name>.png` and legacy root-level files under `client/src/main/resources/assets/game/<name>.png` are accepted for terrain/block overrides and mapped through the same atlas pipeline. Move finalized assets into `textures/block/` once names settle.
 - Use lowercase snake_case filenames matching registry keys after `voxel:`.
-- Block textures should be 16x16 or 32x32, full-tile PNGs unless the block is intentionally cutout.
-- Item icons should be 32x32 PNG with transparent background. Current code still needs `GameSprites` mapping or a future item-icon loader.
+- Block textures should be 16x16, 32x32, 64x64, 128x128 or 256x256 full-tile PNGs unless the block is intentionally cutout. Larger source files are downsampled into the runtime atlas.
+- Item icons should be 32x32 PNG with transparent background. `GameSprites` now auto-prefers individual `textures/item/`, `minerals/`, `blocks/` and root drop PNGs for registered item keys before falling back to sheet slices.
 - UI sprites should use transparent PNGs, crisp pixel edges, and explicit states. 9-slice capable surfaces should keep a 1px clean border and enough corner padding.
 - Cutout assets need clean alpha, no colored matte around transparent pixels.
 - Avoid adding duplicate filenames in both `textures/block/` and `textures/blocks/`.

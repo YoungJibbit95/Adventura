@@ -4,6 +4,7 @@ import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Tag;
@@ -159,6 +160,18 @@ class ClientWorldCollisionTest {
         world.applyBlock(new GamePacket.BlockUpdate(8, 66, 8, Blocks.WATER));
         PlayerWaterState submerged = world.playerWaterState(new Vector3f(8.5f, 66.05f, 8.5f));
         assertTrue(submerged.headUnderwater());
+    }
+
+    @Test
+    void playerSurfaceUsesLoadedBlockBelowFeet() {
+        ClientWorld world = new ClientWorld(123L);
+        world.applyBlock(new GamePacket.BlockUpdate(8, 64, 8, Blocks.ICE));
+        world.applyBlock(new GamePacket.BlockUpdate(8, 65, 8, Blocks.AIR));
+
+        BlockSurfacePhysics.SurfaceMaterial surface = world.playerSurface(new Vector3f(8.5f, 66.62f, 8.5f));
+
+        assertEquals(BlockSurfacePhysics.ICE, surface);
+        assertEquals(BlockSurfacePhysics.DEFAULT, world.surfaceAt(128.5, 64.0, 128.5));
     }
 
     @Test

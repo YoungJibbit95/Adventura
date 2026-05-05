@@ -3,17 +3,25 @@ package dev.voxelgame.client.world;
 import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.client.render.ChunkMesher;
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
+import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.BlockRenderLayer;
 import dev.voxelgame.common.block.Blocks;
+import dev.voxelgame.common.block.FluidBlocks;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.ComfortRules;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.gameplay.MeleeAttackRules;
 import dev.voxelgame.common.math.Raycast;
 import dev.voxelgame.common.net.GamePacket;
 import dev.voxelgame.common.physics.CollisionShapeCache;
+import dev.voxelgame.common.physics.BlockSurfacePhysics;
+import dev.voxelgame.common.physics.EntityPhysics;
+import dev.voxelgame.common.physics.EntityPhysicsProfile;
 import dev.voxelgame.common.physics.PlayerBounds;
+import dev.voxelgame.common.physics.PlayerPhysicsConfig;
 import dev.voxelgame.common.physics.PlayerWaterState;
 import dev.voxelgame.common.physics.PhysicsTickets;
 import dev.voxelgame.common.registry.Registry;
@@ -31,7 +39,7 @@ import dev.voxelgame.common.world.light.LightRules;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 
-import java.util.Optional;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -39,13 +47,22 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public final class ClientWorld {
     private static final PlayerBounds PLAYER_BOUNDS = PlayerBounds.DEFAULT;
+    private static final PlayerPhysicsConfig PLAYER_PHYSICS = PlayerPhysicsConfig.defaults();
     private static final double ENTITY_INTERPOLATION_DELAY_SECONDS = 0.10;
     private static final double PROJECTILE_SWEEP_PREVIEW_SECONDS = 0.20;
+    private static final double LOCAL_ENTITY_TICK_SECONDS = 1.0 / 20.0;
+    private static final double LOCAL_ITEM_PICKUP_DELAY_SECONDS = 0.40;
+    private static final double AMBIENT_DAMAGE_INVULNERABILITY_SECONDS = 0.28;
+    private static final double ENTITY_PATH_MAX_STEP = 0.45;
 
     private final InMemoryWorld world;
     private final CollisionShapeCache collisionShapeCache;
@@ -56,13 +73,25 @@ public final class ClientWorld {
     private final ChunkBuildQueue buildQueue = new ChunkBuildQueue();
     private final Set<ChunkPos> modifiedChunks = new HashSet<>();
     private final Map<Long, EntityTrack> entities = new HashMap<>();
+    private final Map<Long, EntitySnapshot> entityAnchors = new HashMap<>();
+    private final Map<Long, Double> nextLocalEntityDamageAllowedAt = new HashMap<>();
+    private final Map<Long, LocalItemDrop> localItemDrops = new HashMap<>();
     private final Map<BlockPos, Double> activeCampfires = new HashMap<>();
     private final Map<BlockPos, CampfireStatusTrack> campfireStatuses = new HashMap<>();
+    private final Set<ChunkPos> pendingPreviewChunks = new HashSet<>();
+    private final ArrayDeque<GeneratedChunk> completedPreviewChunks = new ArrayDeque<>();
+    private final ExecutorService chunkGenerationExecutor;
     private UUID ownPlayerId;
     private boolean spawnEntitiesSeeded;
     private int lastUnloadedChunks;
     private long totalUnloadedChunks;
     private boolean lastPhysicsBlockedByLoading;
+    private long nextLocalRuntimeEntityId = Long.MIN_VALUE;
+    private double nextLocalEntityTickSeconds;
+    private long localEntityTick;
+    private ChunkPos streamingCenter;
+    private int streamingRadius;
+    private boolean closed;
 
     public ClientWorld(long seed) {
         Registry<BlockType> blocks = Blocks.createDefaultRegistry();
@@ -91,6 +120,11 @@ public final class ClientWorld {
         });
         this.generator = new OverworldGenerator(seed);
         this.spawnPoint = generator.safeSpawnPoint();
+        this.chunkGenerationExecutor = Executors.newSingleThreadExecutor(task -> {
+            Thread thread = new Thread(task, "Adventura Client Chunk Gen " + Long.toUnsignedString(seed, 16));
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     public DimensionSettings dimension() {
@@ -106,16 +140,45 @@ public final class ClientWorld {
         seedSpawnEntities();
     }
 
+    public synchronized void generatePreview(int radius, int maxNewChunks) {
+        ensurePreviewAround(new ChunkPos(0, 0), radius, maxNewChunks);
+        seedSpawnEntities();
+    }
+
     public synchronized void ensurePreviewAround(Vector3f position, int radius) {
         ensurePreviewAround(ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z)), radius);
     }
 
     public synchronized void ensurePreviewAround(Vector3f position, int radius, int maxNewChunks) {
+        ensurePreviewAround(position, radius, maxNewChunks, Double.POSITIVE_INFINITY);
+    }
+
+    public synchronized void ensurePreviewAround(Vector3f position, int radius, int maxNewChunks, double maxMilliseconds) {
         ensurePreviewAround(
                 ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z)),
                 radius,
-                maxNewChunks
+                maxNewChunks,
+                maxMilliseconds
         );
+    }
+
+    public synchronized void streamPreviewAround(Vector3f position, int radius, int maxNewChunks, double maxApplyMilliseconds) {
+        ChunkPos center = ChunkPos.fromBlock((int) Math.floor(position.x), (int) Math.floor(position.z));
+        streamingCenter = center;
+        streamingRadius = Math.max(0, radius);
+        drainGeneratedPreviewChunks(Math.max(1, Math.min(Math.max(1, maxNewChunks), 2)), maxApplyMilliseconds);
+        schedulePreviewChunkGeneration(center, radius, maxNewChunks);
+        seedSpawnEntities();
+    }
+
+    public synchronized void close() {
+        closed = true;
+        chunkGenerationExecutor.shutdownNow();
+        pendingPreviewChunks.clear();
+        completedPreviewChunks.clear();
+        localItemDrops.clear();
+        entityAnchors.clear();
+        nextLocalEntityDamageAllowedAt.clear();
     }
 
     public synchronized void applyChunk(GamePacket.ChunkData data) {
@@ -216,6 +279,170 @@ public final class ClientWorld {
             visible.add(snapshot);
         }
         return visible;
+    }
+
+    public synchronized void tickLocalEntities(Vector3f playerPosition, double nowSeconds) {
+        if (closed || entities.isEmpty()) {
+            return;
+        }
+        if (nextLocalEntityTickSeconds <= 0.0) {
+            nextLocalEntityTickSeconds = nowSeconds;
+        }
+        int steps = 0;
+        while (nowSeconds + 0.0001 >= nextLocalEntityTickSeconds && steps < 3) {
+            tickLocalEntitiesStep(playerPosition, nextLocalEntityTickSeconds);
+            nextLocalEntityTickSeconds += LOCAL_ENTITY_TICK_SECONDS;
+            steps++;
+        }
+        if (steps == 3 && nowSeconds - nextLocalEntityTickSeconds > LOCAL_ENTITY_TICK_SECONDS) {
+            nextLocalEntityTickSeconds = nowSeconds + LOCAL_ENTITY_TICK_SECONDS;
+        }
+    }
+
+    public synchronized LocalEntityDamageResult damageLocalEntity(
+            long entityId,
+            int damageAmount,
+            double knockbackStrength,
+            Vector3f attackerPosition,
+            double nowSeconds
+    ) {
+        if (damageAmount <= 0) {
+            return LocalEntityDamageResult.rejected(entityId, "invalid damage");
+        }
+        EntityTrack track = entities.get(entityId);
+        if (track == null) {
+            return LocalEntityDamageResult.rejected(entityId, "unknown target");
+        }
+        EntitySnapshot current = track.current();
+        MeleeAttackRules.TargetDecision targetDecision = MeleeAttackRules.canAttack(ownPlayerId, current);
+        if (!targetDecision.accepted()) {
+            return LocalEntityDamageResult.rejected(entityId, targetDecision.reason().name().toLowerCase(java.util.Locale.ROOT));
+        }
+        if (nowSeconds < nextLocalEntityDamageAllowedAt.getOrDefault(entityId, 0.0)) {
+            return LocalEntityDamageResult.rejected(entityId, "invulnerable");
+        }
+
+        int newHealth = Math.max(0, current.health() - damageAmount);
+        int appliedDamage = current.health() - newHealth;
+        double knockbackX = 0.0;
+        double knockbackZ = 0.0;
+        if (attackerPosition != null) {
+            double dx = current.x() - attackerPosition.x;
+            double dz = current.z() - attackerPosition.z;
+            double distance = Math.sqrt(dx * dx + dz * dz);
+            if (distance > 0.0001) {
+                knockbackX = dx / distance * Math.max(0.0, knockbackStrength);
+                knockbackZ = dz / distance * Math.max(0.0, knockbackStrength);
+            }
+        }
+        EntitySnapshot updated = new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                current.x(),
+                current.y(),
+                current.z(),
+                current.yaw(),
+                current.pitch(),
+                newHealth,
+                newHealth <= 0 ? EntitySnapshot.STATE_IDLE : EntitySnapshot.STATE_FLEE,
+                knockbackX,
+                0.1,
+                knockbackZ
+        );
+        if (newHealth <= 0) {
+            entities.remove(entityId);
+            entityAnchors.remove(entityId);
+            nextLocalEntityDamageAllowedAt.remove(entityId);
+        } else {
+            entities.put(entityId, track.update(updated, nowSeconds));
+            nextLocalEntityDamageAllowedAt.put(entityId, nowSeconds + AMBIENT_DAMAGE_INVULNERABILITY_SECONDS);
+        }
+        return LocalEntityDamageResult.accepted(entityId, current, updated, appliedDamage, newHealth <= 0);
+    }
+
+    public synchronized Optional<EntitySnapshot> feedLocalEntity(long entityId, int healAmount, Vector3f playerPosition, double nowSeconds) {
+        EntityTrack track = entities.get(entityId);
+        if (track == null) {
+            return Optional.empty();
+        }
+        EntitySnapshot current = track.current();
+        if (ItemDropType.isTypeKey(current.typeKey()) || EntitySnapshot.STATE_PROJECTILE.equals(current.stateKey())) {
+            return Optional.empty();
+        }
+        int healed = Math.min(Math.max(current.health(), 1) + Math.max(1, healAmount), 20);
+        EntitySnapshot updated = new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                current.x(),
+                current.y(),
+                current.z(),
+                yawToward(current.x(), current.z(), playerPosition == null ? current.x() : playerPosition.x, playerPosition == null ? current.z() : playerPosition.z),
+                current.pitch(),
+                healed,
+                EntitySnapshot.STATE_FOLLOW,
+                0.0,
+                0.0,
+                0.0
+        );
+        entityAnchors.putIfAbsent(entityId, current);
+        entities.put(entityId, track.update(updated, nowSeconds));
+        return Optional.of(updated);
+    }
+
+    public synchronized void spawnLocalItemDrop(String itemKey, int count, double x, double y, double z, double nowSeconds) {
+        if (itemKey == null || itemKey.isBlank() || count < 1) {
+            return;
+        }
+        long entityId = nextLocalRuntimeEntityId();
+        double groundY = dropGroundY(x, y, z);
+        LocalItemDrop drop = new LocalItemDrop(
+                entityId,
+                itemKey,
+                count,
+                x,
+                Math.max(y, groundY + 0.12),
+                z,
+                groundY,
+                localDropLaunchVelocity(itemKey, entityId, 0),
+                1.25,
+                localDropLaunchVelocity(itemKey, entityId, 2),
+                nowSeconds
+        );
+        localItemDrops.put(entityId, drop);
+        entities.put(entityId, EntityTrack.single(drop.snapshot(), nowSeconds));
+    }
+
+    public synchronized List<LocalItemPickup> localItemDropsNear(Vector3f position, double radius, double nowSeconds) {
+        if (position == null || localItemDrops.isEmpty()) {
+            return List.of();
+        }
+        double radiusSquared = Math.max(0.0, radius) * Math.max(0.0, radius);
+        List<LocalItemPickup> pickups = new ArrayList<>();
+        for (LocalItemDrop drop : localItemDrops.values()) {
+            if (!drop.canPickup(nowSeconds)) {
+                continue;
+            }
+            double dx = drop.x() - position.x;
+            double dy = drop.y() - position.y;
+            double dz = drop.z() - position.z;
+            double distanceSquared = dx * dx + dy * dy + dz * dz;
+            if (distanceSquared <= radiusSquared) {
+                pickups.add(new LocalItemPickup(drop.entityId(), drop.itemKey(), drop.count(), drop.x(), drop.y(), drop.z(), distanceSquared));
+            }
+        }
+        pickups.sort(Comparator.comparingDouble(LocalItemPickup::distanceSquared));
+        return pickups;
+    }
+
+    public synchronized Optional<LocalItemPickup> claimLocalItemDrop(long entityId) {
+        LocalItemDrop drop = localItemDrops.remove(entityId);
+        if (drop == null) {
+            return Optional.empty();
+        }
+        entities.remove(entityId);
+        return Optional.of(new LocalItemPickup(drop.entityId(), drop.itemKey(), drop.count(), drop.x(), drop.y(), drop.z(), 0.0));
     }
 
     public synchronized Optional<Raycast.Hit> pick(Vector3f position, Vector3f direction, double maxDistance) {
@@ -338,6 +565,10 @@ public final class ClientWorld {
         return new PhysicsLoadingStatus(center, radius, loaded, required, loaded < required || lastPhysicsBlockedByLoading);
     }
 
+    public synchronized CollisionShapeCache.CacheStats collisionCacheStats() {
+        return collisionShapeCache.stats();
+    }
+
     public synchronized List<ChunkMesh.Bounds> collisionShapeBoundsAround(Vector3f position, int radiusBlocks) {
         int centerX = floor(position.x);
         int centerY = floor(position.y);
@@ -396,15 +627,15 @@ public final class ClientWorld {
         int bodyY = (int) Math.floor(eyePosition.y - PLAYER_BOUNDS.eyeHeight() * 0.35f);
         int feetY = (int) Math.floor(PLAYER_BOUNDS.minY(eyePosition.y) + 0.05);
         return new PlayerWaterState(
-                world.blockId(x, feetY, z) == Blocks.WATER,
-                world.blockId(x, bodyY, z) == Blocks.WATER,
-                world.blockId(x, headY, z) == Blocks.WATER
+                FluidBlocks.isWater(world.blockId(x, feetY, z)),
+                FluidBlocks.isWater(world.blockId(x, bodyY, z)),
+                FluidBlocks.isWater(world.blockId(x, headY, z))
         );
     }
 
     public synchronized Optional<BlockType> blockBelowPlayer(Vector3f eyePosition) {
         int x = (int) Math.floor(eyePosition.x);
-        int y = (int) Math.floor(PLAYER_BOUNDS.minY(eyePosition.y) - 0.08);
+        int y = (int) Math.floor(PLAYER_BOUNDS.minY(eyePosition.y) - PLAYER_PHYSICS.groundProbeDistance());
         int z = (int) Math.floor(eyePosition.z);
         if (!world.dimension().containsY(y) || world.findChunk(ChunkPos.fromBlock(x, z)).isEmpty()) {
             return Optional.empty();
@@ -414,6 +645,30 @@ public final class ClientWorld {
             return Optional.empty();
         }
         return Optional.of(world.blockType(blockId));
+    }
+
+    public synchronized BlockSurfacePhysics.SurfaceMaterial playerSurface(Vector3f eyePosition) {
+        if (eyePosition == null) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        return surfaceAt(
+                eyePosition.x,
+                PLAYER_BOUNDS.minY(eyePosition.y) - PLAYER_PHYSICS.groundProbeDistance(),
+                eyePosition.z
+        );
+    }
+
+    public synchronized BlockSurfacePhysics.SurfaceMaterial surfaceAt(double x, double y, double z) {
+        if (!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z)) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        int blockX = (int) Math.floor(x);
+        int blockY = (int) Math.floor(y);
+        int blockZ = (int) Math.floor(z);
+        if (!world.dimension().containsY(blockY) || world.findChunk(ChunkPos.fromBlock(blockX, blockZ)).isEmpty()) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        return BlockSurfacePhysics.forBlock(world.blockId(blockX, blockY, blockZ));
     }
 
     public synchronized int comfortAt(Vector3f position) {
@@ -692,22 +947,28 @@ public final class ClientWorld {
                 buildQueue.cancel(request);
                 continue;
             }
+            Chunk loadedChunk = chunk.get();
+            ChunkRenderLayerPresence layerPresence = ChunkRenderLayerPresence.scan(world, loadedChunk);
             long buildStartNanos = System.nanoTime();
-            ChunkMesh opaque = mesher.buildVisibleFaceMesh(world, chunk.get(), BlockRenderLayer.SOLID, ambientOcclusion);
-            ChunkMesher.MeshBuildStats opaqueStats = mesher.lastBuildStats();
-            ChunkMesh cutout = mesher.buildVisibleFaceMesh(world, chunk.get(), BlockRenderLayer.CUTOUT, ambientOcclusion);
-            ChunkMesher.MeshBuildStats cutoutStats = mesher.lastBuildStats();
-            ChunkMesh transparent = transparentWater
-                    ? mesher.buildVisibleFaceMesh(world, chunk.get(), BlockRenderLayer.TRANSLUCENT, ambientOcclusion)
+            ChunkMesh opaque = layerPresence.contains(BlockRenderLayer.SOLID)
+                    ? mesher.buildVisibleFaceMesh(world, loadedChunk, BlockRenderLayer.SOLID, ambientOcclusion)
                     : new ChunkMesh(new float[0], new int[0]);
-            ChunkMesher.MeshBuildStats transparentStats = transparentWater ? mesher.lastBuildStats() : ChunkMesher.MeshBuildStats.empty();
+            ChunkMesher.MeshBuildStats opaqueStats = layerPresence.contains(BlockRenderLayer.SOLID) ? mesher.lastBuildStats() : ChunkMesher.MeshBuildStats.empty();
+            ChunkMesh cutout = layerPresence.contains(BlockRenderLayer.CUTOUT)
+                    ? mesher.buildVisibleFaceMesh(world, loadedChunk, BlockRenderLayer.CUTOUT, ambientOcclusion)
+                    : new ChunkMesh(new float[0], new int[0]);
+            ChunkMesher.MeshBuildStats cutoutStats = layerPresence.contains(BlockRenderLayer.CUTOUT) ? mesher.lastBuildStats() : ChunkMesher.MeshBuildStats.empty();
+            ChunkMesh transparent = transparentWater && layerPresence.contains(BlockRenderLayer.TRANSLUCENT)
+                    ? mesher.buildVisibleFaceMesh(world, loadedChunk, BlockRenderLayer.TRANSLUCENT, ambientOcclusion)
+                    : new ChunkMesh(new float[0], new int[0]);
+            ChunkMesher.MeshBuildStats transparentStats = transparentWater && layerPresence.contains(BlockRenderLayer.TRANSLUCENT) ? mesher.lastBuildStats() : ChunkMesher.MeshBuildStats.empty();
             buildQueue.complete(
                     request,
                     (System.nanoTime() - buildStartNanos) / 1_000_000.0,
                     opaqueStats.temporaryBufferGrowthBytes() + cutoutStats.temporaryBufferGrowthBytes() + transparentStats.temporaryBufferGrowthBytes(),
                     Math.max(opaqueStats.retainedBufferBytes(), Math.max(cutoutStats.retainedBufferBytes(), transparentStats.retainedBufferBytes()))
             );
-            clearSectionRenderDirtyFlags(chunk.get());
+            clearSectionRenderDirtyFlags(loadedChunk);
             builds.add(new LayeredMeshBuild(request.pos(), opaque, cutout, transparent));
         }
         return builds;
@@ -929,10 +1190,14 @@ public final class ClientWorld {
     }
 
     private void ensurePreviewAround(ChunkPos center, int radius) {
-        ensurePreviewAround(center, radius, Integer.MAX_VALUE);
+        ensurePreviewAround(center, radius, Integer.MAX_VALUE, Double.POSITIVE_INFINITY);
     }
 
     private void ensurePreviewAround(ChunkPos center, int radius, int maxNewChunks) {
+        ensurePreviewAround(center, radius, maxNewChunks, Double.POSITIVE_INFINITY);
+    }
+
+    private void ensurePreviewAround(ChunkPos center, int radius, int maxNewChunks, double maxMilliseconds) {
         List<ChunkPos> generated = new ArrayList<>();
         List<ChunkPos> missing = new ArrayList<>();
         for (int z = center.z() - radius; z <= center.z() + radius; z++) {
@@ -949,7 +1214,14 @@ public final class ClientWorld {
                 .thenComparingInt(ChunkPos::x)
                 .thenComparingInt(ChunkPos::z));
         int limit = Math.min(missing.size(), Math.max(0, maxNewChunks));
+        long startNanos = System.nanoTime();
+        long budgetNanos = Double.isFinite(maxMilliseconds) && maxMilliseconds > 0.0
+                ? (long) (maxMilliseconds * 1_000_000.0)
+                : Long.MAX_VALUE;
         for (int i = 0; i < limit; i++) {
+            if (!generated.isEmpty() && System.nanoTime() - startNanos >= budgetNanos) {
+                break;
+            }
             ChunkPos pos = missing.get(i);
             Chunk chunk = world.getOrCreateChunk(pos);
             long generationStartNanos = System.nanoTime();
@@ -958,13 +1230,29 @@ public final class ClientWorld {
             generated.add(pos);
             spawnAmbientEntities(pos);
         }
-        for (ChunkPos pos : generated) {
+        if (!generated.isEmpty()) {
             long lightingStartNanos = System.nanoTime();
-            lightEngine.rebuildChunkLighting(world, pos);
+            lightEngine.rebuildChunkLighting(world, generated);
             buildQueue.recordLighting((System.nanoTime() - lightingStartNanos) / 1_000_000.0);
-            markDirtyWithNeighbors(pos);
+        }
+        for (ChunkPos pos : generated) {
+            markGeneratedChunkDirty(pos);
         }
         seedSpawnEntities();
+    }
+
+    private void markGeneratedChunkDirty(ChunkPos pos) {
+        enqueueDirty(pos, false);
+        enqueueDirtyIfLoaded(new ChunkPos(pos.x() + 1, pos.z()), false);
+        enqueueDirtyIfLoaded(new ChunkPos(pos.x() - 1, pos.z()), false);
+        enqueueDirtyIfLoaded(new ChunkPos(pos.x(), pos.z() + 1), false);
+        enqueueDirtyIfLoaded(new ChunkPos(pos.x(), pos.z() - 1), false);
+    }
+
+    private void enqueueDirtyIfLoaded(ChunkPos pos, boolean urgent) {
+        if (world.findChunk(pos).isPresent()) {
+            enqueueDirty(pos, urgent);
+        }
     }
 
     private void spawnAmbientEntities(ChunkPos pos) {
@@ -1185,7 +1473,23 @@ public final class ClientWorld {
     }
 
     public synchronized boolean terrainHasFluidAt(int x, int z) {
-        return terrainCacheAt(x, z).hasFluidAtWorld(x, z);
+        return terrainFluidSurfaceAt(x, z).fluid();
+    }
+
+    public synchronized int terrainFluidDepthHintAt(int x, int z) {
+        return terrainCacheAt(x, z).fluidDepthHintAtWorld(x, z);
+    }
+
+    public synchronized int terrainShoreMaskAt(int x, int z) {
+        return terrainCacheAt(x, z).shoreMaskAtWorld(x, z);
+    }
+
+    public synchronized int terrainFluidSurfaceFlagsAt(int x, int z) {
+        return terrainCacheAt(x, z).fluidSurfaceFlagsAtWorld(x, z);
+    }
+
+    public synchronized ChunkTerrainCache.FluidSurface terrainFluidSurfaceAt(int x, int z) {
+        return terrainCacheAt(x, z).fluidSurfaceAtWorld(x, z);
     }
 
     public synchronized boolean terrainHasCaveAt(int x, int z) {

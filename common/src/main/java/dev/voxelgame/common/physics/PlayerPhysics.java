@@ -27,7 +27,21 @@ public final class PlayerPhysics {
         if (context == null) {
             throw new IllegalArgumentException("Player physics context is required");
         }
-        return stepSurvival(state, input, context.waterState(), context.floatDeltaSeconds(), config, collisionQuery);
+        return stepSurvival(state, input, context.waterState(), context.floatDeltaSeconds(), config, collisionQuery, null);
+    }
+
+    public static PlayerState stepSurvival(
+            PlayerState state,
+            PlayerInput input,
+            PhysicsStepContext context,
+            PlayerPhysicsConfig config,
+            CollisionQuery collisionQuery,
+            BlockSurfacePhysics.SurfaceQuery surfaceQuery
+    ) {
+        if (context == null) {
+            throw new IllegalArgumentException("Player physics context is required");
+        }
+        return stepSurvival(state, input, context.waterState(), context.floatDeltaSeconds(), config, collisionQuery, surfaceQuery);
     }
 
     public static PlayerState stepSurvival(
@@ -37,6 +51,18 @@ public final class PlayerPhysics {
             float deltaSeconds,
             PlayerPhysicsConfig config,
             CollisionQuery collisionQuery
+    ) {
+        return stepSurvival(state, input, water, deltaSeconds, config, collisionQuery, null);
+    }
+
+    public static PlayerState stepSurvival(
+            PlayerState state,
+            PlayerInput input,
+            PlayerWaterState water,
+            float deltaSeconds,
+            PlayerPhysicsConfig config,
+            CollisionQuery collisionQuery,
+            BlockSurfacePhysics.SurfaceQuery surfaceQuery
     ) {
         if (state == null || input == null || water == null || config == null || collisionQuery == null) {
             throw new IllegalArgumentException("Player physics step arguments are required");
@@ -59,8 +85,9 @@ public final class PlayerPhysics {
         }
 
         boolean swimming = water.movementAffected();
+        BlockSurfacePhysics.SurfaceMaterial surface = surface(state, config, swimming, surfaceQuery);
         boolean sprinting = input.sprint() && !swimming;
-        float speed = horizontalSpeed(config, sprinting, swimming);
+        float speed = horizontalSpeed(config, sprinting, swimming) * surface.speedMultiplier();
         float targetVelocityX = input.moveX() * speed;
         float targetVelocityZ = input.moveZ() * speed;
         float velocityX = state.velocityX();
@@ -82,11 +109,11 @@ public final class PlayerPhysics {
             velocityZ = dampSmallVelocity(velocityZ * config.waterHorizontalDrag());
         } else if (onGround) {
             if (input.moveX() != 0.0f || input.moveZ() != 0.0f) {
-                float acceleration = Math.min(1.0f, deltaSeconds * GROUND_ACCELERATION_PER_SECOND);
+                float acceleration = Math.min(1.0f, deltaSeconds * GROUND_ACCELERATION_PER_SECOND * surface.accelerationMultiplier());
                 velocityX += (targetVelocityX - velocityX) * acceleration;
                 velocityZ += (targetVelocityZ - velocityZ) * acceleration;
             } else {
-                float friction = Math.max(0.0f, 1.0f - deltaSeconds * GROUND_FRICTION_PER_SECOND);
+                float friction = Math.max(0.0f, 1.0f - deltaSeconds * GROUND_FRICTION_PER_SECOND * surface.frictionMultiplier());
                 velocityX = dampSmallVelocity(velocityX * friction);
                 velocityZ = dampSmallVelocity(velocityZ * friction);
             }
@@ -102,7 +129,7 @@ public final class PlayerPhysics {
             velocityY = Math.max(velocityY, config.swimRiseSpeed());
             jumpBufferSeconds = 0.0f;
         } else if (jumpBufferSeconds > 0.0f && (onGround || coyoteTimeSeconds > 0.0f)) {
-            velocityY = config.jumpSpeed();
+            velocityY = config.jumpSpeed() * surface.jumpMultiplier();
             onGround = false;
             coyoteTimeSeconds = 0.0f;
             jumpBufferSeconds = 0.0f;
@@ -131,7 +158,14 @@ public final class PlayerPhysics {
             if (onGround) {
                 coyoteTimeSeconds = COYOTE_TIME_SECONDS;
                 if (!swimming && jumpBufferSeconds > 0.0f) {
-                    velocityY = config.jumpSpeed();
+                    BlockSurfacePhysics.SurfaceMaterial landingSurface = surfaceAt(
+                            movement.x(),
+                            movement.y(),
+                            movement.z(),
+                            config,
+                            surfaceQuery
+                    );
+                    velocityY = config.jumpSpeed() * landingSurface.jumpMultiplier();
                     onGround = false;
                     fallImpactSpeed = 0.0f;
                     coyoteTimeSeconds = 0.0f;
@@ -242,6 +276,36 @@ public final class PlayerPhysics {
 
     public static float flyingSpeed(PlayerPhysicsConfig config, boolean sprinting) {
         return sprinting ? config.flySprintSpeed() : config.flySpeed();
+    }
+
+    private static BlockSurfacePhysics.SurfaceMaterial surface(
+            PlayerState state,
+            PlayerPhysicsConfig config,
+            boolean swimming,
+            BlockSurfacePhysics.SurfaceQuery surfaceQuery
+    ) {
+        if (swimming || !state.onGround() || surfaceQuery == null) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        return surfaceAt(state.x(), state.y(), state.z(), config, surfaceQuery);
+    }
+
+    private static BlockSurfacePhysics.SurfaceMaterial surfaceAt(
+            double x,
+            double y,
+            double z,
+            PlayerPhysicsConfig config,
+            BlockSurfacePhysics.SurfaceQuery surfaceQuery
+    ) {
+        if (surfaceQuery == null) {
+            return BlockSurfacePhysics.DEFAULT;
+        }
+        BlockSurfacePhysics.SurfaceMaterial material = surfaceQuery.surfaceAt(
+                x,
+                config.bounds().minY(y) - config.groundProbeDistance(),
+                z
+        );
+        return material == null ? BlockSurfacePhysics.DEFAULT : material;
     }
 
     private static Movement moveWithCollision(

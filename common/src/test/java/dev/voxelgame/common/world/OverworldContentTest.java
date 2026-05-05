@@ -8,6 +8,7 @@ import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -55,6 +56,36 @@ class OverworldContentTest {
         assertBiomeResourceAppearsNear(seed, "voxel:old_ruins", Set.of(Blocks.MOSSY_STONE, Blocks.GLOW_CRYSTAL_NODE), ReproducibleWorldSeeds.OLD_RUINS.focusX(), ReproducibleWorldSeeds.OLD_RUINS.focusZ(), 4);
         assertBiomeResourceAppearsNear(seed, "voxel:highlands", Set.of(Blocks.SMALL_STONE, Blocks.GLOW_CRYSTAL_NODE, Blocks.STONE), ReproducibleWorldSeeds.HIGHLANDS_ORES.focusX(), ReproducibleWorldSeeds.HIGHLANDS_ORES.focusZ(), 4);
         assertBiomeResourceAppearsNear(seed, "voxel:frost_peaks", Set.of(Blocks.SNOW, Blocks.ICE, Blocks.GLOW_CRYSTAL_NODE), ReproducibleWorldSeeds.FROST_PEAKS.focusX(), ReproducibleWorldSeeds.FROST_PEAKS.focusZ(), 4);
+    }
+
+    @Test
+    void expandedMineralOresAppearInUndergroundGeneration() {
+        Set<Short> expected = new HashSet<>(Set.of(
+                Blocks.GOLD_ORE,
+                Blocks.PLATIN_ORE,
+                Blocks.RUBY_ORE,
+                Blocks.SAPPHIRE_ORE,
+                Blocks.TITAN_ORE
+        ));
+        OverworldGenerator generator = new OverworldGenerator(1337L);
+
+        for (int chunkZ = -2; chunkZ <= 2 && !expected.isEmpty(); chunkZ++) {
+            for (int chunkX = -2; chunkX <= 2 && !expected.isEmpty(); chunkX++) {
+                Chunk chunk = new Chunk(new ChunkPos(chunkX, chunkZ), DimensionSettings.OVERWORLD);
+                generator.generate(chunk);
+                for (int z = 0; z < ChunkPos.SIZE && !expected.isEmpty(); z++) {
+                    for (int x = 0; x < ChunkPos.SIZE && !expected.isEmpty(); x++) {
+                        int worldX = chunkX * ChunkPos.SIZE + x;
+                        int worldZ = chunkZ * ChunkPos.SIZE + z;
+                        for (int y = DimensionSettings.OVERWORLD.minY(); y < 72; y++) {
+                            expected.remove(chunk.blockId(worldX, y, worldZ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(expected.isEmpty(), "Missing underground ores: " + expected);
     }
 
     @Test

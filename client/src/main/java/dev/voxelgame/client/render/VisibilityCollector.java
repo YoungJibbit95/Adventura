@@ -28,6 +28,29 @@ final class VisibilityCollector {
                 : Culling.BOUNDS;
     }
 
+    static Culling partCulling(ChunkMesh.SectionPart part, RenderContext context) {
+        if (part == null || part.isEmpty()) {
+            return Culling.BOUNDS;
+        }
+        ChunkMesh.Bounds bounds = part.bounds();
+        return context.frustum().testAab(bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ())
+                ? Culling.VISIBLE
+                : Culling.BOUNDS;
+    }
+
+    static List<ChunkMesh.SectionPart> visibleParts(GpuChunkMesh mesh, RenderContext context) {
+        if (mesh == null || mesh.parts().isEmpty()) {
+            return List.of();
+        }
+        List<ChunkMesh.SectionPart> visible = new ArrayList<>();
+        for (ChunkMesh.SectionPart part : mesh.parts()) {
+            if (partCulling(part, context) == Culling.VISIBLE) {
+                visible.add(part);
+            }
+        }
+        return visible;
+    }
+
     static boolean withinRenderDistance(ChunkPos pos, Vector3f cameraPosition, int renderDistanceChunks) {
         float centerX = pos.x() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5f;
         float centerZ = pos.z() * ChunkPos.SIZE + ChunkPos.SIZE * 0.5f;

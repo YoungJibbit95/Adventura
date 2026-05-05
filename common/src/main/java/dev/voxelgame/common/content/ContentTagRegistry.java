@@ -453,6 +453,14 @@ public final class ContentTagRegistry {
             tags.add(ContentTag.METAL);
             tags.add(ContentTag.IRON);
         }
+        if (key.contains("gold") || key.contains("platin") || key.contains("platinum") || key.contains("titan")) {
+            tags.add(ContentTag.METAL);
+            tags.add(ContentTag.RARE_LOOT);
+        }
+        if (key.contains("ruby") || key.contains("sapphire")) {
+            tags.add(ContentTag.CRYSTAL);
+            tags.add(ContentTag.RARE_LOOT);
+        }
         if (key.contains("crystal")) {
             tags.add(ContentTag.CRYSTAL);
             tags.add(ContentTag.RARE_LOOT);

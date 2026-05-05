@@ -70,6 +70,25 @@ class CollisionShapeCacheTest {
         assertEquals(8.25, hit.impactX(), 0.0001);
     }
 
+    @Test
+    void cacheEvictsLeastRecentlyUsedSectionsWithinBudget() {
+        TestSource source = new TestSource();
+        source.setBlock(8, 64, 8, Blocks.STONE);
+        source.setBlock(40, 64, 8, Blocks.STONE);
+        source.setBlock(72, 64, 8, Blocks.STONE);
+        CollisionShapeCache cache = new CollisionShapeCache(source, 2);
+
+        assertTrue(cache.collidesProjectile(8.5, 64.5, 8.5, ProjectileBounds.ARROW).collides());
+        assertTrue(cache.collidesProjectile(40.5, 64.5, 8.5, ProjectileBounds.ARROW).collides());
+        assertTrue(cache.collidesProjectile(72.5, 64.5, 8.5, ProjectileBounds.ARROW).collides());
+
+        CollisionShapeCache.CacheStats stats = cache.stats();
+        assertTrue(stats.sections() <= 2);
+        assertTrue(stats.shapes() <= 2);
+        assertTrue(stats.evictedSections() > 0);
+        assertEquals(2, stats.maxSectionsPerShapeSet());
+    }
+
     private static final class TestSource implements CollisionShapeCache.Source {
         private final Registry<BlockType> blocks = Blocks.createDefaultRegistry();
         private final Map<BlockPos, Short> blockIds = new HashMap<>();
