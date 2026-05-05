@@ -50,17 +50,20 @@ public record ChunkStreamingRings(
                 positions.add(new ChunkPos(x, z));
             }
         }
-        positions.sort(Comparator.comparingInt(pos -> distanceSquared(center, pos)));
+        positions.sort(Comparator.comparingLong(pos -> distanceSquared(center, pos)));
         return positions;
     }
 
     public static int distance(ChunkPos center, ChunkPos pos) {
-        return Math.max(Math.abs(pos.x() - center.x()), Math.abs(pos.z() - center.z()));
+        long dx = Math.abs((long) pos.x() - center.x());
+        long dz = Math.abs((long) pos.z() - center.z());
+        long chebyshev = Math.max(dx, dz);
+        return chebyshev > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) chebyshev;
     }
 
-    public static int distanceSquared(ChunkPos center, ChunkPos pos) {
-        int dx = pos.x() - center.x();
-        int dz = pos.z() - center.z();
+    public static long distanceSquared(ChunkPos center, ChunkPos pos) {
+        long dx = (long) pos.x() - center.x();
+        long dz = (long) pos.z() - center.z();
         return dx * dx + dz * dz;
     }
 
