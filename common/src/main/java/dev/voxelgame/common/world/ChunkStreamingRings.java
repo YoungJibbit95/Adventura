@@ -55,7 +55,10 @@ public record ChunkStreamingRings(
     }
 
     public static int distance(ChunkPos center, ChunkPos pos) {
-        return Math.max(Math.abs(pos.x() - center.x()), Math.abs(pos.z() - center.z()));
+        long dx = Math.abs((long) pos.x() - center.x());
+        long dz = Math.abs((long) pos.z() - center.z());
+        long chebyshev = Math.max(dx, dz);
+        return chebyshev > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) chebyshev;
     }
 
     public static long distanceSquared(ChunkPos center, ChunkPos pos) {
