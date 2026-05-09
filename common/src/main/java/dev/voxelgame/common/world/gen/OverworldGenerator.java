@@ -15,6 +15,7 @@ import dev.voxelgame.common.world.structure.StructureTemplate;
 import dev.voxelgame.common.world.structure.Structures;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,7 +43,19 @@ public final class OverworldGenerator implements WorldGenerator {
             new StarterResource(2, 6, Blocks.HERB_PLANTER),
             new StarterResource(6, 14, Blocks.SUN_BLOOM),
             new StarterResource(10, 13, Blocks.RED_MUSHROOM),
-            new StarterResource(14, 14, Blocks.MUSHROOM_CLUSTER)
+            new StarterResource(14, 14, Blocks.MUSHROOM_CLUSTER),
+            new StarterResource(1, 14, Blocks.FLOWER_POT),
+            new StarterResource(9, 15, Blocks.LANTERN),
+            new StarterResource(11, 15, Blocks.WOVEN_RUG),
+            new StarterResource(12, 15, Blocks.GARDEN_FENCE),
+            new StarterResource(13, 15, Blocks.GARDEN_FENCE)
+    };
+    private static final ProgressionBiomeAnchor[] PROGRESSION_BIOME_ANCHORS = {
+            new ProgressionBiomeAnchor("pine_workbench", "voxel:pine_forest", 176, -112, 72, "voxel:simple_house"),
+            new ProgressionBiomeAnchor("lakeside_cooking", "voxel:lakeside", -152, 144, 76, "voxel:campsite"),
+            new ProgressionBiomeAnchor("highlands_forge", "voxel:highlands", 304, 176, 84, "voxel:watchtower"),
+            new ProgressionBiomeAnchor("ruin_adventure", "voxel:old_ruins", -352, -240, 88, "voxel:small_ruin"),
+            new ProgressionBiomeAnchor("mushroom_adventure", "voxel:mushroom_grove", 288, -312, 76, "voxel:mushroom_circle")
     };
 
     private final long seed;
@@ -105,6 +118,10 @@ public final class OverworldGenerator implements WorldGenerator {
         return lastGenerationMetrics;
     }
 
+    public static List<ProgressionBiomeAnchor> progressionBiomeAnchors() {
+        return List.of(PROGRESSION_BIOME_ANCHORS);
+    }
+
     public ChunkTerrainCache terrainCacheForChunk(ChunkPos pos) {
         int[] heights = new int[ChunkTerrainCache.COLUMN_COUNT];
         BiomeType[] chunkBiomes = new BiomeType[ChunkTerrainCache.COLUMN_COUNT];
@@ -145,6 +162,10 @@ public final class OverworldGenerator implements WorldGenerator {
     }
 
     public BiomeType biomeAt(int x, int z) {
+        ProgressionBiomeAnchor progressionAnchor = progressionBiomeAnchorAt(x, z);
+        if (progressionAnchor != null) {
+            return biomes.requireByKey(progressionAnchor.biomeKey());
+        }
         ClimateSample climate = climateAt(x, z);
         double temperature = climate.temperature();
         double moisture = climate.moisture();
@@ -385,6 +406,11 @@ public final class OverworldGenerator implements WorldGenerator {
             StructureTemplate template = Structures.compactVillage();
             return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
         }
+        ProgressionBiomeAnchor progressionAnchor = progressionStructureAnchorAt(pos);
+        if (progressionAnchor != null) {
+            StructureTemplate template = progressionStructureTemplate(progressionAnchor.guaranteedStructureKey());
+            return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
+        }
         double roll = normalize(ValueNoise.hashUnit(seed ^ 0x57711A6EL, pos.x(), pos.z()));
         double villageRoll = normalize(ValueNoise.hashUnit(seed ^ 0xA911A6EL, pos.x(), pos.z()));
         if (("voxel:meadow".equals(biome.key()) || "voxel:cozy_meadow".equals(biome.key()) || "voxel:flower_fields".equals(biome.key()) || "voxel:skyroot_forest".equals(biome.key())) && villageRoll < 0.014) {
@@ -413,6 +439,41 @@ public final class OverworldGenerator implements WorldGenerator {
             template = Structures.smallRuin();
         }
         return Optional.of(new GeneratedStructure(template, centerX, structureOriginY(terrainCache, template, centerX, centerZ), centerZ));
+    }
+
+    private ProgressionBiomeAnchor progressionBiomeAnchorAt(int x, int z) {
+        for (ProgressionBiomeAnchor anchor : PROGRESSION_BIOME_ANCHORS) {
+            int dx = x - anchor.centerX();
+            int dz = z - anchor.centerZ();
+            double shapeNoise = ValueNoise.fbm(seed ^ 0xA170A71EL, x, z, 2, 0.018, 0.52);
+            double radius = anchor.radiusBlocks() * (1.0 + shapeNoise * 0.12);
+            if (dx * dx + dz * dz <= radius * radius) {
+                return anchor;
+            }
+        }
+        return null;
+    }
+
+    private static ProgressionBiomeAnchor progressionStructureAnchorAt(ChunkPos pos) {
+        for (ProgressionBiomeAnchor anchor : PROGRESSION_BIOME_ANCHORS) {
+            if (ChunkPos.fromBlock(anchor.centerX(), anchor.centerZ()).equals(pos)) {
+                return anchor;
+            }
+        }
+        return null;
+    }
+
+    private static StructureTemplate progressionStructureTemplate(String structureKey) {
+        return switch (structureKey) {
+            case "voxel:campsite" -> Structures.campsite();
+            case "voxel:simple_house" -> Structures.simpleHouse();
+            case "voxel:watchtower" -> Structures.watchtower();
+            case "voxel:small_ruin" -> Structures.smallRuin();
+            case "voxel:mushroom_circle" -> Structures.mushroomCircle();
+            case "voxel:compact_village" -> Structures.compactVillage();
+            case "voxel:desert_well" -> Structures.desertWell();
+            default -> throw new IllegalArgumentException("Unknown progression structure key: " + structureKey);
+        };
     }
 
     private int structureOriginY(ChunkTerrainCache terrainCache, StructureTemplate template, int originX, int originZ) {
@@ -621,6 +682,31 @@ public final class OverworldGenerator implements WorldGenerator {
     public record GeneratedStructure(StructureTemplate template, int originX, int originY, int originZ) {
         public GeneratedStructure {
             Objects.requireNonNull(template, "template");
+        }
+    }
+
+    public record ProgressionBiomeAnchor(
+            String routeKey,
+            String biomeKey,
+            int centerX,
+            int centerZ,
+            int radiusBlocks,
+            String guaranteedStructureKey
+    ) {
+        public ProgressionBiomeAnchor {
+            Objects.requireNonNull(routeKey, "routeKey");
+            Objects.requireNonNull(biomeKey, "biomeKey");
+            Objects.requireNonNull(guaranteedStructureKey, "guaranteedStructureKey");
+            if (routeKey.isBlank() || biomeKey.isBlank() || guaranteedStructureKey.isBlank()) {
+                throw new IllegalArgumentException("Progression route anchors need route, biome and structure keys");
+            }
+            if (radiusBlocks <= 0) {
+                throw new IllegalArgumentException("Progression route radius must be positive");
+            }
+        }
+
+        public ChunkPos chunkPos() {
+            return ChunkPos.fromBlock(centerX, centerZ);
         }
     }
 

@@ -52,8 +52,10 @@ import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.gameplay.CampfireRules;
 import dev.voxelgame.common.gameplay.CraftingStationRules;
+import dev.voxelgame.common.gameplay.EntityDrops;
 import dev.voxelgame.common.gameplay.GameplayEvent;
 import dev.voxelgame.common.gameplay.InteractionRules;
+import dev.voxelgame.common.gameplay.MeleeAttackRules;
 import dev.voxelgame.common.gameplay.ProjectileItemRules;
 import dev.voxelgame.common.item.CraftingCategory;
 import dev.voxelgame.common.item.CraftingRecipe;
@@ -70,6 +72,7 @@ import dev.voxelgame.common.world.BiomeType;
 import dev.voxelgame.common.world.Biomes;
 import dev.voxelgame.common.world.ChunkPos;
 import dev.voxelgame.common.world.ChunkStreamingRings;
+import dev.voxelgame.common.world.gen.ProgressionRouteReport;
 import dev.voxelgame.common.world.light.LightRules;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -280,10 +283,12 @@ public final class GameClient {
     private int lastCollisionShapeDebugBoxes;
     private int lastProjectileSweepDebugBoxes;
     private CraftingCategory craftingCategoryFilter;
+    private String selectedCraftingRecipeKey;
     private boolean craftableRecipesOnly;
     private boolean craftingSearchFocused;
     private boolean inventoryTrashMode;
     private float settingsLayoutScale = 1.0f;
+    private SettingsCategory settingsCategory = SettingsCategory.GRAPHICS;
     private int lastSurvivalHealth = 20;
     private int lastSurvivalHunger = 20;
     private int lastSurvivalStamina = 20;
@@ -420,6 +425,7 @@ public final class GameClient {
             lastTime = now;
             lastFrameMilliseconds = rawDeltaSeconds * 1000.0;
             updateFps(now);
+            syncAudioSettings();
             runMainThreadActions();
             long updateStartNanos = System.nanoTime();
             long phaseStartNanos = updateStartNanos;
@@ -474,8 +480,10 @@ public final class GameClient {
                 if (!onlineMode) {
                     ChunkStreamingRings rings = chunkStreamingRings();
                     world.tickCampfires(now);
+                    world.tickLocalEntities(camera.position(), now);
+                    collectNearbyLocalItemDrops(now);
                     emitCampfireReadyFeedback(now);
-                    world.ensurePreviewAround(
+                    world.streamPreviewAround(
                             camera.position(),
                             rings.previewRadiusChunks(),
                             settings.effectiveChunkGenerationBudgetChunks(lastFrameMilliseconds),
@@ -1048,9 +1056,63 @@ public final class GameClient {
             connection.send(new GamePacket.EntityInteract(target.entityId(), hotbar.selectedIndex(), action));
             setStatus(action == GamePacket.EntityInteract.Action.FEED ? "Feed requested" : "Entity attacked");
         } else {
-            setStatus(action == GamePacket.EntityInteract.Action.FEED
-                    ? cozyName(target.typeKey()) + " seems interested"
-                    : cozyName(target.typeKey()) + " attacked");
+            if (ItemDropType.isTypeKey(target.typeKey())) {
+                setStatus("Walk over to pick up");
+                nextBlockActionTime = now + 0.12;
+                updateWindowTitle();
+                return;
+            }
+            if (action == GamePacket.EntityInteract.Action.FEED) {
+                int heal = hotbar.selectedFoodHealValue();
+                Optional<EntitySnapshot> fed = world.feedLocalEntity(target.entityId(), heal, camera.position(), now);
+                if (fed.isPresent()) {
+                    hotbar.consumeSelectedOne();
+                    setStatus(cozyName(target.typeKey()) + " follows you");
+                    audio.play(AudioCue.EAT);
+                } else {
+                    setStatus(cozyName(target.typeKey()) + " is not interested");
+                }
+                nextBlockActionTime = now + 0.26;
+                heldItemAnimation.use(now);
+                updateWindowTitle();
+                return;
+            }
+            MeleeAttackRules.AttackProfile attack = MeleeAttackRules.profileFor(hotbar.selectedStack(), items);
+            if (!InteractionRules.canReachEntity(camera.position().x, camera.position().y, camera.position().z, target, attack.range())) {
+                setStatus("Too far away");
+                nextBlockActionTime = now + 0.18;
+                updateWindowTitle();
+                return;
+            }
+            ClientWorld.LocalEntityDamageResult result = world.damageLocalEntity(
+                    target.entityId(),
+                    attack.damage(),
+                    attack.knockbackStrength(),
+                    camera.position(),
+                    now
+            );
+            if (!result.accepted()) {
+                setStatus("Cannot attack: " + result.rejectionReason());
+                nextBlockActionTime = now + 0.18;
+                updateWindowTitle();
+                return;
+            }
+            if (attack.durabilityDamage() > 0) {
+                hotbar.damageSelectedItem(attack.durabilityDamage());
+            }
+            audio.play(AudioCue.PROJECTILE_HIT_ENTITY);
+            if (result.killed()) {
+                int drops = spawnLocalEntityDrops(result.target(), now);
+                setStatus(drops > 0
+                        ? cozyName(target.typeKey()) + " dropped loot"
+                        : cozyName(target.typeKey()) + " defeated");
+            } else {
+                setStatus(cozyName(target.typeKey()) + " hit, HP " + result.remainingHealth());
+            }
+            nextBlockActionTime = now + attack.cooldownSeconds();
+            heldItemAnimation.use(now);
+            updateWindowTitle();
+            return;
         }
         nextBlockActionTime = now + 0.22;
         heldItemAnimation.use(now);
@@ -1300,6 +1362,45 @@ public final class GameClient {
             audio.play(AudioCue.COLLECT_ITEM);
         } else {
             setStatus("Inventory full");
+        }
+    }
+
+    private int spawnLocalEntityDrops(EntitySnapshot target, double now) {
+        if (world == null || target == null) {
+            return 0;
+        }
+        int total = 0;
+        for (EntityDrops.Drop drop : EntityDrops.dropsFor(target)) {
+            world.spawnLocalItemDrop(drop.itemKey(), drop.count(), target.x(), target.y() + 0.35, target.z(), now);
+            total += drop.count();
+        }
+        return total;
+    }
+
+    private void collectNearbyLocalItemDrops(double now) {
+        if (onlineMode || world == null) {
+            return;
+        }
+        for (ClientWorld.LocalItemPickup pickup : world.localItemDropsNear(camera.position(), 1.45, now)) {
+            if (!hotbar.canAddItem(pickup.itemKey(), pickup.count())) {
+                setStatus("Inventory full");
+                return;
+            }
+            Optional<ClientWorld.LocalItemPickup> claimed = world.claimLocalItemDrop(pickup.entityId());
+            if (claimed.isEmpty()) {
+                continue;
+            }
+            ClientWorld.LocalItemPickup item = claimed.get();
+            if (!hotbar.addItemFully(item.itemKey(), item.count())) {
+                world.spawnLocalItemDrop(item.itemKey(), item.count(), item.x(), item.y(), item.z(), now);
+                setStatus("Inventory full");
+                return;
+            }
+            pickupPop.trigger(item.itemKey(), now);
+            setStatus(earlyGameMilestones.collectItem(item.itemKey(), cozyName(item.itemKey()))
+                    .orElse("Gathered " + cozyName(item.itemKey())));
+            announceNewRecipeUnlocks();
+            audio.play(AudioCue.COLLECT_ITEM);
         }
     }
 
@@ -1611,7 +1712,7 @@ public final class GameClient {
         String command = parts[0].toLowerCase(Locale.ROOT);
         try {
             switch (command) {
-                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /meshms n /uploadms n /greedymesh /fov n /fog /ao /shadows /bloom /lightning /hud [normal|minimal|hidden] /debug /debugchunks /debugbounds /debugsections /debugparticles /debugview off|material|light|sky|block|emissive|ao|biome|layer|uv|transparent /debuglight /debugbiome /debugmaterial /debugatlas [dump|uv block] /shaderreload /water /simplewater /particles 0.25-1.0 /settings /clear /say text or !phys projectile|entity|water|unloaded|stats");
+                case "help" -> chatLog.add("Commands: /help /keys /seed /pos /tp x y z /spawn /routeprogression /gamemode survival|creative|spectator /preset low|medium|high /renderdistance n /preview n /meshbudget n /meshms n /uploadms n /greedymesh /fov n /fog /ao /shadows /bloom /lightning /hud [normal|minimal|hidden] /debug /debugchunks /debugbounds /debugsections /debugparticles /debugview off|material|light|sky|block|emissive|ao|biome|layer|uv|transparent /debuglight /debugbiome /debugmaterial /debugatlas [dump|uv block] /shaderreload /water /simplewater /particles 0.25-1.0 /settings /clear /say text or !phys projectile|entity|water|unloaded|stats");
                 case "keys", "keybinds" -> showKeybinds();
                 case "seed" -> chatLog.add("Seed: " + connectionOptions.seed());
                 case "pos" -> chatLog.add(positionLine());
@@ -1620,6 +1721,7 @@ public final class GameClient {
                     setCameraToSpawn();
                     chatLog.add("Teleported to spawn");
                 }
+                case "routeprogression", "route" -> showProgressionRouteReport();
                 case "gamemode", "gm" -> setGameMode(parts);
                 case "preset" -> applyRenderPreset(parts);
                 case "renderdistance", "rd" -> {
@@ -1702,6 +1804,13 @@ public final class GameClient {
     private void triggerWeatherLightningCommand() {
         weatherLightning.trigger(currentTimeSeconds());
         chatLog.add("Weather lightning triggered");
+    }
+
+    private void showProgressionRouteReport() {
+        ProgressionRouteReport report = ProgressionRouteReport.aroundSpawn(connectionOptions.seed());
+        for (String line : report.summaryLines()) {
+            chatLog.add(line);
+        }
     }
 
     private void applyRenderPreset(String[] parts) {
@@ -2173,25 +2282,319 @@ public final class GameClient {
     }
 
     private void renderMainMenu(MousePosition mouse, boolean clicked) {
-        uiRenderer.rect(0, 0, framebufferWidth, framebufferHeight, new UiColor(0.03f, 0.05f, 0.05f, 1.0f));
-        uiRenderer.rect(0, framebufferHeight * 0.60f, framebufferWidth, framebufferHeight * 0.40f, new UiColor(0.07f, 0.12f, 0.10f, 0.9f));
-        uiRenderer.centeredText("ADVENTURA", framebufferWidth * 0.5f, 88.0f, 7.0f, UiColor.WHITE);
-        uiRenderer.centeredText("COZY VOXEL SURVIVAL", framebufferWidth * 0.5f, 154.0f, 2.0f, UiColor.MUTED);
+        MainMenuLayout layout = mainMenuLayout(framebufferWidth, framebufferHeight, settings.uiScale());
+        renderMainMenuBackdrop(layout);
+        renderMainMenuPanel(layout, mouse, clicked);
+    }
 
-        float buttonWidth = Math.min(360.0f, framebufferWidth - 80.0f);
-        float buttonHeight = 48.0f;
-        float x = framebufferWidth * 0.5f - buttonWidth * 0.5f;
-        float y = framebufferHeight * 0.5f - 80.0f;
-        UiButton singleplayer = new UiButton(x, y, buttonWidth, buttonHeight, "SINGLEPLAYER", true);
-        UiButton multiplayer = new UiButton(x, y + 58.0f, buttonWidth, buttonHeight, "JOIN SERVER", true);
-        UiButton settingsButton = new UiButton(x, y + 116.0f, buttonWidth, buttonHeight, "SETTINGS", true);
-        UiButton quit = new UiButton(x, y + 174.0f, buttonWidth, buttonHeight, "QUIT", true);
+    private void renderMainMenuBackdrop(MainMenuLayout layout) {
+        float width = framebufferWidth;
+        float height = framebufferHeight;
+        float horizon = layout.horizonY();
+        double time = frameTimeSeconds;
 
-        drawButton(singleplayer, mouse, clicked, this::startSingleplayer);
-        drawButton(multiplayer, mouse, clicked, this::startMultiplayer);
-        drawButton(settingsButton, mouse, clicked, () -> openSettings(GameState.MAIN_MENU));
-        drawButton(quit, mouse, clicked, () -> glfwSetWindowShouldClose(window, true));
-        uiRenderer.centeredText(statusMessage, framebufferWidth * 0.5f, y + 246.0f, 2.0f, UiColor.MUTED);
+        uiRenderer.rect(0.0f, 0.0f, width, height, new UiColor(0.16f, 0.23f, 0.28f, 1.0f));
+        uiRenderer.rect(0.0f, 0.0f, width, horizon * 0.34f, new UiColor(0.18f, 0.28f, 0.36f, 0.86f));
+        uiRenderer.rect(0.0f, horizon * 0.34f, width, horizon * 0.30f, new UiColor(0.45f, 0.42f, 0.35f, 0.50f));
+        uiRenderer.rect(0.0f, horizon * 0.58f, width, horizon * 0.18f, new UiColor(0.80f, 0.56f, 0.34f, 0.28f));
+
+        drawMenuSun(width * 0.76f, Math.max(28.0f, horizon * 0.18f), Math.max(28.0f, 42.0f * layout.scale()));
+        drawPixelCloud(width * 0.18f, horizon * 0.19f, 1.0f * layout.scale(), 0.52f);
+        drawPixelCloud(width * 0.55f, horizon * 0.12f, 0.82f * layout.scale(), 0.34f);
+        drawBlockHill(-width * 0.08f, horizon + 12.0f * layout.scale(), width * 0.64f, 98.0f * layout.scale(), new UiColor(0.11f, 0.24f, 0.19f, 0.94f));
+        drawBlockHill(width * 0.34f, horizon + 6.0f * layout.scale(), width * 0.78f, 134.0f * layout.scale(), new UiColor(0.08f, 0.19f, 0.17f, 0.96f));
+        drawBlockHill(width * 0.58f, horizon + 22.0f * layout.scale(), width * 0.54f, 78.0f * layout.scale(), new UiColor(0.17f, 0.28f, 0.19f, 0.86f));
+
+        float groundY = Math.max(horizon + 52.0f * layout.scale(), height * 0.68f);
+        uiRenderer.rect(0.0f, groundY, width, height - groundY, new UiColor(0.06f, 0.12f, 0.09f, 1.0f));
+        uiRenderer.rect(0.0f, groundY, width, Math.max(4.0f, 7.0f * layout.scale()), new UiColor(0.37f, 0.58f, 0.30f, 0.96f));
+        uiRenderer.rect(0.0f, groundY + 20.0f * layout.scale(), width, Math.max(8.0f, 14.0f * layout.scale()), new UiColor(0.12f, 0.18f, 0.11f, 0.86f));
+
+        for (int i = 0; i < 8; i++) {
+            float x = width * (0.08f + i * 0.12f);
+            float treeScale = layout.scale() * (0.74f + (i % 3) * 0.12f);
+            drawPixelTree(x, groundY + 1.0f, treeScale, i % 2 == 0);
+        }
+        drawMenuPath(width * 0.64f, groundY + 8.0f * layout.scale(), width * 0.34f, height - groundY);
+        drawMenuCampsite(layout, groundY, time);
+        drawMenuFireflies(width, horizon, groundY, layout.scale(), time);
+    }
+
+    private void renderMainMenuPanel(MainMenuLayout layout, MousePosition mouse, boolean clicked) {
+        drawModernPanel(
+                layout.panelX(),
+                layout.panelY(),
+                layout.panelWidth(),
+                layout.panelHeight(),
+                12.0f * layout.scale(),
+                new UiColor(0.030f, 0.045f, 0.040f, 0.90f),
+                new UiColor(0.015f, 0.022f, 0.020f, 0.92f),
+                new UiColor(0.88f, 0.70f, 0.34f, 1.0f),
+                layout.scale()
+        );
+
+        uiRenderer.centeredText("ADVENTURA", layout.panelCenterX(), layout.titleY(), layout.titleScale(), UiColor.WHITE);
+        uiRenderer.centeredText("ALPHA CORE", layout.panelCenterX(), layout.subtitleY(), layout.subtitleScale(), new UiColor(0.88f, 0.78f, 0.55f, 0.96f));
+        uiRenderer.roundedRect(
+                layout.buttonX(),
+                layout.firstButtonY() - 12.0f * layout.scale(),
+                layout.buttonWidth(),
+                Math.max(2.0f, 3.0f * layout.scale()),
+                1.5f * layout.scale(),
+                new UiColor(0.88f, 0.70f, 0.34f, 0.72f)
+        );
+
+        drawMainMenuButton(
+                new UiButton(layout.buttonX(), layout.buttonY(0), layout.buttonWidth(), layout.buttonHeight(), "PLAY SOLO", true),
+                MenuIcon.PLAY,
+                mouse,
+                clicked,
+                this::startSingleplayer,
+                layout.scale(),
+                true
+        );
+        drawMainMenuButton(
+                new UiButton(layout.buttonX(), layout.buttonY(1), layout.buttonWidth(), layout.buttonHeight(), "JOIN SERVER", true),
+                MenuIcon.SERVER,
+                mouse,
+                clicked,
+                this::startMultiplayer,
+                layout.scale(),
+                false
+        );
+        drawMainMenuButton(
+                new UiButton(layout.buttonX(), layout.buttonY(2), layout.buttonWidth(), layout.buttonHeight(), "SETTINGS", true),
+                MenuIcon.SETTINGS,
+                mouse,
+                clicked,
+                () -> openSettings(GameState.MAIN_MENU),
+                layout.scale(),
+                false
+        );
+        drawMainMenuButton(
+                new UiButton(layout.buttonX(), layout.buttonY(3), layout.buttonWidth(), layout.buttonHeight(), "QUIT", true),
+                MenuIcon.QUIT,
+                mouse,
+                clicked,
+                () -> glfwSetWindowShouldClose(window, true),
+                layout.scale(),
+                false
+        );
+
+        String status = fitTextToWidth(statusMessage, layout.statusScale(), layout.buttonWidth() - 22.0f * layout.scale());
+        uiRenderer.roundedRect(
+                layout.buttonX(),
+                layout.statusY() - 7.0f * layout.scale(),
+                layout.buttonWidth(),
+                BitmapFont.textHeight(layout.statusScale()) + 14.0f * layout.scale(),
+                8.0f * layout.scale(),
+                new UiColor(0.012f, 0.018f, 0.016f, 0.54f)
+        );
+        uiRenderer.centeredText(status, layout.panelCenterX(), layout.statusY(), layout.statusScale(), UiColor.MUTED);
+    }
+
+    private void drawMainMenuButton(
+            UiButton button,
+            MenuIcon icon,
+            MousePosition mouse,
+            boolean clicked,
+            Runnable action,
+            float scale,
+            boolean primary
+    ) {
+        boolean hovered = button.contains(mouse.x(), mouse.y());
+        UiColor accent = primary ? new UiColor(0.88f, 0.70f, 0.34f, 1.0f) : UiColor.ACCENT;
+        UiColor base = primary
+                ? new UiColor(0.24f, 0.22f, 0.14f, 0.96f)
+                : new UiColor(0.12f, 0.18f, 0.16f, 0.94f);
+        UiColor hover = primary
+                ? new UiColor(0.34f, 0.30f, 0.18f, 0.98f)
+                : new UiColor(0.18f, 0.27f, 0.23f, 0.98f);
+        drawModernButtonSurface(button, mouse, clicked, action, base, hover, accent);
+        float iconSize = Math.max(18.0f, Math.min(button.height() - 15.0f * scale, 25.0f * scale));
+        float iconX = button.x() + 15.0f * scale;
+        float iconY = button.y() + button.height() * 0.5f - iconSize * 0.5f;
+        drawMenuIcon(icon, iconX, iconY, iconSize, hovered || primary ? accent : UiColor.MUTED);
+        float textX = iconX + iconSize + 14.0f * scale;
+        float textWidth = button.x() + button.width() - textX - 16.0f * scale;
+        float textScale = fitTextScale(button.label(), 1.75f * scale, 0.82f, textWidth);
+        uiRenderer.text(
+                button.label(),
+                textX,
+                button.y() + button.height() * 0.5f - BitmapFont.textHeight(textScale) * 0.5f,
+                textScale,
+                button.enabled() ? UiColor.WHITE : UiColor.MUTED
+        );
+    }
+
+    private void drawMenuSun(float centerX, float centerY, float size) {
+        float pixel = Math.max(3.0f, size / 8.0f);
+        UiColor glow = new UiColor(0.98f, 0.72f, 0.34f, 0.16f);
+        UiColor rim = new UiColor(0.98f, 0.68f, 0.30f, 0.62f);
+        UiColor core = new UiColor(0.96f, 0.82f, 0.46f, 0.92f);
+        uiRenderer.roundedRect(centerX - size * 0.70f, centerY - size * 0.70f, size * 1.40f, size * 1.40f, size * 0.48f, glow);
+        uiRenderer.rect(centerX - pixel * 3.0f, centerY - pixel * 4.0f, pixel * 6.0f, pixel * 8.0f, rim);
+        uiRenderer.rect(centerX - pixel * 4.0f, centerY - pixel * 3.0f, pixel * 8.0f, pixel * 6.0f, rim);
+        uiRenderer.rect(centerX - pixel * 3.0f, centerY - pixel * 3.0f, pixel * 6.0f, pixel * 6.0f, core);
+        uiRenderer.rect(centerX - pixel * 1.5f, centerY - pixel * 4.5f, pixel * 3.0f, pixel, core);
+        uiRenderer.rect(centerX + pixel * 2.3f, centerY - pixel * 1.0f, pixel, pixel * 2.0f, new UiColor(1.0f, 0.92f, 0.58f, 0.70f));
+    }
+
+    private void drawPixelCloud(float x, float y, float scale, float alpha) {
+        float pixel = Math.max(4.0f, 7.0f * scale);
+        UiColor shadow = new UiColor(0.12f, 0.17f, 0.18f, alpha * 0.32f);
+        UiColor cloud = new UiColor(0.86f, 0.88f, 0.80f, alpha);
+        uiRenderer.rect(x + pixel, y + pixel * 1.7f, pixel * 8.0f, pixel * 2.0f, shadow);
+        uiRenderer.roundedRect(x, y + pixel * 1.2f, pixel * 4.0f, pixel * 2.6f, pixel * 0.7f, cloud);
+        uiRenderer.roundedRect(x + pixel * 2.0f, y, pixel * 4.4f, pixel * 3.4f, pixel * 0.9f, cloud);
+        uiRenderer.roundedRect(x + pixel * 5.4f, y + pixel * 0.8f, pixel * 4.0f, pixel * 2.8f, pixel * 0.8f, cloud);
+        uiRenderer.rect(x + pixel * 1.3f, y + pixel * 2.7f, pixel * 7.5f, pixel, cloud);
+    }
+
+    private void drawBlockHill(float x, float baseY, float width, float maxHeight, UiColor color) {
+        int columns = 14;
+        float columnWidth = Math.max(12.0f, width / columns);
+        for (int i = 0; i < columns; i++) {
+            float wave = (float) Math.sin(i * 0.72f);
+            float ridge = 0.48f + 0.35f * wave + (i % 4) * 0.045f;
+            float height = Math.max(maxHeight * 0.28f, maxHeight * ridge);
+            float columnX = x + i * columnWidth;
+            uiRenderer.rect(columnX, baseY - height, columnWidth + 1.0f, height, color);
+            if (i % 3 == 0) {
+                uiRenderer.rect(columnX, baseY - height, columnWidth + 1.0f, Math.max(3.0f, height * 0.05f), withAlpha(UiColor.ACCENT, 0.20f));
+            }
+        }
+    }
+
+    private void drawPixelTree(float x, float groundY, float scale, boolean pine) {
+        float pixel = Math.max(3.0f, 5.0f * scale);
+        float trunkWidth = pixel * 1.8f;
+        float trunkHeight = pixel * (pine ? 8.0f : 6.4f);
+        UiColor trunk = new UiColor(0.30f, 0.18f, 0.10f, 0.96f);
+        UiColor barkShade = new UiColor(0.18f, 0.11f, 0.07f, 0.70f);
+        UiColor leaves = pine ? new UiColor(0.08f, 0.24f, 0.16f, 0.94f) : new UiColor(0.14f, 0.34f, 0.18f, 0.93f);
+        UiColor leavesDark = pine ? new UiColor(0.04f, 0.15f, 0.11f, 0.96f) : new UiColor(0.07f, 0.22f, 0.13f, 0.95f);
+
+        uiRenderer.rect(x - trunkWidth * 0.5f, groundY - trunkHeight, trunkWidth, trunkHeight, trunk);
+        uiRenderer.rect(x + trunkWidth * 0.12f, groundY - trunkHeight + pixel, pixel * 0.45f, trunkHeight - pixel * 1.4f, barkShade);
+
+        if (pine) {
+            for (int layer = 0; layer < 4; layer++) {
+                float layerWidth = pixel * (8.0f - layer * 1.4f);
+                float layerHeight = pixel * 2.4f;
+                float layerY = groundY - trunkHeight - pixel * (layer * 1.45f + 0.8f);
+                uiRenderer.rect(x - layerWidth * 0.5f, layerY, layerWidth, layerHeight, layer % 2 == 0 ? leaves : leavesDark);
+                uiRenderer.rect(x - layerWidth * 0.34f, layerY - pixel, layerWidth * 0.68f, pixel * 1.4f, leaves);
+            }
+        } else {
+            float crownY = groundY - trunkHeight - pixel * 3.4f;
+            uiRenderer.roundedRect(x - pixel * 4.2f, crownY + pixel * 1.4f, pixel * 8.4f, pixel * 4.2f, pixel * 1.2f, leavesDark);
+            uiRenderer.roundedRect(x - pixel * 3.2f, crownY, pixel * 6.4f, pixel * 5.0f, pixel * 1.4f, leaves);
+            uiRenderer.rect(x - pixel * 1.3f, crownY - pixel * 0.6f, pixel * 2.8f, pixel * 1.5f, leaves);
+        }
+    }
+
+    private void drawMenuPath(float x, float y, float width, float height) {
+        int rows = 10;
+        float rowHeight = Math.max(5.0f, height / rows);
+        for (int row = 0; row < rows; row++) {
+            float t = row / (rows - 1.0f);
+            float rowWidth = width * (0.22f + t * 0.86f);
+            float rowX = x - rowWidth * 0.5f + t * width * 0.18f;
+            UiColor dirt = row % 2 == 0
+                    ? new UiColor(0.35f, 0.25f, 0.15f, 0.72f)
+                    : new UiColor(0.24f, 0.18f, 0.12f, 0.74f);
+            uiRenderer.rect(rowX, y + row * rowHeight, rowWidth, rowHeight + 1.0f, dirt);
+            if (row % 3 == 1) {
+                uiRenderer.rect(rowX + rowWidth * 0.25f, y + row * rowHeight + rowHeight * 0.32f, rowWidth * 0.20f, Math.max(2.0f, rowHeight * 0.22f), new UiColor(0.46f, 0.35f, 0.22f, 0.42f));
+            }
+        }
+    }
+
+    private void drawMenuCampsite(MainMenuLayout layout, float groundY, double time) {
+        if (!layout.wideScene() && framebufferWidth < 620) {
+            return;
+        }
+        float scale = layout.scale();
+        float baseX = layout.wideScene() ? framebufferWidth * 0.72f : framebufferWidth * 0.76f;
+        float pixel = Math.max(3.0f, 5.0f * scale);
+        float cabinW = pixel * 18.0f;
+        float cabinH = pixel * 10.0f;
+        float cabinX = clampFloat(baseX - cabinW * 0.35f, layout.panelX() + layout.panelWidth() + 28.0f * scale, framebufferWidth - cabinW - 18.0f * scale);
+        float cabinY = groundY - cabinH;
+
+        uiRenderer.rect(cabinX + pixel * 2.0f, cabinY + pixel * 3.0f, cabinW - pixel * 4.0f, cabinH - pixel * 1.2f, new UiColor(0.30f, 0.20f, 0.12f, 0.94f));
+        uiRenderer.rect(cabinX + pixel, cabinY + pixel * 2.0f, cabinW - pixel * 2.0f, pixel * 2.0f, new UiColor(0.42f, 0.27f, 0.14f, 0.98f));
+        uiRenderer.rect(cabinX + pixel * 3.0f, cabinY + pixel, cabinW - pixel * 6.0f, pixel * 2.0f, new UiColor(0.48f, 0.31f, 0.15f, 0.98f));
+        uiRenderer.rect(cabinX + pixel * 7.0f, cabinY - pixel * 0.2f, cabinW - pixel * 14.0f, pixel * 1.4f, new UiColor(0.55f, 0.36f, 0.17f, 0.96f));
+        uiRenderer.rect(cabinX + pixel * 3.2f, cabinY + pixel * 5.0f, pixel * 3.4f, pixel * 2.8f, new UiColor(0.98f, 0.72f, 0.30f, 0.82f));
+        uiRenderer.rect(cabinX + pixel * 10.0f, cabinY + pixel * 4.2f, pixel * 3.8f, cabinH - pixel * 4.2f, new UiColor(0.15f, 0.10f, 0.07f, 0.92f));
+
+        float fireX = cabinX - pixel * 5.2f;
+        float fireY = groundY - pixel * 3.4f;
+        float flicker = 0.75f + (float) Math.sin(time * 7.0) * 0.25f;
+        uiRenderer.rect(fireX - pixel * 2.0f, fireY + pixel * 2.8f, pixel * 6.0f, pixel, new UiColor(0.18f, 0.10f, 0.05f, 0.96f));
+        uiRenderer.rect(fireX - pixel * 1.6f, fireY + pixel * 1.8f, pixel * 1.3f, pixel * 1.9f, new UiColor(0.62f, 0.22f, 0.08f, 0.94f));
+        uiRenderer.rect(fireX - pixel * 0.4f, fireY + pixel * (0.7f - flicker * 0.28f), pixel * 1.5f, pixel * 3.0f, new UiColor(0.96f, 0.46f, 0.12f, 0.96f));
+        uiRenderer.rect(fireX + pixel * 1.0f, fireY + pixel * (1.2f - flicker * 0.18f), pixel * 1.2f, pixel * 2.4f, new UiColor(0.98f, 0.78f, 0.30f, 0.96f));
+        uiRenderer.roundedRect(fireX - pixel * 4.8f, fireY - pixel * 2.6f, pixel * 8.6f, pixel * 7.4f, pixel * 2.0f, new UiColor(0.98f, 0.48f, 0.12f, 0.08f + flicker * 0.07f));
+        for (int i = 0; i < 3; i++) {
+            float smokeX = fireX + pixel * (i * 1.2f - 1.0f) + (float) Math.sin(time + i) * pixel * 0.35f;
+            float smokeY = fireY - pixel * (2.4f + i * 1.7f);
+            uiRenderer.roundedRect(smokeX, smokeY, pixel * (1.5f + i * 0.3f), pixel * 0.9f, pixel * 0.45f, new UiColor(0.78f, 0.82f, 0.76f, 0.14f));
+        }
+    }
+
+    private void drawMenuFireflies(float width, float horizon, float groundY, float scale, double time) {
+        float pixel = Math.max(2.0f, 3.0f * scale);
+        for (int i = 0; i < 18; i++) {
+            float seed = i * 0.173f;
+            float x = width * ((0.11f + seed * 2.37f) % 0.92f);
+            float drift = (float) Math.sin(time * (0.8f + i * 0.04f) + i * 1.9f);
+            float y = horizon + (groundY - horizon) * (0.18f + ((i * 37) % 100) / 160.0f) + drift * 6.0f * scale;
+            float alpha = 0.30f + 0.32f * (0.5f + (float) Math.sin(time * 2.2f + i) * 0.5f);
+            uiRenderer.roundedRect(x + drift * 7.0f * scale, y, pixel, pixel, pixel * 0.5f, new UiColor(0.95f, 0.88f, 0.40f, alpha));
+        }
+    }
+
+    private void drawMenuIcon(MenuIcon icon, float x, float y, float size, UiColor color) {
+        float pixel = Math.max(2.0f, size / 7.0f);
+        UiColor shade = new UiColor(0.02f, 0.03f, 0.03f, Math.min(0.42f, color.a() * 0.42f));
+        uiRenderer.rect(x + pixel * 0.5f, y + pixel * 0.7f, pixel * 5.8f, pixel * 5.8f, shade);
+        switch (icon) {
+            case PLAY -> {
+                uiRenderer.rect(x + pixel, y + pixel, pixel * 2.0f, pixel * 5.0f, color);
+                uiRenderer.rect(x + pixel * 3.0f, y + pixel * 2.0f, pixel, pixel * 3.0f, color);
+                uiRenderer.rect(x + pixel * 4.0f, y + pixel * 2.8f, pixel, pixel * 1.4f, color);
+                uiRenderer.rect(x + pixel * 5.0f, y + pixel * 3.2f, pixel, pixel * 0.6f, color);
+            }
+            case SERVER -> {
+                drawMenuIconNode(x + pixel, y + pixel, pixel * 2.0f, color);
+                drawMenuIconNode(x + pixel * 4.0f, y + pixel, pixel * 2.0f, color);
+                drawMenuIconNode(x + pixel * 2.5f, y + pixel * 4.0f, pixel * 2.0f, color);
+                uiRenderer.rect(x + pixel * 2.8f, y + pixel * 2.0f, pixel * 1.4f, pixel * 0.55f, color);
+                uiRenderer.rect(x + pixel * 3.2f, y + pixel * 2.4f, pixel * 0.55f, pixel * 1.8f, color);
+            }
+            case SETTINGS -> {
+                uiRenderer.rect(x + pixel * 2.0f, y + pixel, pixel * 3.0f, pixel, color);
+                uiRenderer.rect(x + pixel * 2.0f, y + pixel * 5.0f, pixel * 3.0f, pixel, color);
+                uiRenderer.rect(x + pixel, y + pixel * 2.0f, pixel, pixel * 3.0f, color);
+                uiRenderer.rect(x + pixel * 5.0f, y + pixel * 2.0f, pixel, pixel * 3.0f, color);
+                uiRenderer.rect(x + pixel * 2.0f, y + pixel * 2.0f, pixel * 3.0f, pixel * 3.0f, color);
+                uiRenderer.rect(x + pixel * 3.0f, y + pixel * 3.0f, pixel, pixel, new UiColor(0.03f, 0.05f, 0.04f, 0.92f));
+            }
+            case QUIT -> {
+                for (int i = 0; i < 5; i++) {
+                    uiRenderer.rect(x + pixel * (1.0f + i), y + pixel * (1.0f + i), pixel, pixel, color);
+                    uiRenderer.rect(x + pixel * (5.0f - i), y + pixel * (1.0f + i), pixel, pixel, color);
+                }
+            }
+        }
+    }
+
+    private void drawMenuIconNode(float x, float y, float size, UiColor color) {
+        uiRenderer.rect(x, y, size, size, color);
+        uiRenderer.rect(x + size * 0.25f, y + size * 0.25f, size * 0.5f, size * 0.5f, new UiColor(0.03f, 0.05f, 0.04f, 0.72f));
     }
 
     private void renderLoadingScreen(LoadingScreenViewModel viewModel, double nowSeconds) {
@@ -2627,8 +3030,10 @@ public final class GameClient {
         float shakeX = shake.value(AnimationChannels.SHAKE_X, 0.0f) * settings.uiScale();
         renderInventoryTabs(x, layout.tabsY(), contentWidth);
         EnumSet<CraftingStationType> stationTypes = currentCraftingStations();
-        renderWorkbenchPreview(previewCraftingRecipe(stationTypes), x + shakeX, y, stationTypes);
-        renderCraftingMenu(mouse, clicked, x + 360.0f + shakeX, y, stationTypes);
+        CraftingRecipe previewRecipe = previewCraftingRecipe(stationTypes);
+        boolean compactCraftControls = layout.recipeDetailsWidth() <= 0.0f;
+        renderCraftingMenu(mouse, clicked, layout.recipeListX() + shakeX, y, layout.recipeListWidth(), layout.craftingPanelHeight(), stationTypes, compactCraftControls);
+        renderCraftingRecipeDetails(previewRecipe, mouse, clicked, layout.recipeDetailsX() + shakeX, y, layout.recipeDetailsWidth(), layout.craftingPanelHeight(), stationTypes);
         renderInventoryGridCompact(mouse, clicked, released, rightClicked, x, layout.inventoryY());
         renderCraftingPopAnimations();
     }
@@ -2850,6 +3255,81 @@ public final class GameClient {
         resumeGame();
     }
 
+    static MainMenuLayout mainMenuLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
+        float width = Math.max(1.0f, framebufferWidth);
+        float height = Math.max(1.0f, framebufferHeight);
+        float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
+        float viewportScale = clampFloat(Math.min(width / 1180.0f, height / 680.0f), 0.50f, 1.0f);
+        float layoutScale = clampFloat(viewportScale * clampFloat((float) Math.sqrt(safeUiScale), 0.88f, 1.06f), 0.50f, 1.08f);
+        boolean compact = height < 380.0f;
+        boolean wideScene = width >= 860.0f;
+        float margin = clampFloat(24.0f * layoutScale, 10.0f, Math.min(34.0f, width * 0.08f));
+        float maxPanelWidth = Math.max(220.0f, width - margin * 2.0f);
+        float minUsefulPanelWidth = Math.min(maxPanelWidth, width < 430.0f ? 292.0f : 320.0f);
+        float desiredPanelWidth = (wideScene ? 430.0f : 390.0f) * layoutScale;
+        float panelWidth = Math.min(maxPanelWidth, Math.max(minUsefulPanelWidth, desiredPanelWidth));
+        float buttonWidth = Math.max(Math.min(210.0f, panelWidth - 24.0f * layoutScale), panelWidth - 36.0f * layoutScale);
+        buttonWidth = Math.min(buttonWidth, panelWidth - 22.0f * layoutScale);
+        float buttonHeight = compact
+                ? clampFloat(40.0f * layoutScale, 26.0f, 32.0f)
+                : clampFloat(44.0f * layoutScale, 32.0f, 48.0f);
+        float buttonGap = compact ? Math.max(5.0f, 6.0f * layoutScale) : Math.max(7.0f, 9.0f * layoutScale);
+        float topPad = compact ? Math.max(14.0f, 20.0f * layoutScale) : Math.max(22.0f, 30.0f * layoutScale);
+        float titleScale = fitTextScale("ADVENTURA", (compact ? 4.5f : 5.5f) * layoutScale, compact ? 1.65f : 2.10f, panelWidth - 42.0f * layoutScale);
+        float subtitleScale = Math.max(compact ? 0.72f : 0.85f, Math.min((compact ? 1.14f : 1.35f) * layoutScale, compact ? 1.05f : 1.45f));
+        subtitleScale = fitTextScale("ALPHA CORE", subtitleScale, compact ? 0.64f : 0.78f, panelWidth - 52.0f * layoutScale);
+        float subtitleGap = compact ? Math.max(5.0f, 8.0f * layoutScale) : Math.max(8.0f, 10.0f * layoutScale);
+        float buttonTopGap = compact ? Math.max(14.0f, 24.0f * layoutScale) : Math.max(26.0f, 34.0f * layoutScale);
+        float buttonsHeight = buttonHeight * 4.0f + buttonGap * 3.0f;
+        float statusScale = compact ? Math.max(0.64f, Math.min(0.94f * layoutScale, 0.82f)) : Math.max(0.82f, Math.min(1.10f * layoutScale, 1.16f));
+        float statusPadY = (compact ? 10.0f : 14.0f) * layoutScale;
+        float statusHeight = BitmapFont.textHeight(statusScale) + statusPadY;
+        float preStatusGap = compact ? Math.max(8.0f, 14.0f * layoutScale) : Math.max(14.0f, 18.0f * layoutScale);
+        float bottomPad = compact ? Math.max(10.0f, 16.0f * layoutScale) : Math.max(16.0f, 22.0f * layoutScale);
+        float desiredPanelHeight = topPad
+                + BitmapFont.textHeight(titleScale)
+                + subtitleGap
+                + BitmapFont.textHeight(subtitleScale)
+                + buttonTopGap
+                + buttonsHeight
+                + preStatusGap
+                + statusHeight
+                + bottomPad;
+        float availablePanelHeight = Math.max(180.0f, height - margin * 2.0f);
+        float panelHeight = Math.min(availablePanelHeight, desiredPanelHeight);
+        float panelX = wideScene ? margin + 8.0f * layoutScale : width * 0.5f - panelWidth * 0.5f;
+        panelX = clampFloat(panelX, margin, Math.max(margin, width - panelWidth - margin));
+        float panelY = clampFloat(height * 0.5f - panelHeight * 0.5f, margin, Math.max(margin, height - panelHeight - margin));
+        float titleY = panelY + topPad;
+        float subtitleY = titleY + BitmapFont.textHeight(titleScale) + subtitleGap;
+        float firstButtonY = subtitleY + BitmapFont.textHeight(subtitleScale) + buttonTopGap;
+        float maxFirstButtonY = panelY + panelHeight - bottomPad - statusHeight - preStatusGap - buttonsHeight;
+        firstButtonY = Math.min(firstButtonY, maxFirstButtonY);
+        float buttonX = panelX + (panelWidth - buttonWidth) * 0.5f;
+        float statusY = firstButtonY + buttonsHeight + preStatusGap + statusPadY * 0.5f;
+        float horizonY = height * (wideScene ? 0.54f : 0.49f);
+        return new MainMenuLayout(
+                layoutScale,
+                panelX,
+                panelY,
+                panelWidth,
+                panelHeight,
+                buttonX,
+                firstButtonY,
+                buttonWidth,
+                buttonHeight,
+                buttonGap,
+                titleY,
+                titleScale,
+                subtitleY,
+                subtitleScale,
+                statusY,
+                statusScale,
+                horizonY,
+                wideScene
+        );
+    }
+
     static LoadingScreenLayout loadingScreenLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
         float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
         float layoutScale = Math.max(0.78f, Math.min(safeUiScale, Math.min(1.5f, framebufferHeight / 520.0f)));
@@ -2958,24 +3438,46 @@ public final class GameClient {
 
     static CraftingScreenLayout craftingScreenLayout(int framebufferWidth, int framebufferHeight, float uiScale) {
         float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
-        float margin = Math.max(22.0f, Math.min(32.0f * safeUiScale, framebufferWidth * 0.06f));
-        float contentWidth = Math.max(420.0f, Math.min(980.0f, framebufferWidth - margin * 2.0f));
+        float layoutScale = clampFloat(Math.min(Math.min(framebufferWidth / 1060.0f, framebufferHeight / 720.0f) * (float) Math.sqrt(safeUiScale), 1.0f), 0.62f, 1.0f);
+        float margin = Math.max(14.0f, Math.min(28.0f * layoutScale, framebufferWidth * 0.055f));
+        float availableWidth = Math.max(1.0f, framebufferWidth - margin * 2.0f);
+        float contentWidth = Math.min(1040.0f, availableWidth);
         float widthScale = contentWidth / 980.0f;
-        float heightScale = Math.max(0.72f, Math.min(1.0f, framebufferHeight / 700.0f));
-        float titleScale = fitTextScale("CRAFTING", 5.0f * Math.min(1.0f, Math.max(0.78f, widthScale)), 2.4f, framebufferWidth - margin * 2.0f);
-        float titleY = Math.max(28.0f, 52.0f * heightScale);
-        float hintScale = fitTextScale("E CLOSE  CLICK RECIPE TO CRAFT  RIGHT-CLICK SPLIT  O SETTINGS", 1.7f * Math.min(1.0f, Math.max(0.76f, widthScale)), 0.85f, framebufferWidth - margin * 2.0f);
-        float hintY = titleY + BitmapFont.textHeight(titleScale) + 16.0f * heightScale;
-        float contentY = Math.max(hintY + BitmapFont.textHeight(hintScale) + 34.0f * heightScale, framebufferHeight * 0.18f);
-        contentY = Math.min(contentY, Math.max(112.0f, framebufferHeight - 360.0f));
+        float titleScale = fitTextScale("CRAFTING", 4.6f * Math.min(1.0f, Math.max(0.72f, widthScale)) * layoutScale, 1.65f, framebufferWidth - margin * 2.0f);
+        float titleY = Math.max(16.0f, 36.0f * layoutScale);
+        float hintScale = fitTextScale("E CLOSE  CLICK RECIPE TO CRAFT  RIGHT-CLICK SPLIT  O SETTINGS", 1.38f * Math.min(1.0f, Math.max(0.72f, widthScale)) * layoutScale, 0.64f, framebufferWidth - margin * 2.0f);
+        float hintY = titleY + BitmapFont.textHeight(titleScale) + 9.0f * layoutScale;
+        float contentY = hintY + BitmapFont.textHeight(hintScale) + 22.0f * layoutScale;
         float x = framebufferWidth * 0.5f - contentWidth * 0.5f;
-        float tabsY = Math.max(76.0f, contentY - 52.0f);
-        float inventoryY = contentY + Math.max(218.0f, 266.0f * Math.min(1.0f, heightScale));
+        float tabsY = Math.max(58.0f, contentY - 42.0f * layoutScale);
+        float inventoryTopPad = compactInventoryTopPad(framebufferHeight, safeUiScale);
+        float inventoryPanelHeight = compactInventoryPanelHeight(framebufferWidth, framebufferHeight, safeUiScale, contentWidth);
+        float panelGap = Math.max(10.0f, 14.0f * layoutScale);
+        float availableForCrafting = framebufferHeight - margin - inventoryPanelHeight - panelGap - contentY;
+        float craftingPanelHeight = clampFloat(availableForCrafting, 154.0f, 322.0f * layoutScale);
+        float inventoryPanelY = contentY + craftingPanelHeight + panelGap;
+        float inventoryY = inventoryPanelY + inventoryTopPad;
+        float minListWidth = Math.min(300.0f, contentWidth);
+        float detailGap = Math.max(12.0f, 16.0f * layoutScale);
+        float detailWidth = contentWidth >= 720.0f
+                ? Math.max(250.0f, Math.min(340.0f, contentWidth * 0.34f))
+                : 0.0f;
+        float recipeListWidth = detailWidth > 0.0f ? contentWidth - detailWidth - detailGap : contentWidth;
+        if (recipeListWidth < minListWidth) {
+            detailWidth = Math.max(0.0f, contentWidth - minListWidth - detailGap);
+            recipeListWidth = contentWidth - detailWidth - (detailWidth > 0.0f ? detailGap : 0.0f);
+        }
+        float recipeDetailsX = detailWidth > 0.0f ? x + recipeListWidth + detailGap : x + recipeListWidth;
         return new CraftingScreenLayout(
                 margin,
+                layoutScale,
                 x,
                 contentWidth,
                 contentY,
+                recipeListWidth,
+                recipeDetailsX,
+                detailWidth,
+                craftingPanelHeight,
                 tabsY,
                 inventoryY,
                 titleY,
@@ -2983,6 +3485,37 @@ public final class GameClient {
                 hintY,
                 hintScale
         );
+    }
+
+    private static float compactInventoryScale(int framebufferHeight, float uiScale) {
+        float safeUiScale = Float.isFinite(uiScale) && uiScale > 0.0f ? uiScale : 1.0f;
+        float heightCap = framebufferHeight > 0 ? framebufferHeight / 600.0f : 0.72f;
+        return clampFloat(Math.min(safeUiScale, heightCap), 0.72f, 1.35f);
+    }
+
+    private static float compactInventoryTopPad(int framebufferHeight, float uiScale) {
+        return Math.max(30.0f, 40.0f * compactInventoryScale(framebufferHeight, uiScale));
+    }
+
+    private static float compactInventoryPanelHeight(int framebufferWidth, int framebufferHeight, float uiScale, float availableWidth) {
+        float scale = compactInventoryScale(framebufferHeight, uiScale);
+        float sidePad = Math.max(10.0f, 14.0f * scale);
+        float topPad = compactInventoryTopPad(framebufferHeight, uiScale);
+        float bottomPad = Math.max(12.0f, 16.0f * scale);
+        float gap = Math.max(4.0f, 6.0f * scale);
+        float hotbarGap = Math.max(8.0f, 12.0f * scale);
+        float slot = 42.0f * scale;
+        float maxPanelWidth = Math.max(220.0f, Math.min(availableWidth, framebufferWidth - 16.0f));
+        float gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
+        if (gridWidth + sidePad * 2.0f > maxPanelWidth) {
+            slot = Math.min(slot, (maxPanelWidth - sidePad * 2.0f - (INVENTORY_COLUMNS - 1) * gap) / INVENTORY_COLUMNS);
+        }
+        float maxPanelHeight = Math.max(170.0f, framebufferHeight - Math.max(18.0f, 22.0f * scale) * 2.0f);
+        float maxSlotByHeight = (maxPanelHeight - topPad - bottomPad - hotbarGap - (INVENTORY_MAIN_ROWS - 1) * gap) / (INVENTORY_MAIN_ROWS + 1);
+        slot = Math.max(22.0f, Math.min(slot, Math.max(22.0f, maxSlotByHeight)));
+        gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
+        float mainRowsHeight = INVENTORY_MAIN_ROWS * slot + (INVENTORY_MAIN_ROWS - 1) * gap;
+        return topPad + mainRowsHeight + hotbarGap + slot + bottomPad;
     }
 
     private void renderInventoryTabs(float x, float y, float width) {
@@ -3008,98 +3541,44 @@ public final class GameClient {
         SettingsScreenLayout layout = settingsScreenLayout(framebufferWidth, framebufferHeight);
         settingsLayoutScale = layout.scale();
         uiRenderer.centeredText("SETTINGS", framebufferWidth * 0.5f, layout.titleY(), layout.titleScale(), UiColor.WHITE);
-        uiRenderer.centeredText(fitTextToWidth("BALANCE PERFORMANCE, LOOKS AND COMFORT", layout.subtitleScale(), framebufferWidth - layout.margin() * 2.0f), framebufferWidth * 0.5f, layout.subtitleY(), layout.subtitleScale(), UiColor.MUTED);
+        uiRenderer.centeredText(fitTextToWidth("GRAPHICS, PERFORMANCE, AUDIO AND COMFORT", layout.subtitleScale(), framebufferWidth - layout.margin() * 2.0f), framebufferWidth * 0.5f, layout.subtitleY(), layout.subtitleScale(), UiColor.MUTED);
 
         float x = layout.x();
         float y = layout.contentY();
         float panelWidth = layout.panelWidth();
         float scale = layout.scale();
-        float gap = layout.columnGap();
-        float columnWidth = layout.columnWidth();
-        float leftX = x;
-        float rightX = x + columnWidth + gap;
         float sectionHeight = layout.sectionHeight();
-        float rowTop = 48.0f * scale;
-        float rowStep = 42.0f * scale;
-        float toggleTwoColumnWidth = columnWidth * 0.5f - 26.0f * scale;
-        float toggleTwoColumnRightX = columnWidth * 0.5f + 6.0f * scale;
+        float navWidth = Math.min(190.0f * scale, Math.max(124.0f * scale, panelWidth * 0.24f));
+        float contentGap = 14.0f * scale;
+        float contentX = x + navWidth + contentGap;
+        float contentWidth = panelWidth - navWidth - contentGap;
 
-        settingsSection(leftX, y, columnWidth, sectionHeight, "WORLD & RENDERING");
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop, columnWidth - 36.0f * scale, "Render distance", settings.renderDistanceChunks() + " chunks",
-                () -> settings.adjustRenderDistance(-1),
-                () -> settings.adjustRenderDistance(1));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep, columnWidth - 36.0f * scale, "World preview", settings.previewRadiusChunks() + " chunks",
-                () -> {
-                    settings.adjustPreviewRadius(-1);
-                    refreshPreview();
-                },
-                () -> {
-                    settings.adjustPreviewRadius(1);
-                    refreshPreview();
-                });
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 2.0f, columnWidth - 36.0f * scale, "Chunk jobs", settings.chunkGenerationBudgetChunks() + " chunks",
-                () -> settings.adjustChunkGenerationBudget(-1),
-                () -> settings.adjustChunkGenerationBudget(1));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 3.0f, columnWidth - 36.0f * scale, "Chunk time", formatMilliseconds(settings.chunkGenerationBudgetMilliseconds()),
-                () -> settings.adjustChunkGenerationBudgetMilliseconds(-0.5),
-                () -> settings.adjustChunkGenerationBudgetMilliseconds(0.5));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 4.0f, columnWidth - 36.0f * scale, "Mesh jobs", settings.meshBuildBudgetChunks() + " chunks",
-                () -> settings.adjustMeshBuildBudget(-1),
-                () -> settings.adjustMeshBuildBudget(1));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 5.0f, columnWidth - 36.0f * scale, "Mesh time", formatMilliseconds(settings.meshBuildBudgetMilliseconds()),
-                () -> settings.adjustMeshBuildBudgetMilliseconds(-0.5),
-                () -> settings.adjustMeshBuildBudgetMilliseconds(0.5));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 6.0f, columnWidth - 36.0f * scale, "GPU upload", formatMilliseconds(settings.gpuUploadBudgetMilliseconds()),
-                () -> settings.adjustGpuUploadBudgetMilliseconds(-0.5),
-                () -> settings.adjustGpuUploadBudgetMilliseconds(0.5));
-        settingStepperCompact(mouse, clicked, leftX + 18.0f * scale, y + rowTop + rowStep * 7.0f, columnWidth - 36.0f * scale, "Field of view", settings.fieldOfViewDegrees() + " deg",
-                () -> settings.adjustFieldOfView(-5),
-                () -> settings.adjustFieldOfView(5));
-
-        settingsSection(rightX, y, columnWidth, sectionHeight, "QUALITY & INTERFACE");
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop, columnWidth - 36.0f * scale, "Mouse speed", settings.mouseSensitivityPercent() + "%",
-                () -> settings.adjustMouseSensitivity(-10),
-                () -> settings.adjustMouseSensitivity(10));
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep, columnWidth - 36.0f * scale, "UI scale", settings.uiScalePercent() + "%",
-                () -> settings.adjustUiScale(-10),
-                () -> settings.adjustUiScale(10));
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep * 2.0f, columnWidth - 36.0f * scale, "Particles", formatPercent(settings.particleQuality()),
-                () -> settings.adjustParticleQuality(-0.25),
-                () -> settings.adjustParticleQuality(0.25));
-        settingStepperCompact(mouse, clicked, rightX + 18.0f * scale, y + rowTop + rowStep * 3.0f, columnWidth - 36.0f * scale, "Render debug", settings.renderDebugView().commandName(),
-                settings::cycleRenderDebugView,
-                settings::cycleRenderDebugView);
-        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 224.0f * scale, toggleTwoColumnWidth, "Ambient AO", settings.ambientOcclusionEnabled(), () -> {
-            settings.toggleAmbientOcclusion();
-            if (world != null) {
-                world.markAllLoadedDirty();
-            }
-        });
-        settingToggleCompact(mouse, clicked, rightX + toggleTwoColumnRightX, y + 224.0f * scale, toggleTwoColumnWidth, "Soft shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
-        settingToggleCompact(mouse, clicked, rightX + 18.0f * scale, y + 272.0f * scale, toggleTwoColumnWidth, "Fog", settings.fogEnabled(), settings::toggleFog);
-        settingToggleCompact(mouse, clicked, rightX + toggleTwoColumnRightX, y + 272.0f * scale, toggleTwoColumnWidth, "Bloom", settings.bloomEnabled(), settings::toggleBloom);
-        float toggleGap = 8.0f * scale;
-        float thirdToggleWidth = (columnWidth - 36.0f * scale - toggleGap * 2.0f) / 3.0f;
-        float thirdToggleX = rightX + 18.0f * scale;
-        settingToggleCompact(mouse, clicked, thirdToggleX, y + 320.0f * scale, thirdToggleWidth, "VSync", settings.vsyncEnabled(), () -> {
-            settings.toggleVsync();
-            glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
-        });
-        settingToggleCompact(mouse, clicked, thirdToggleX + thirdToggleWidth + toggleGap, y + 320.0f * scale, thirdToggleWidth, "Water", settings.transparentWaterEnabled(), () -> {
-            settings.toggleTransparentWater();
-            if (world != null) {
-                world.markAllLoadedDirty();
-            }
-        });
-        settingToggleCompact(mouse, clicked, thirdToggleX + (thirdToggleWidth + toggleGap) * 2.0f, y + 320.0f * scale, thirdToggleWidth, "Simple", settings.simpleWaterEnabled(), settings::toggleSimpleWater);
-        settingToggleCompact(mouse, clicked, thirdToggleX, y + 368.0f * scale, thirdToggleWidth, "HUD", settings.hudEnabled(), settings::toggleHud);
-        settingToggleCompact(mouse, clicked, thirdToggleX + thirdToggleWidth + toggleGap, y + 368.0f * scale, thirdToggleWidth, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
-        settingToggleCompact(mouse, clicked, thirdToggleX + (thirdToggleWidth + toggleGap) * 2.0f, y + 368.0f * scale, thirdToggleWidth, "Greedy", settings.greedyMeshingEnabled(), () -> {
-            settings.toggleGreedyMeshing();
-            if (world != null) {
-                world.markAllLoadedDirty();
-            }
-        });
+        drawModernPanel(
+                x,
+                y,
+                panelWidth,
+                sectionHeight,
+                12.0f * scale,
+                new UiColor(0.030f, 0.045f, 0.043f, 0.92f),
+                new UiColor(0.16f, 0.21f, 0.19f, 0.94f),
+                UiColor.ACCENT,
+                scale
+        );
+        renderSettingsCategoryRail(mouse, clicked, x + 14.0f * scale, y + 18.0f * scale, navWidth - 24.0f * scale, sectionHeight - 36.0f * scale, scale);
+        drawModernInsetPanel(
+                contentX,
+                y + 14.0f * scale,
+                contentWidth,
+                sectionHeight - 28.0f * scale,
+                10.0f * scale,
+                new UiColor(0.017f, 0.028f, 0.027f, 0.62f),
+                new UiColor(0.09f, 0.13f, 0.12f, 0.72f),
+                settingsCategory.accent(),
+                scale
+        );
+        uiRenderer.text(fitTextToWidth(settingsCategory.label().toUpperCase(Locale.ROOT), 2.0f * scale, contentWidth - 36.0f * scale), contentX + 18.0f * scale, y + 28.0f * scale, 2.0f * scale, UiColor.WHITE);
+        uiRenderer.text(fitTextToWidth(settingsCategory.summary().toUpperCase(Locale.ROOT), 0.92f * scale, contentWidth - 36.0f * scale), contentX + 18.0f * scale, y + 52.0f * scale, 0.92f * scale, UiColor.MUTED);
+        renderSettingsCategoryContent(mouse, clicked, contentX + 18.0f * scale, y + 78.0f * scale, contentWidth - 36.0f * scale, sectionHeight - 100.0f * scale);
 
         drawModernPanel(
                 x,
@@ -3123,7 +3602,8 @@ public final class GameClient {
                 UiColor.ACCENT,
                 scale
         );
-        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT), x + 18.0f * scale, layout.presetY() + 20.0f * scale, 1.45f * scale, UiColor.MUTED);
+        uiRenderer.text("PRESET " + settings.activePresetLabel().toUpperCase(Locale.ROOT), x + 18.0f * scale, layout.presetY() + 15.0f * scale, 1.35f * scale, UiColor.MUTED);
+        uiRenderer.text(fitTextToWidth(settingsPresetSummary().toUpperCase(Locale.ROOT), 0.82f * scale, Math.max(82.0f, panelWidth - 170.0f * scale)), x + 18.0f * scale, layout.presetY() + 34.0f * scale, 0.82f * scale, UiColor.WHITE);
         float presetButtonWidth = Math.min(106.0f * scale, (panelWidth - 148.0f * scale) / 3.0f);
         float presetGap = 10.0f * scale;
         float presetX = x + Math.max(112.0f * scale, panelWidth - presetButtonWidth * 3.0f - presetGap * 2.0f - 18.0f * scale);
@@ -3152,7 +3632,7 @@ public final class GameClient {
         float scale = Math.max(0.72f, Math.min(1.0f, Math.min(widthScale, heightScale)));
         float titleScale = fitTextScale("SETTINGS", 5.2f * scale, 2.35f, framebufferWidth - margin * 2.0f);
         float titleY = Math.max(20.0f, 34.0f * scale);
-        float subtitleScale = fitTextScale("BALANCE PERFORMANCE, LOOKS AND COMFORT", 1.45f * scale, 0.8f, framebufferWidth - margin * 2.0f);
+        float subtitleScale = fitTextScale("GRAPHICS, PERFORMANCE, AUDIO AND COMFORT", 1.45f * scale, 0.8f, framebufferWidth - margin * 2.0f);
         float subtitleY = titleY + BitmapFont.textHeight(titleScale) + 8.0f * scale;
         float contentY = subtitleY + BitmapFont.textHeight(subtitleScale) + 14.0f * scale;
         float columnGap = 22.0f * scale;
@@ -3194,6 +3674,248 @@ public final class GameClient {
         );
     }
 
+    private void renderSettingsCategoryRail(MousePosition mouse, boolean clicked, float x, float y, float width, float height, float scale) {
+        uiRenderer.text("CATEGORIES", x, y, 1.0f * scale, UiColor.MUTED);
+        float buttonHeight = Math.max(30.0f, 40.0f * scale);
+        float gap = 8.0f * scale;
+        float buttonY = y + 24.0f * scale;
+        for (SettingsCategory category : SettingsCategory.values()) {
+            if (buttonY + buttonHeight > y + height) {
+                break;
+            }
+            settingCategoryButton(mouse, clicked, x, buttonY, width, buttonHeight, category);
+            buttonY += buttonHeight + gap;
+        }
+    }
+
+    private void settingCategoryButton(MousePosition mouse, boolean clicked, float x, float y, float width, float height, SettingsCategory category) {
+        boolean selected = settingsCategory == category;
+        UiColor base = selected ? new UiColor(0.16f, 0.25f, 0.19f, 0.96f) : new UiColor(0.08f, 0.12f, 0.11f, 0.86f);
+        UiColor hover = selected ? new UiColor(0.19f, 0.30f, 0.22f, 0.98f) : new UiColor(0.12f, 0.18f, 0.16f, 0.94f);
+        UiButton button = new UiButton(x, y, width, height, category.label().toUpperCase(Locale.ROOT), true);
+        drawModernButtonSurface(button, mouse, clicked, () -> settingsCategory = category, base, hover, category.accent());
+        float labelScale = fitTextScale(category.label().toUpperCase(Locale.ROOT), 1.05f * settingsLayoutScale, 0.62f * settingsLayoutScale, width - 18.0f * settingsLayoutScale);
+        uiRenderer.text(category.label().toUpperCase(Locale.ROOT), x + 10.0f * settingsLayoutScale, y + height * 0.5f - BitmapFont.textHeight(labelScale) * 0.5f, labelScale, selected ? UiColor.WHITE : UiColor.MUTED);
+        if (selected) {
+            uiRenderer.roundedRect(x + width - 5.0f * settingsLayoutScale, y + 7.0f * settingsLayoutScale, Math.max(2.0f, 3.0f * settingsLayoutScale), height - 14.0f * settingsLayoutScale, 2.0f * settingsLayoutScale, category.accent());
+        }
+    }
+
+    private void renderSettingsCategoryContent(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        switch (settingsCategory) {
+            case GRAPHICS -> renderGraphicsSettings(mouse, clicked, x, y, width, height);
+            case PERFORMANCE -> renderPerformanceSettings(mouse, clicked, x, y, width, height);
+            case INTERFACE -> renderInterfaceSettings(mouse, clicked, x, y, width, height);
+            case AUDIO -> renderAudioSettings(mouse, clicked, x, y, width, height);
+            case DEBUG -> renderDebugSettings(mouse, clicked, x, y, width, height);
+        }
+    }
+
+    private void renderGraphicsSettings(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        float scale = settingsLayoutScale;
+        float rowStep = 36.0f * scale;
+        float rowY = y;
+        settingsGroupLabel(x, rowY, width, "Display");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Field of view", settings.fieldOfViewDegrees() + " deg",
+                () -> settings.adjustFieldOfView(-5),
+                () -> settings.adjustFieldOfView(5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Render distance", settings.renderDistanceChunks() + " chunks",
+                () -> settings.adjustRenderDistance(-1),
+                () -> settings.adjustRenderDistance(1));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "World preview", settings.previewRadiusChunks() + " chunks",
+                () -> {
+                    settings.adjustPreviewRadius(-1);
+                    refreshPreview();
+                },
+                () -> {
+                    settings.adjustPreviewRadius(1);
+                    refreshPreview();
+                });
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Particles", formatPercent(settings.particleQuality()),
+                () -> settings.adjustParticleQuality(-0.25),
+                () -> settings.adjustParticleQuality(0.25));
+        rowY += rowStep + 8.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Lighting");
+        rowY += 18.0f * scale;
+        float gap = 8.0f * scale;
+        float tileWidth = (width - gap * 2.0f) / 3.0f;
+        float tileHeight = Math.max(28.0f, 32.0f * scale);
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "AO", settings.ambientOcclusionEnabled(), () -> {
+            settings.toggleAmbientOcclusion();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "Shadows", settings.softShadowsEnabled(), settings::toggleSoftShadows);
+        settingToggleTile(mouse, clicked, x + (tileWidth + gap) * 2.0f, rowY, tileWidth, tileHeight, "Bloom", settings.bloomEnabled(), settings::toggleBloom);
+        rowY += tileHeight + gap;
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "Fog", settings.fogEnabled(), settings::toggleFog);
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "Water", settings.transparentWaterEnabled(), () -> {
+            settings.toggleTransparentWater();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
+        settingToggleTile(mouse, clicked, x + (tileWidth + gap) * 2.0f, rowY, tileWidth, tileHeight, "Simple", settings.simpleWaterEnabled(), settings::toggleSimpleWater);
+    }
+
+    private void renderPerformanceSettings(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        float scale = settingsLayoutScale;
+        float rowStep = 36.0f * scale;
+        float rowY = y;
+        settingsGroupLabel(x, rowY, width, "Chunk streaming");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Chunk jobs", settings.chunkGenerationBudgetChunks() + " chunks",
+                () -> settings.adjustChunkGenerationBudget(-1),
+                () -> settings.adjustChunkGenerationBudget(1));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Chunk time", formatMilliseconds(settings.chunkGenerationBudgetMilliseconds()),
+                () -> settings.adjustChunkGenerationBudgetMilliseconds(-0.5),
+                () -> settings.adjustChunkGenerationBudgetMilliseconds(0.5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Mesh jobs", settings.meshBuildBudgetChunks() + " chunks",
+                () -> settings.adjustMeshBuildBudget(-1),
+                () -> settings.adjustMeshBuildBudget(1));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Mesh time", formatMilliseconds(settings.meshBuildBudgetMilliseconds()),
+                () -> settings.adjustMeshBuildBudgetMilliseconds(-0.5),
+                () -> settings.adjustMeshBuildBudgetMilliseconds(0.5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "GPU upload", formatMilliseconds(settings.gpuUploadBudgetMilliseconds()),
+                () -> settings.adjustGpuUploadBudgetMilliseconds(-0.5),
+                () -> settings.adjustGpuUploadBudgetMilliseconds(0.5));
+        rowY += rowStep + 8.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Renderer");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Render debug", settings.renderDebugView().commandName(),
+                settings::cycleRenderDebugView,
+                settings::cycleRenderDebugView);
+        rowY += rowStep;
+        float gap = 8.0f * scale;
+        float tileWidth = (width - gap * 2.0f) / 3.0f;
+        float tileHeight = Math.max(28.0f, 32.0f * scale);
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "Greedy", settings.greedyMeshingEnabled(), () -> {
+            settings.toggleGreedyMeshing();
+            if (world != null) {
+                world.markAllLoadedDirty();
+            }
+        });
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "VSync", settings.vsyncEnabled(), () -> {
+            settings.toggleVsync();
+            glfwSwapInterval(settings.vsyncEnabled() ? 1 : 0);
+        });
+        settingToggleTile(mouse, clicked, x + (tileWidth + gap) * 2.0f, rowY, tileWidth, tileHeight, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+    }
+
+    private void renderInterfaceSettings(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        float scale = settingsLayoutScale;
+        float rowStep = 36.0f * scale;
+        float rowY = y;
+        settingsGroupLabel(x, rowY, width, "Comfort");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Mouse speed", settings.mouseSensitivityPercent() + "%",
+                () -> settings.adjustMouseSensitivity(-10),
+                () -> settings.adjustMouseSensitivity(10));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "UI scale", settings.uiScalePercent() + "%",
+                () -> settings.adjustUiScale(-10),
+                () -> settings.adjustUiScale(10));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "HUD mode", settings.hudMode().label(),
+                settings::cycleHudMode,
+                settings::cycleHudMode);
+        rowY += rowStep + 8.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Menu feedback");
+        rowY += 18.0f * scale;
+        float gap = 8.0f * scale;
+        float tileWidth = (width - gap * 2.0f) / 3.0f;
+        float tileHeight = Math.max(28.0f, 32.0f * scale);
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "Chat", settings.chatEnabled(), settings::toggleChat);
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "Debug", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+        settingToggleTile(mouse, clicked, x + (tileWidth + gap) * 2.0f, rowY, tileWidth, tileHeight, "HUD", settings.hudEnabled(), settings::toggleHud);
+        rowY += tileHeight + 14.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Controls");
+        rowY += 18.0f * scale;
+        settingsInfoLine(x, rowY, width, "MOVE", "WASD SPACE CTRL SHIFT");
+        rowY += 20.0f * scale;
+        settingsInfoLine(x, rowY, width, "ACT", "MOUSE E J O ESC");
+        rowY += 20.0f * scale;
+        settingsInfoLine(x, rowY, width, "PACK", "DRAG SHIFT RIGHT-CLICK");
+    }
+
+    private void renderAudioSettings(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        float scale = settingsLayoutScale;
+        float rowStep = 36.0f * scale;
+        float rowY = y;
+        settingsGroupLabel(x, rowY, width, "Volume mix");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Master volume", settings.masterVolumePercent() + "%",
+                () -> settings.adjustMasterVolume(-5),
+                () -> settings.adjustMasterVolume(5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Music volume", settings.musicVolumePercent() + "%",
+                () -> settings.adjustMusicVolume(-5),
+                () -> settings.adjustMusicVolume(5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Ambience volume", settings.ambienceVolumePercent() + "%",
+                () -> settings.adjustAmbienceVolume(-5),
+                () -> settings.adjustAmbienceVolume(5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "SFX volume", settings.sfxVolumePercent() + "%",
+                () -> settings.adjustSfxVolume(-5),
+                () -> settings.adjustSfxVolume(5));
+        rowY += rowStep;
+        settingStepperDense(mouse, clicked, x, rowY, width, "UI volume", settings.uiVolumePercent() + "%",
+                () -> settings.adjustUiVolume(-5),
+                () -> settings.adjustUiVolume(5));
+        rowY += rowStep + 12.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Runtime");
+        rowY += 18.0f * scale;
+        settingsInfoLine(x, rowY, width, "LAST CUE", audio.lastCue() == null ? "NONE" : audio.lastCue().name());
+        rowY += 20.0f * scale;
+        settingsInfoLine(x, rowY, width, "LAST GAIN", Math.round(audio.lastGain() * 100.0) + "%");
+    }
+
+    private void renderDebugSettings(MousePosition mouse, boolean clicked, float x, float y, float width, float height) {
+        float scale = settingsLayoutScale;
+        float rowStep = 36.0f * scale;
+        float rowY = y;
+        settingsGroupLabel(x, rowY, width, "Views");
+        rowY += 18.0f * scale;
+        settingStepperDense(mouse, clicked, x, rowY, width, "Render debug", settings.renderDebugView().commandName(),
+                settings::cycleRenderDebugView,
+                settings::cycleRenderDebugView);
+        rowY += rowStep + 8.0f * scale;
+
+        settingsGroupLabel(x, rowY, width, "Overlays");
+        rowY += 18.0f * scale;
+        float gap = 8.0f * scale;
+        float tileWidth = (width - gap * 2.0f) / 3.0f;
+        float tileHeight = Math.max(28.0f, 32.0f * scale);
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "HUD", settings.debugOverlayEnabled(), settings::toggleDebugOverlay);
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "Chunks", settings.debugChunkBordersEnabled(), settings::toggleDebugChunkBorders);
+        settingToggleTile(mouse, clicked, x + (tileWidth + gap) * 2.0f, rowY, tileWidth, tileHeight, "Meshes", settings.debugMeshBoundsEnabled(), settings::toggleDebugMeshBounds);
+        rowY += tileHeight + gap;
+        settingToggleTile(mouse, clicked, x, rowY, tileWidth, tileHeight, "Sections", settings.debugSectionBoundsEnabled(), settings::toggleDebugSectionBounds);
+        settingToggleTile(mouse, clicked, x + tileWidth + gap, rowY, tileWidth, tileHeight, "Particles", settings.debugParticleBoundsEnabled(), settings::toggleDebugParticleBounds);
+    }
+
+    private String settingsPresetSummary() {
+        return "RD " + settings.renderDistanceChunks()
+                + " / Mesh " + settings.meshBuildBudgetChunks()
+                + " / GPU " + formatMilliseconds(settings.gpuUploadBudgetMilliseconds())
+                + " / Particles " + formatPercent(settings.particleQuality());
+    }
+
     private void renderSettingsControlsSummary(float x, float y, float width) {
         float scale = settingsLayoutScale;
         float height = 66.0f * scale;
@@ -3232,6 +3954,66 @@ public final class GameClient {
         float scale = settingsLayoutScale;
         uiRenderer.text(label, x, y, 0.95f * scale, UiColor.MUTED);
         uiRenderer.text(fitTextToWidth(value, 1.0f * scale, Math.max(60.0f, 210.0f * scale)), x + 54.0f * scale, y, 1.0f * scale, UiColor.WHITE);
+    }
+
+    private void settingsGroupLabel(float x, float y, float width, String label) {
+        float scale = settingsLayoutScale;
+        uiRenderer.text(fitTextToWidth(label.toUpperCase(Locale.ROOT), 0.9f * scale, width), x, y, 0.9f * scale, UiColor.MUTED);
+        float lineX = x + Math.min(width * 0.34f, BitmapFont.textWidth(label.toUpperCase(Locale.ROOT), 0.9f * scale) + 12.0f * scale);
+        float lineWidth = Math.max(16.0f * scale, width - (lineX - x));
+        uiRenderer.roundedRect(lineX, y + 6.0f * scale, lineWidth, Math.max(1.0f, 1.5f * scale), 1.0f * scale, withAlpha(UiColor.ACCENT, 0.32f));
+    }
+
+    private void settingsInfoLine(float x, float y, float width, String label, String value) {
+        float scale = settingsLayoutScale;
+        float labelWidth = Math.min(96.0f * scale, width * 0.32f);
+        uiRenderer.text(fitTextToWidth(label.toUpperCase(Locale.ROOT), 0.88f * scale, labelWidth), x, y, 0.88f * scale, UiColor.MUTED);
+        uiRenderer.text(fitTextToWidth(value.toUpperCase(Locale.ROOT), 0.96f * scale, width - labelWidth - 8.0f * scale), x + labelWidth + 8.0f * scale, y, 0.96f * scale, UiColor.WHITE);
+    }
+
+    private void settingStepperDense(MousePosition mouse, boolean clicked, float x, float y, float width, String label, String value, Runnable minus, Runnable plus) {
+        float scale = settingsLayoutScale;
+        float height = Math.max(24.0f, 32.0f * scale);
+        float buttonSize = Math.max(22.0f, 26.0f * scale);
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                height,
+                7.0f * scale,
+                new UiColor(0.020f, 0.032f, 0.030f, 0.72f),
+                new UiColor(0.105f, 0.145f, 0.135f, 0.82f),
+                settingsCategory.accent(),
+                scale
+        );
+        float textWidth = Math.max(42.0f, width - buttonSize * 2.0f - 30.0f * scale);
+        uiRenderer.text(fitTextToWidth(label.toUpperCase(Locale.ROOT), 0.92f * scale, textWidth), x + 10.0f * scale, y + 5.0f * scale, 0.92f * scale, UiColor.MUTED);
+        uiRenderer.text(fitTextToWidth(value.toUpperCase(Locale.ROOT), 1.0f * scale, textWidth), x + 10.0f * scale, y + 18.0f * scale, 1.0f * scale, UiColor.WHITE);
+        drawModernButton(new UiButton(x + width - buttonSize * 2.0f - 9.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "-", true), mouse, clicked, minus);
+        drawModernButton(new UiButton(x + width - buttonSize - 5.0f * scale, y + (height - buttonSize) * 0.5f, buttonSize, buttonSize, "+", true), mouse, clicked, plus);
+    }
+
+    private void settingToggleTile(MousePosition mouse, boolean clicked, float x, float y, float width, float height, String label, boolean enabled, Runnable toggle) {
+        float scale = settingsLayoutScale;
+        boolean hovered = contains(mouse, x, y, width, height);
+        UiColor accent = enabled ? settingsCategory.accent() : UiColor.WARNING;
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                height,
+                7.0f * scale,
+                hovered ? new UiColor(0.030f, 0.047f, 0.041f, 0.86f) : new UiColor(0.022f, 0.034f, 0.031f, 0.74f),
+                enabled ? new UiColor(0.13f, 0.19f, 0.15f, 0.88f) : new UiColor(0.17f, 0.13f, 0.10f, 0.82f),
+                accent,
+                scale
+        );
+        if (hovered && clicked) {
+            toggle.run();
+        }
+        float textScale = fitTextScale(label.toUpperCase(Locale.ROOT), 0.86f * scale, 0.56f * scale, width - 10.0f * scale);
+        uiRenderer.centeredText(label.toUpperCase(Locale.ROOT), x + width * 0.5f, y + 6.0f * scale, textScale, UiColor.WHITE);
+        uiRenderer.centeredText(enabled ? "ON" : "OFF", x + width * 0.5f, y + height - 13.0f * scale, 0.78f * scale, enabled ? accent : UiColor.MUTED);
     }
 
     private void settingsSection(float x, float y, float width, float height, String title) {
@@ -3293,27 +4075,38 @@ public final class GameClient {
         drawModernToggleButton(mouse, clicked, x + width - buttonWidth - 8.0f * scale, y + (height - buttonHeight) * 0.5f, buttonWidth, buttonHeight, enabled, toggle);
     }
 
-    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, EnumSet<CraftingStationType> stationTypes) {
-        float panelWidth = Math.min(560.0f, framebufferWidth - x - 32.0f);
-        if (panelWidth < 260.0f) {
+    private void renderCraftingMenu(MousePosition mouse, boolean clicked, float x, float y, float panelWidth, float panelHeight, EnumSet<CraftingStationType> stationTypes, boolean reserveBatchFooter) {
+        if (panelWidth < 240.0f || panelHeight < 128.0f) {
             return;
         }
         List<CraftingRecipe> recipes = filteredCraftingRecipes(stationTypes);
-        int visibleRecipes = Math.min(6, recipes.size());
-        float rowHeight = 50.0f;
-        float panelHeight = 142.0f + Math.max(1, visibleRecipes) * rowHeight + (recipes.size() > visibleRecipes ? 24.0f : 0.0f);
+        float rowHeight = 46.0f;
+        float rowStartY = y + 76.0f;
+        float footerHeight = recipes.size() > 1 ? 18.0f : 0.0f;
+        float batchFooterHeight = reserveBatchFooter ? 38.0f : 0.0f;
+        int visibleRecipes = Math.min(recipes.size(), Math.max(1, (int) ((panelHeight - 88.0f - footerHeight - batchFooterHeight) / rowHeight)));
         drawModernPanel(
                 x - 14.0f,
                 y - 44.0f,
                 panelWidth + 28.0f,
-                panelHeight,
+                panelHeight + 44.0f,
                 12.0f,
                 new UiColor(0.036f, 0.055f, 0.054f, 0.88f),
                 new UiColor(0.17f, 0.22f, 0.20f, 0.94f),
                 UiColor.ACCENT,
                 1.0f
         );
-        uiRenderer.roundedRect(x + 2.0f, y - 2.0f, panelWidth - 4.0f, panelHeight - 56.0f, 8.0f, new UiColor(0.018f, 0.030f, 0.028f, 0.28f));
+        drawModernInsetPanel(
+                x + 2.0f,
+                rowStartY - 8.0f,
+                panelWidth - 4.0f,
+                Math.max(42.0f, y + panelHeight - rowStartY - 6.0f),
+                8.0f,
+                new UiColor(0.018f, 0.030f, 0.028f, 0.32f),
+                new UiColor(0.10f, 0.14f, 0.13f, 0.62f),
+                UiColor.ACCENT,
+                1.0f
+        );
         uiRenderer.text("RECIPES", x, y - 30.0f, 2.6f, UiColor.WHITE);
         float stationX = x + Math.max(126.0f, panelWidth - 210.0f);
         float stationWidth = x + panelWidth - stationX;
@@ -3322,68 +4115,215 @@ public final class GameClient {
         }
         renderCraftingFilters(mouse, clicked, x, y + 2.0f, panelWidth);
         renderCraftingSearchField(mouse, clicked, x, y + 34.0f, panelWidth);
-        float buttonHeight = 34.0f;
+        float buttonHeight = 40.0f;
         for (int index = 0; index < visibleRecipes; index++) {
             CraftingRecipe recipe = recipes.get(index);
             boolean unlocked = recipeUnlockedForUi(recipe, stationTypes);
             boolean canCraft = canCraftRecipe(recipe, stationTypes);
-            float rowY = y + 76.0f + index * rowHeight;
-            String buttonLabel = recipe.label().toUpperCase(Locale.ROOT) + " [" + recipe.category().name() + "]";
-            UiButton button = new UiButton(x, rowY, panelWidth, buttonHeight, buttonLabel, canCraft);
+            boolean selected = recipe.key().equals(selectedCraftingRecipeKey);
+            float rowY = rowStartY + index * rowHeight;
+            String buttonLabel = recipe.label().toUpperCase(Locale.ROOT);
+            UiButton button = new UiButton(x + 6.0f, rowY, panelWidth - 12.0f, buttonHeight, buttonLabel, canCraft);
             drawModernButtonSurface(
                     button,
                     mouse,
                     clicked,
                     () -> {
-                        if (onlineMode) {
-                            connection.send(craftRequestFor(recipe));
-                            setStatus(craftingRequestMessage(recipe));
-                            updateWindowTitle();
-                        } else if (activeStationFor(recipe, stationTypes).map(station -> hotbar.craft(recipe, station)).orElse(false)) {
-                            String craftedKey = itemKey(recipe.result().itemId());
-                            setStatus(earlyGameMilestones.craftItem(
-                                            craftedKey,
-                                            cozyName(craftedKey),
-                                            itemToolType(recipe.result().itemId()))
-                                    .orElse("Crafted " + recipe.label()));
-                            craftingSuccessPop.trigger(recipe.key(), currentTimeSeconds());
-                            announceNewRecipeUnlocks();
-                            audio.play(AudioCue.CRAFT_SUCCESS);
-                            updateWindowTitle();
-                        }
+                        selectedCraftingRecipeKey = recipe.key();
+                        craftRecipeFromUi(recipe, stationTypes, 1);
                     },
-                    canCraft ? new UiColor(0.085f, 0.135f, 0.105f, 0.92f) : new UiColor(0.055f, 0.065f, 0.062f, 0.74f),
-                    canCraft ? new UiColor(0.145f, 0.210f, 0.150f, 0.96f) : new UiColor(0.078f, 0.088f, 0.082f, 0.78f),
+                    selected ? new UiColor(0.120f, 0.170f, 0.120f, 0.94f) : canCraft ? new UiColor(0.085f, 0.135f, 0.105f, 0.92f) : new UiColor(0.055f, 0.065f, 0.062f, 0.74f),
+                    selected ? new UiColor(0.170f, 0.230f, 0.140f, 0.98f) : canCraft ? new UiColor(0.145f, 0.210f, 0.150f, 0.96f) : new UiColor(0.078f, 0.088f, 0.082f, 0.78f),
                     canCraft ? UiColor.ACCENT : UiColor.WARNING
             );
             if (!canCraft && clicked && button.contains(mouse.x(), mouse.y())) {
+                selectedCraftingRecipeKey = recipe.key();
                 emitCraftingFailure(craftFailMessage(recipe, stationTypes));
+            }
+            if (selected) {
+                uiRenderer.roundedRect(button.x() + 4.0f, button.y() + button.height() - 5.0f, button.width() - 8.0f, 2.0f, 1.0f, UiColor.ACCENT);
             }
             boolean available = recipeAvailableAtCurrent(recipe, stationTypes);
             UiColor stationColor = available ? UiColor.MUTED : UiColor.BUTTON_DISABLED;
             UiColor statusColor = canCraft ? UiColor.ACCENT : unlocked && available ? UiColor.HEART : UiColor.BUTTON_DISABLED;
-            float detailX = x + 42.0f;
-            float statusX = x + panelWidth - 168.0f;
-            float detailWidth = Math.max(80.0f, statusX - detailX - 10.0f);
-            float statusWidth = Math.max(72.0f, x + panelWidth - statusX - 8.0f);
-            uiRenderer.text(fitTextToWidth(buttonLabel, 1.05f, detailWidth), detailX, rowY + 7.0f, 1.05f, canCraft ? UiColor.WHITE : unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            uiRenderer.text(fitTextToWidth(stationRequirementLine(recipe), 0.95f, detailWidth), detailX, rowY + 23.0f, 0.95f, stationColor);
-            uiRenderer.text(fitTextToWidth(hotbar.recipeSummary(recipe), 0.95f, detailWidth), detailX, rowY + 36.0f, 0.95f, unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
-            uiRenderer.text(fitTextToWidth(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), 0.9f, statusWidth), statusX, rowY + 36.0f, 0.9f, statusColor);
-            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 8.0f, rowY + 4.0f, 26.0f);
+            float iconX = x + 14.0f;
+            float detailX = x + 48.0f;
+            boolean showStatusColumn = panelWidth >= 390.0f;
+            float statusX = x + panelWidth - 142.0f;
+            float detailWidth = showStatusColumn ? Math.max(80.0f, statusX - detailX - 10.0f) : Math.max(80.0f, x + panelWidth - detailX - 18.0f);
+            float statusWidth = Math.max(72.0f, x + panelWidth - statusX - 14.0f);
+            uiRenderer.text(fitTextToWidth(buttonLabel, 1.04f, detailWidth), detailX, rowY + 7.0f, 1.04f, canCraft ? UiColor.WHITE : unlocked ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+            uiRenderer.text(fitTextToWidth(stationRequirementLine(recipe), 0.88f, detailWidth), detailX, rowY + 23.0f, 0.88f, stationColor);
+            if (showStatusColumn) {
+                uiRenderer.text(fitTextToWidth(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), 0.82f, statusWidth), statusX, rowY + 23.0f, 0.82f, statusColor);
+            }
+            drawItemIcon(hotbar.itemKey(recipe.result().itemId()), iconX, rowY + 6.0f, 26.0f);
+            uiRenderer.text("x" + recipe.result().count(), iconX + 19.0f, rowY + 27.0f, 0.80f, UiColor.WHITE);
         }
         if (recipes.isEmpty()) {
-            uiRenderer.text("NO MATCHING RECIPES", x + 12.0f, y + 92.0f, 1.55f, UiColor.MUTED);
-            if (clicked && contains(mouse, x, y + 76.0f, panelWidth, 42.0f)) {
+            uiRenderer.text("NO MATCHING RECIPES", x + 12.0f, rowStartY + 16.0f, 1.35f, UiColor.MUTED);
+            uiRenderer.text("CHANGE FILTER OR SEARCH", x + 12.0f, rowStartY + 38.0f, 0.95f, UiColor.BUTTON_DISABLED);
+            if (clicked && contains(mouse, x, rowStartY, panelWidth, 42.0f)) {
                 emitCraftingFailure("No matching recipe");
             }
         }
         if (recipes.size() > visibleRecipes) {
-            uiRenderer.text("MORE RECIPES IN THIS FILTER", x, y + 76.0f + visibleRecipes * rowHeight + 10.0f, 1.15f, UiColor.MUTED);
+            uiRenderer.text("MORE RECIPES IN THIS FILTER", x + 10.0f, y + panelHeight - 18.0f - batchFooterHeight, 0.92f, UiColor.MUTED);
+        }
+        if (reserveBatchFooter) {
+            CraftingRecipe selected = previewCraftingRecipe(stationTypes);
+            if (selected != null) {
+                renderCraftingBatchControls(selected, stationTypes, mouse, clicked, x + 8.0f, y + panelHeight - 31.0f, panelWidth - 16.0f);
+            }
         }
     }
 
-    private GamePacket craftRequestFor(CraftingRecipe recipe) {
+    private void craftRecipeFromUi(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes, int count) {
+        int craftCount = Math.max(1, count);
+        if (recipe.craftingTimeTicks() > 0 && craftCount > 1) {
+            craftCount = 1;
+        }
+        int requestedCount = craftCount;
+        if (onlineMode) {
+            connection.send(craftRequestFor(recipe, requestedCount));
+            setStatus(craftingRequestMessage(recipe, requestedCount));
+            updateWindowTitle();
+        } else if (activeStationFor(recipe, stationTypes).map(station -> hotbar.craft(recipe, station, requestedCount)).orElse(false)) {
+            String craftedKey = itemKey(recipe.result().itemId());
+            int resultCount = recipe.result().count() * requestedCount;
+            setStatus(earlyGameMilestones.craftItem(
+                            craftedKey,
+                            cozyName(craftedKey),
+                            itemToolType(recipe.result().itemId()))
+                    .orElse("Crafted " + recipe.label() + (resultCount > 1 ? " x" + resultCount : "")));
+            craftingSuccessPop.trigger(recipe.key(), currentTimeSeconds());
+            announceNewRecipeUnlocks();
+            audio.play(AudioCue.CRAFT_SUCCESS);
+            updateWindowTitle();
+        }
+    }
+
+    private void renderCraftingRecipeDetails(CraftingRecipe recipe, MousePosition mouse, boolean clicked, float x, float y, float width, float height, EnumSet<CraftingStationType> stationTypes) {
+        if (width < 190.0f || height < 128.0f) {
+            return;
+        }
+        drawModernPanel(
+                x - 14.0f,
+                y - 44.0f,
+                width + 28.0f,
+                height + 44.0f,
+                12.0f,
+                new UiColor(0.038f, 0.048f, 0.044f, 0.88f),
+                new UiColor(0.17f, 0.20f, 0.18f, 0.94f),
+                new UiColor(0.86f, 0.69f, 0.38f, 1.0f),
+                1.0f
+        );
+        uiRenderer.text("DETAILS", x, y - 30.0f, 2.05f, UiColor.WHITE);
+        uiRenderer.text(fitTextToWidth("LIST CRAFTING", 1.05f, Math.max(30.0f, width - 124.0f)), x + 118.0f, y - 24.0f, 1.05f, UiColor.MUTED);
+        if (recipe == null) {
+            uiRenderer.text("SELECT A RECIPE", x + 10.0f, y + 22.0f, 1.30f, UiColor.MUTED);
+            uiRenderer.text("FILTERS AND SEARCH UPDATE THIS LIST", x + 10.0f, y + 46.0f, 0.92f, UiColor.BUTTON_DISABLED);
+            return;
+        }
+
+        boolean unlocked = recipeUnlockedForUi(recipe, stationTypes);
+        boolean canCraft = canCraftRecipe(recipe, stationTypes);
+        boolean stationAvailable = recipeAvailableAtCurrent(recipe, stationTypes);
+        UiColor statusColor = canCraft ? UiColor.ACCENT : unlocked && stationAvailable ? UiColor.HEART : UiColor.BUTTON_DISABLED;
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                58.0f,
+                8.0f,
+                new UiColor(0.020f, 0.030f, 0.028f, 0.42f),
+                new UiColor(0.10f, 0.13f, 0.12f, 0.72f),
+                canCraft ? UiColor.ACCENT : UiColor.WARNING,
+                1.0f
+        );
+        drawAssetSlot(x + 10.0f, y + 10.0f, 38.0f, canCraft, false);
+        drawItemIcon(hotbar.itemKey(recipe.result().itemId()), x + 15.0f, y + 14.0f, 28.0f);
+        uiRenderer.text(fitTextToWidth(recipe.label().toUpperCase(Locale.ROOT), 1.12f, width - 66.0f), x + 58.0f, y + 11.0f, 1.12f, unlocked ? UiColor.WHITE : UiColor.BUTTON_DISABLED);
+        uiRenderer.text(fitTextToWidth("OUTPUT x" + recipe.result().count() + "  " + recipe.category().name(), 0.88f, width - 66.0f), x + 58.0f, y + 30.0f, 0.88f, UiColor.MUTED);
+
+        float lineY = y + 70.0f;
+        uiRenderer.text(fitTextToWidth(recipeStatusLine(recipe, stationTypes).toUpperCase(Locale.ROOT), 1.02f, width), x, lineY, 1.02f, statusColor);
+        lineY += 20.0f;
+        uiRenderer.text(fitTextToWidth(stationRequirementLine(recipe).toUpperCase(Locale.ROOT), 0.88f, width), x, lineY, 0.88f, stationAvailable ? UiColor.MUTED : UiColor.BUTTON_DISABLED);
+        lineY += 18.0f;
+        String meta = recipe.craftingTimeTicks() > 0
+                ? "TIME " + String.format(Locale.ROOT, "%.1fs", recipe.craftingTimeTicks() / 20.0f) + "  XP " + recipe.outputExperience()
+                : "INSTANT  XP " + recipe.outputExperience();
+        uiRenderer.text(fitTextToWidth(meta, 0.86f, width), x, lineY, 0.86f, UiColor.MUTED);
+        lineY += 26.0f;
+        uiRenderer.text("INGREDIENTS", x, lineY, 0.95f, UiColor.MUTED);
+        lineY += 14.0f;
+
+        boolean showBatchControls = height >= 188.0f;
+        float controlsY = y + height - 33.0f;
+        float bottom = (showBatchControls ? controlsY - 8.0f : y + height - 10.0f);
+        int maxIngredients = Math.min(recipe.ingredients().size(), Math.max(1, (int) ((bottom - lineY) / 34.0f)));
+        for (int i = 0; i < maxIngredients; i++) {
+            CraftingRecipe.Ingredient ingredient = recipe.ingredients().get(i);
+            renderCraftingIngredientLine(ingredient, x, lineY, width);
+            lineY += 34.0f;
+        }
+        if (recipe.ingredients().size() > maxIngredients && lineY + 14.0f < bottom) {
+            uiRenderer.text("+" + (recipe.ingredients().size() - maxIngredients) + " MORE", x + 10.0f, lineY + 4.0f, 0.82f, UiColor.BUTTON_DISABLED);
+        }
+        if (showBatchControls) {
+            renderCraftingBatchControls(recipe, stationTypes, mouse, clicked, x, controlsY, width);
+        }
+    }
+
+    private void renderCraftingBatchControls(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes, MousePosition mouse, boolean clicked, float x, float y, float width) {
+        int maxCraftable = maxCraftCountForUi(recipe, stationTypes, 64);
+        boolean timedRecipe = recipe.craftingTimeTicks() > 0;
+        float gap = 6.0f;
+        float buttonWidth = Math.max(46.0f, (width - gap * 2.0f) / 3.0f);
+        float buttonHeight = 28.0f;
+        drawCraftCountButton(recipe, stationTypes, mouse, clicked, x, y, buttonWidth, buttonHeight, "CRAFT 1", maxCraftable >= 1, 1);
+        drawCraftCountButton(recipe, stationTypes, mouse, clicked, x + buttonWidth + gap, y, buttonWidth, buttonHeight, "x5", !timedRecipe && maxCraftable >= 5, 5);
+        String maxLabel = timedRecipe ? "ONE AT A TIME" : "MAX x" + Math.max(0, maxCraftable);
+        drawCraftCountButton(recipe, stationTypes, mouse, clicked, x + (buttonWidth + gap) * 2.0f, y, buttonWidth, buttonHeight, maxLabel, !timedRecipe && maxCraftable > 1, maxCraftable);
+    }
+
+    private void drawCraftCountButton(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes, MousePosition mouse, boolean clicked, float x, float y, float width, float height, String label, boolean enabled, int count) {
+        UiButton button = new UiButton(x, y, width, height, label, enabled);
+        drawModernButton(
+                button,
+                mouse,
+                clicked,
+                () -> craftRecipeFromUi(recipe, stationTypes, count),
+                enabled ? new UiColor(0.12f, 0.18f, 0.14f, 0.95f) : new UiColor(0.07f, 0.08f, 0.075f, 0.70f),
+                new UiColor(0.18f, 0.27f, 0.18f, 0.98f),
+                enabled ? UiColor.ACCENT : UiColor.BUTTON_DISABLED
+        );
+    }
+
+    private void renderCraftingIngredientLine(CraftingRecipe.Ingredient ingredient, float x, float y, float width) {
+        int owned = hotbar.itemCount(ingredient.itemId());
+        boolean hasIngredient = owned >= ingredient.count();
+        UiColor accent = hasIngredient ? UiColor.ACCENT : UiColor.HEART;
+        drawModernInsetPanel(
+                x,
+                y,
+                width,
+                28.0f,
+                7.0f,
+                hasIngredient ? new UiColor(0.035f, 0.055f, 0.044f, 0.48f) : new UiColor(0.080f, 0.032f, 0.032f, 0.42f),
+                new UiColor(0.12f, 0.15f, 0.13f, 0.64f),
+                accent,
+                1.0f
+        );
+        drawItemIcon(hotbar.itemKey(ingredient.itemId()), x + 5.0f, y + 3.0f, 22.0f);
+        String label = cozyName(hotbar.itemKey(ingredient.itemId())).toUpperCase(Locale.ROOT);
+        uiRenderer.text(fitTextToWidth(label, 0.86f, width - 92.0f), x + 34.0f, y + 8.0f, 0.86f, hasIngredient ? UiColor.WHITE : UiColor.MUTED);
+        uiRenderer.text(fitTextToWidth(owned + "/" + ingredient.count(), 0.86f, 46.0f), x + width - 52.0f, y + 8.0f, 0.86f, hasIngredient ? UiColor.ACCENT : UiColor.HEART);
+    }
+
+    private GamePacket craftRequestFor(CraftingRecipe recipe, int count) {
+        int craftCount = Math.max(1, Math.min(64, count));
         if (recipe.stationType() != CraftingStationType.INVENTORY && world != null) {
             Optional<ClientWorld.BlockPos> station = nearestStationFor(recipe.stationType());
             if (station.isPresent() && recipe.craftingTimeTicks() > 0) {
@@ -3394,19 +4334,19 @@ public final class GameClient {
                 }
             } else if (station.isPresent()) {
                 ClientWorld.BlockPos pos = station.get();
-                return GamePacket.CraftRequest.atStation(recipe.key(), 1, pos.x(), pos.y(), pos.z(), nextClientTransactionId());
+                return GamePacket.CraftRequest.atStation(recipe.key(), craftCount, pos.x(), pos.y(), pos.z(), nextClientTransactionId());
             }
         }
-        return new GamePacket.CraftRequest(recipe.key(), 1, false, 0, 0, 0, nextClientTransactionId());
+        return new GamePacket.CraftRequest(recipe.key(), craftCount, false, 0, 0, 0, nextClientTransactionId());
     }
 
-    private String craftingRequestMessage(CraftingRecipe recipe) {
+    private String craftingRequestMessage(CraftingRecipe recipe, int count) {
         if (recipe.craftingTimeTicks() > 0 && recipe.stationType() != CraftingStationType.INVENTORY) {
             String verb = recipe.stationType() == CraftingStationType.CAMPFIRE
                     || recipe.stationType() == CraftingStationType.COOKING_POT ? "cooking" : "work";
             return "Started " + Hotbar.stationLabel(recipe.stationType()).toLowerCase(Locale.ROOT) + " " + verb;
         }
-        return "Crafting requested";
+        return count > 1 ? "Crafting x" + count + " requested" : "Crafting requested";
     }
 
     private Optional<ClientWorld.BlockPos> nearestStationFor(CraftingStationType stationType) {
@@ -3442,10 +4382,25 @@ public final class GameClient {
     }
 
     private boolean canCraftRecipe(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
+        return canCraftRecipe(recipe, stationTypes, 1);
+    }
+
+    private boolean canCraftRecipe(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes, int count) {
         return recipeUnlockedForUi(recipe, stationTypes)
                 && activeStationFor(recipe, stationTypes)
-                .map(station -> hotbar.canCraft(recipe, station))
+                .map(station -> hotbar.canCraft(recipe, station, count))
                 .orElse(false);
+    }
+
+    private int maxCraftCountForUi(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes, int cap) {
+        if (!recipeUnlockedForUi(recipe, stationTypes)) {
+            return 0;
+        }
+        return activeStationFor(recipe, stationTypes)
+                .map(station -> recipe.craftingTimeTicks() > 0 && recipe.stationType() != CraftingStationType.INVENTORY
+                        ? (hotbar.canCraft(recipe, station) ? 1 : 0)
+                        : hotbar.maxCraftCount(recipe, station, cap))
+                .orElse(0);
     }
 
     private Optional<CraftingStationType> activeStationFor(CraftingRecipe recipe, EnumSet<CraftingStationType> stationTypes) {
@@ -3846,6 +4801,13 @@ public final class GameClient {
 
     private CraftingRecipe previewCraftingRecipe(EnumSet<CraftingStationType> stationTypes) {
         List<CraftingRecipe> recipes = filteredCraftingRecipes(stationTypes);
+        if (selectedCraftingRecipeKey != null) {
+            for (CraftingRecipe recipe : recipes) {
+                if (recipe.key().equals(selectedCraftingRecipeKey)) {
+                    return recipe;
+                }
+            }
+        }
         for (CraftingRecipe recipe : recipes) {
             if (canCraftRecipe(recipe, stationTypes)) {
                 return recipe;
@@ -3926,8 +4888,8 @@ public final class GameClient {
     }
 
     private void renderInventoryGridCompact(MousePosition mouse, boolean clicked, boolean released, boolean rightClicked, float x, float y) {
-        float uiScale = settings.uiScale();
         InventoryPanelLayout layout = inventoryPanelLayout(x, y);
+        float uiScale = layout.layoutScale();
         drawInventoryBackdrop(layout.panelX(), layout.panelY(), layout.panelWidth(), layout.panelHeight(), uiScale);
         drawInventoryShelf(layout.x() - 5.0f * uiScale, layout.y() - 5.0f * uiScale, layout.gridWidth() + 10.0f * uiScale, layout.mainRowsHeight() + 10.0f * uiScale, uiScale);
         drawInventoryShelf(layout.x() - 5.0f * uiScale, layout.hotbarY() - 5.0f * uiScale, layout.gridWidth() + 10.0f * uiScale, layout.slot() + 10.0f * uiScale, uiScale);
@@ -4025,22 +4987,22 @@ public final class GameClient {
     }
 
     private InventoryPanelLayout inventoryPanelLayout(float requestedX, float requestedY) {
-        float uiScale = settings.uiScale();
-        float sidePad = 14.0f * uiScale;
-        float topPad = 42.0f * uiScale;
-        float bottomPad = 18.0f * uiScale;
-        float gap = 6.0f * uiScale;
-        float hotbarGap = 14.0f * uiScale;
+        float uiScale = compactInventoryScale(framebufferHeight, settings.uiScale());
+        float sidePad = Math.max(10.0f, 14.0f * uiScale);
+        float topPad = compactInventoryTopPad(framebufferHeight, settings.uiScale());
+        float bottomPad = Math.max(12.0f, 16.0f * uiScale);
+        float gap = Math.max(4.0f, 6.0f * uiScale);
+        float hotbarGap = Math.max(8.0f, 12.0f * uiScale);
         float slot = 42.0f * uiScale;
-        float margin = Math.min(24.0f * uiScale, Math.max(8.0f * uiScale, framebufferWidth * 0.04f));
-        float maxPanelWidth = Math.max(220.0f * uiScale, framebufferWidth - margin * 2.0f);
+        float margin = Math.min(20.0f * uiScale, Math.max(8.0f, framebufferWidth * 0.035f));
+        float maxPanelWidth = Math.max(220.0f, framebufferWidth - margin * 2.0f);
         float gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
         if (gridWidth + sidePad * 2.0f > maxPanelWidth) {
             slot = Math.min(slot, (maxPanelWidth - sidePad * 2.0f - (INVENTORY_COLUMNS - 1) * gap) / INVENTORY_COLUMNS);
         }
-        float maxPanelHeight = Math.max(180.0f * uiScale, framebufferHeight - margin * 2.0f);
+        float maxPanelHeight = Math.max(170.0f, framebufferHeight - margin * 2.0f);
         float maxSlotByHeight = (maxPanelHeight - topPad - bottomPad - hotbarGap - (INVENTORY_MAIN_ROWS - 1) * gap) / (INVENTORY_MAIN_ROWS + 1);
-        slot = Math.max(24.0f * uiScale, Math.min(slot, maxSlotByHeight));
+        slot = Math.max(22.0f, Math.min(slot, Math.max(22.0f, maxSlotByHeight)));
         gridWidth = INVENTORY_COLUMNS * slot + (INVENTORY_COLUMNS - 1) * gap;
         float mainRowsHeight = INVENTORY_MAIN_ROWS * slot + (INVENTORY_MAIN_ROWS - 1) * gap;
         float panelWidth = gridWidth + sidePad * 2.0f;
@@ -4062,7 +5024,8 @@ public final class GameClient {
                 panelX,
                 panelY,
                 panelWidth,
-                panelHeight
+                panelHeight,
+                uiScale
         );
     }
 
@@ -4174,10 +5137,44 @@ public final class GameClient {
             float panelX,
             float panelY,
             float panelWidth,
-            float panelHeight
+            float panelHeight,
+            float layoutScale
     ) {
         private float hotbarY() {
             return y + mainRowsHeight + hotbarGap;
+        }
+    }
+
+    record MainMenuLayout(
+            float scale,
+            float panelX,
+            float panelY,
+            float panelWidth,
+            float panelHeight,
+            float buttonX,
+            float firstButtonY,
+            float buttonWidth,
+            float buttonHeight,
+            float buttonGap,
+            float titleY,
+            float titleScale,
+            float subtitleY,
+            float subtitleScale,
+            float statusY,
+            float statusScale,
+            float horizonY,
+            boolean wideScene
+    ) {
+        float panelCenterX() {
+            return panelX + panelWidth * 0.5f;
+        }
+
+        float buttonY(int index) {
+            return firstButtonY + index * (buttonHeight + buttonGap);
+        }
+
+        float bottom() {
+            return panelY + panelHeight;
         }
     }
 
@@ -4254,9 +5251,14 @@ public final class GameClient {
 
     record CraftingScreenLayout(
             float margin,
+            float layoutScale,
             float x,
             float contentWidth,
             float contentY,
+            float recipeListWidth,
+            float recipeDetailsX,
+            float recipeDetailsWidth,
+            float craftingPanelHeight,
             float tabsY,
             float inventoryY,
             float titleY,
@@ -4264,6 +5266,13 @@ public final class GameClient {
             float hintY,
             float hintScale
     ) {
+        float recipeListX() {
+            return x;
+        }
+
+        float craftingPanelBottom() {
+            return contentY + craftingPanelHeight;
+        }
     }
 
     private record StorageSlotInteraction(Hotbar.SlotView hoveredSlot, boolean droppedOnSlot) {
@@ -4272,6 +5281,43 @@ public final class GameClient {
     private enum InventoryDragSource {
         PLAYER,
         STORAGE
+    }
+
+    private enum SettingsCategory {
+        GRAPHICS("Graphics", "Image quality and world visibility", new UiColor(0.56f, 0.86f, 0.55f, 1.0f)),
+        PERFORMANCE("Performance", "Chunk streaming and renderer budgets", new UiColor(0.42f, 0.76f, 0.90f, 1.0f)),
+        INTERFACE("Interface", "Input, HUD and readable controls", new UiColor(0.88f, 0.70f, 0.34f, 1.0f)),
+        AUDIO("Audio", "Volume buses for world and UI sound", new UiColor(0.74f, 0.58f, 0.92f, 1.0f)),
+        DEBUG("Debug", "Developer overlays and shader views", new UiColor(0.96f, 0.46f, 0.38f, 1.0f));
+
+        private final String label;
+        private final String summary;
+        private final UiColor accent;
+
+        SettingsCategory(String label, String summary, UiColor accent) {
+            this.label = label;
+            this.summary = summary;
+            this.accent = accent;
+        }
+
+        String label() {
+            return label;
+        }
+
+        String summary() {
+            return summary;
+        }
+
+        UiColor accent() {
+            return accent;
+        }
+    }
+
+    private enum MenuIcon {
+        PLAY,
+        SERVER,
+        SETTINGS,
+        QUIT
     }
 
     private void renderDraggedInventoryStack(MousePosition mouse) {
@@ -5658,6 +6704,16 @@ public final class GameClient {
         return mouse.x() >= x && mouse.x() <= x + width && mouse.y() >= y && mouse.y() <= y + height;
     }
 
+    private void syncAudioSettings() {
+        audio.setVolumes(
+                settings.masterVolume(),
+                settings.musicVolume(),
+                settings.ambienceVolume(),
+                settings.sfxVolume(),
+                settings.uiVolume()
+        );
+    }
+
     private void updateFps(double now) {
         framesThisSecond++;
         if (now >= nextFpsSampleTime) {
@@ -6158,6 +7214,9 @@ public final class GameClient {
         }
         if (worldRenderer != null) {
             worldRenderer.clearMeshes();
+        }
+        if (world != null) {
+            world.close();
         }
         hotbar.closeStorage();
         feedbackLog.clear();

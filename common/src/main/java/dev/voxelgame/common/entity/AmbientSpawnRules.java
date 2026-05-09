@@ -9,8 +9,8 @@ import java.util.Optional;
 
 public final class AmbientSpawnRules {
     public static final int REGION_SIZE_CHUNKS = 4;
-    public static final int MAX_BASE_SPAWNS_PER_REGION = 5;
-    public static final int MAX_FIREFLY_SWARMS_PER_REGION = 1;
+    public static final int MAX_BASE_SPAWNS_PER_REGION = 8;
+    public static final int MAX_FIREFLY_SWARMS_PER_REGION = 2;
     public static final int DAY_START_MINUTE = 6 * 60;
     public static final int DUSK_START_MINUTE = 17 * 60;
     public static final int NIGHT_START_MINUTE = 19 * 60;
@@ -30,7 +30,7 @@ public final class AmbientSpawnRules {
         return isNight(dayMinute)
                 && supportsFireflies(biome)
                 && withinRegionBudget(seed, pos, MAX_FIREFLY_SWARMS_PER_REGION, FIREFLY_BUDGET_SALT)
-                && roll < 0.10;
+                && roll < 0.16;
     }
 
     public static Optional<String> selectType(List<String> candidates, long seed, ChunkPos pos, int dayMinute) {
@@ -75,15 +75,15 @@ public final class AmbientSpawnRules {
 
     static double baseSpawnChance(BiomeType biome, int dayMinute) {
         String key = biome == null ? "" : biome.key();
-        double chance = 0.26;
+        double chance = 0.34;
         if (key.contains("meadow") || key.contains("flower")) {
-            chance = 0.34;
+            chance = 0.46;
         } else if (key.contains("forest")) {
-            chance = 0.29;
+            chance = 0.40;
         } else if (key.contains("mire") || key.contains("mushroom") || key.contains("lakeside")) {
-            chance = 0.24;
+            chance = 0.32;
         } else if (key.contains("ruins") || key.contains("dunes") || key.contains("frost")) {
-            chance = 0.16;
+            chance = 0.22;
         }
         if (isNight(dayMinute)) {
             chance *= key.contains("mire") || key.contains("mushroom") || key.contains("lakeside") ? 0.82 : 0.36;

@@ -28,6 +28,7 @@ public record DroppedItemEntity(
     private static final double BOUNCE = 0.22;
     private static final double REST_VELOCITY = 0.08;
     private static final long PICKUP_DELAY_TICKS = 8L;
+    public static final long DESPAWN_TICKS = 20L * 60L * 10L;
 
     public DroppedItemEntity {
         Objects.requireNonNull(itemKey, "itemKey");
@@ -96,6 +97,10 @@ public record DroppedItemEntity(
 
     public boolean canPickup(long tick) {
         return tick - createdTick >= PICKUP_DELAY_TICKS;
+    }
+
+    public boolean expired(long tick) {
+        return tick - createdTick >= DESPAWN_TICKS;
     }
 
     public DroppedItemEntity withPosition(double x, double y, double z) {

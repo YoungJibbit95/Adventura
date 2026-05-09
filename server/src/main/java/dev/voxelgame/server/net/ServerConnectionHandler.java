@@ -1028,6 +1028,12 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             return false;
         }
         nextEntityInteractTime = now + attack.cooldownSeconds();
+        sendGameplayEvent(new GameplayEvent.Damage(
+                gameplayEventSequence++,
+                result.targetEntityId(),
+                result.amount(),
+                source.causeKey()
+        ));
         if (result.killed()) {
             spawnEntityDrops(target);
         }
@@ -1082,6 +1088,10 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
         }
         Optional<CraftingStationType> station = craftingStationFor(craft, recipe.get());
         if (station.isPresent() && recipeUnlocked(recipe.get(), station)) {
+            if (!recipe.get().canCraft(inventory, items, station.get(), craft.count())) {
+                sendInventory(ctx);
+                return;
+            }
             recipe.get().craft(inventory, items, station.get(), craft.count());
         }
         sendInventory(ctx);
@@ -2139,8 +2149,14 @@ public final class ServerConnectionHandler extends SimpleChannelInboundHandler<G
             if (claimed.isEmpty()) {
                 continue;
             }
-            if (inventory.addStack(drop.stack(), items) == 0) {
+            DroppedItemEntity picked = claimed.get();
+            if (inventory.addStack(picked.stack(), items) == 0) {
                 collected = true;
+                sendGameplayEvent(new GameplayEvent.Pickup(
+                        gameplayEventSequence++,
+                        picked.itemKey(),
+                        picked.stack().count()
+                ));
             }
         }
         return collected;

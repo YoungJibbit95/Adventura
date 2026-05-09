@@ -580,7 +580,14 @@ Combat soll nicht der Kern sein, aber leichte Gefahren können Ruinen/Exploratio
 ## Erreicht 2026-05-05
 
 - `WeaponItemRules` bereitet das Damage-System fuer leichte Waffen vor: Messer sind schnell/niedrig, Iron/Platin/Sapphire/Titan Swords staffeln Damage, Cooldown und Knockback.
-- Offen bleibt die serverautoritative `MeleeAttackAction` mit Range, Friendly-Creature-Regeln, Invulnerability-Window und GameplayEvent-Feedback.
+
+## Erreicht 2026-05-09
+
+- `EntityDamageRules` zentralisiert Ambient-Schaden, Invulnerability-Window, Kill-Clamping und Knockback fuer Server und lokalen Singleplayer.
+- `ServerConnectionHandler` emittiert bei autoritativen Melee-Treffern `GameplayEvent.Damage` und bei Item-Pickups `GameplayEvent.Pickup`; Inventory-, Entity- und Feedback-Pfade laufen damit ueber denselben Event-Stream.
+- Little Boar und Dune Crawler haben deterministische Resource-Drops, damit Rare-Danger/Resource-Creatures nicht mehr leere Platzhalter bleiben.
+- `CreatureCombatRules` schuetzt Cozy-/Hint-/Comfort-Creatures vor Spieler-Melee und spieler-eigenen Projektilen, waehrend Moss Snail, Little Boar und Dune Crawler bewusst attackierbar bleiben.
+- Offen bleiben Encounter-AI und sichtbares Melee-Windup-/Cooldown-Feedback.
 
 ## Akzeptanz
 
@@ -712,6 +719,9 @@ Dieser Block ergänzt die reine Feature-Liste um die Systeme, die Adventura als 
 - ~~Cooking Pot und Forge nicht nur als Rezeptfilter, sondern als Spielobjekte ausarbeiten.~~
   Erledigt: Pot/Forge haben explizite Slot-/Progress-/Save-/Transaction-Anforderungen im Station-Contract.
   Verifikation: `StationProgressionTest` prueft Recipe-Station-Abdeckung, registrierte Unlock-Keys und nutzbare Station-Blocks.
+- ~~Inventory-/Workbench-Crafting fuer Alpha-Flow schneller und servergueltig machen.~~
+  Erledigt: 2026-05-09, Batch-Crafting fuer Craft 1/x5/Max nutzt denselben Common-Count-Contract offline, online und im Server; Partial-Batches mutieren das Inventar nicht.
+  Verifikation: `CraftingRecipeTest`, `HotbarTest`, `ServerConnectionHandlerTest`.
 
 ### Akzeptanz
 
@@ -933,9 +943,11 @@ Every core interaction should have a clear feel, cost, reward, feedback and auth
 - Projectiles/combat:
   - actual bow/ammo path if combat expands.
   - ~~server-owned melee range/damage/cooldown/durability/drop rules.~~ `MeleeAttackRules` and server entity attack handling now bind held items/tools/hands into authoritative entity damage.
+  - ~~offline singleplayer melee/drops an dieselben Alpha-Regeln anbinden.~~ `ClientWorld` verarbeitet lokale Entity-Schadensergebnisse, Knockback, Feed-Follow, Moss-Snail-Drops und Item-Drop-Pickup-Delay, damit Singleplayer nicht nur Status-Text zeigt.
+  - ~~Damage/Pickup GameplayEvents fuer Entity-Attacks und Item-Drops anbinden.~~ `ServerConnectionHandler` sendet Treffer- und Pickup-Events aus den autoritativen Pfaden.
   - melee windup/cooldown feedback.
-  - creature no-kill rules for cozy species.
-  - rare danger drops balanced so combat is not the main economy.
+  - ~~creature no-kill rules for cozy species.~~ `CreatureCombatRules` blockt Spieler-Schaden gegen geschuetzte Cozy-/Hint-/Comfort-Creatures im Melee-, Projectile- und Damage-Resolver-Pfad.
+  - ~~rare danger drops balanced so combat is not the main economy.~~ Little Boar/Dune Crawler droppen kleine, deterministische Resource-Stacks mit seltenem Bonus statt Economy-Spam.
 
 ### Akzeptanz
 

@@ -61,6 +61,7 @@ Physics soll stabil, vorhersehbar, cozy und multiplayer-sicher bleiben. Server-A
 - `EntityPhysicsProfile` definiert Ground/Flyer/Swimmer/Tiny/Heavy sowie Wasserverhalten `AVOID`, `SWIM`, `FLOAT`, `IGNORE` pro Entity-Typ.
 - `EntityPhysics` uebernimmt Separation, Knockback-Impulse, Sweep/Slide und Recovery-Kandidaten als Common-Regeln.
 - `ServerEntityTracker` nutzt diese Regeln fuer Ambient-Movement, lokale Separation gegen Spieler/Entities/Drops, Knockback-Sliding und Item-Drop-Merging.
+- `ClientWorld` nutzt den Entity-Physics-Pfad jetzt auch fuer Offline-Singleplayer: lokale Ambient-Entities bekommen Flee/Follow/Wander-Ticks, Knockback-Impulse, Sweep/Slide gegen Terrain und echte lokale Item-Drops mit Pickup-Delay.
 - Item-Drops mergen nur gleiche Items mit gleichem Damage und respektieren `ItemType.maxStackSize`; entfernte Drops koennen danach nicht doppelt geclaimt werden.
 - `ServerWorld.entityPlacementClear` nutzt die Profile fuer Ground-Support und Wasserplatzierung statt Firefly-/Water-Sonderfaellen.
 
@@ -372,7 +373,7 @@ Die Physics-Basis ist fuer eine Alpha stark: Player, Entities, Projectiles, Flui
   - merge rules already exist; add diagnostics for merge counts.
   - lava/fire item destruction decision.
   - water floating/sinking by content tag.
-  - despawn policy for dropped items.
+  - ~~despawn policy for dropped items.~~ `DroppedItemEntity.DESPAWN_TICKS` und der lokale `ClientWorld`-Drop-Lifecycle entfernen Drops nach 10 Minuten aus Entity-Snapshots/Claim-Listen.
 - Block interaction:
   - partial-shape selection consistency.
   - block placement against entities and player.
@@ -429,7 +430,7 @@ Die Physics-Basis ist fuer eine Alpha stark: Player, Entities, Projectiles, Flui
 
 - Damage model:
   - unify melee, projectile, fall, fire, drowning, thorn, poison and future encounter damage.
-  - expose no-kill/friendly creature rules.
+  - ~~expose no-kill/friendly creature rules.~~ `CreatureCombatRules` entscheidet geschuetzte Cozy-/Hint-/Comfort-Creatures gemeinsam fuer Melee, Projectile und den zentralen Damage-Resolver.
   - damage cooldown and knockback are diagnostics-visible.
 - Projectile path:
   - data-driven projectile type.
@@ -450,6 +451,13 @@ Die Physics-Basis ist fuer eine Alpha stark: Player, Entities, Projectiles, Flui
 - `WeaponItemRules` definiert fuer Messer und Schwerter einen ersten Common-Weapon-Contract mit Damage, Cooldown, Knockback und Flags fuer schnelle bzw. kristalline Waffen.
 - Iron/Platin/Sapphire/Titan Swords sind damit als Item-/Recipe-/Weapon-Basis vorhanden; die autoritative `MeleeAttackAction` bleibt Anschlussarbeit in Engine P14.2.
 - Verifikation: `WeaponItemRulesTest`.
+
+### Erreicht 2026-05-09
+
+- `EntityDamageRules` vereinheitlicht den V1-Schadensresolver fuer Ambient-Entities: DamageSource, Invulnerability-Window, Kill-Clamp und Knockback entstehen aus einem Common-Pfad statt aus Server-/Client-Duplikaten.
+- `ServerEntityTracker.damageAmbient(...)` und `ClientWorld.damageLocalEntity(...)` nutzen denselben Resolver; Item-Drops melden zusaetzlich abgelaufene Drops in `AmbientTickStats.expiredItemDrops()`.
+- `CreatureCombatRules` bindet No-Kill/Friendly-Creature-Schutz an Melee-, Projectile- und Damage-Regeln, ohne Rare-Danger-/Resource-Creatures zu entwerten.
+- Verifikation: `EntityDamageRulesTest`, `CreatureCombatRulesTest`, `MeleeAttackRulesTest`, `ProjectileDamageRulesTest`, `ServerEntityTrackerTest`, `ServerConnectionHandlerTest`, `ClientWorldEntityTest`.
 
 ## P5.5 Replay And Regression Expansion
 

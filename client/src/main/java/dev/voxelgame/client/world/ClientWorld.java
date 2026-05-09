@@ -4,6 +4,9 @@ import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.client.render.ChunkMesher;
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
 import dev.voxelgame.common.entity.EntityBounds;
+import dev.voxelgame.common.entity.DamageResult;
+import dev.voxelgame.common.entity.DamageSource;
+import dev.voxelgame.common.entity.EntityDamageRules;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
 import dev.voxelgame.common.block.BlockType;
@@ -61,6 +64,7 @@ public final class ClientWorld {
     private static final double PROJECTILE_SWEEP_PREVIEW_SECONDS = 0.20;
     private static final double LOCAL_ENTITY_TICK_SECONDS = 1.0 / 20.0;
     private static final double LOCAL_ITEM_PICKUP_DELAY_SECONDS = 0.40;
+    private static final double LOCAL_ITEM_DESPAWN_SECONDS = 60.0 * 10.0;
     private static final double AMBIENT_DAMAGE_INVULNERABILITY_SECONDS = 0.28;
     private static final double ENTITY_PATH_MAX_STEP = 0.45;
 
@@ -306,59 +310,40 @@ public final class ClientWorld {
             Vector3f attackerPosition,
             double nowSeconds
     ) {
-        if (damageAmount <= 0) {
-            return LocalEntityDamageResult.rejected(entityId, "invalid damage");
-        }
         EntityTrack track = entities.get(entityId);
-        if (track == null) {
-            return LocalEntityDamageResult.rejected(entityId, "unknown target");
+        EntitySnapshot current = track == null ? null : track.current();
+        if (current == null) {
+            return LocalEntityDamageResult.rejected(entityId, "unknown_target");
         }
-        EntitySnapshot current = track.current();
         MeleeAttackRules.TargetDecision targetDecision = MeleeAttackRules.canAttack(ownPlayerId, current);
         if (!targetDecision.accepted()) {
             return LocalEntityDamageResult.rejected(entityId, targetDecision.reason().name().toLowerCase(java.util.Locale.ROOT));
         }
-        if (nowSeconds < nextLocalEntityDamageAllowedAt.getOrDefault(entityId, 0.0)) {
-            return LocalEntityDamageResult.rejected(entityId, "invulnerable");
-        }
-
-        int newHealth = Math.max(0, current.health() - damageAmount);
-        int appliedDamage = current.health() - newHealth;
-        double knockbackX = 0.0;
-        double knockbackZ = 0.0;
-        if (attackerPosition != null) {
-            double dx = current.x() - attackerPosition.x;
-            double dz = current.z() - attackerPosition.z;
-            double distance = Math.sqrt(dx * dx + dz * dz);
-            if (distance > 0.0001) {
-                knockbackX = dx / distance * Math.max(0.0, knockbackStrength);
-                knockbackZ = dz / distance * Math.max(0.0, knockbackStrength);
-            }
-        }
-        EntitySnapshot updated = new EntitySnapshot(
-                current.entityId(),
-                current.typeKey(),
-                current.ownerPlayerId(),
-                current.x(),
-                current.y(),
-                current.z(),
-                current.yaw(),
-                current.pitch(),
-                newHealth,
-                newHealth <= 0 ? EntitySnapshot.STATE_IDLE : EntitySnapshot.STATE_FLEE,
-                knockbackX,
-                0.1,
-                knockbackZ
+        EntityDamageRules.DamageResolution resolution = EntityDamageRules.resolveAmbientDamage(
+                entityId,
+                current,
+                damageAmount,
+                DamageSource.playerMelee(ownPlayerId),
+                nowSeconds,
+                nextLocalEntityDamageAllowedAt.getOrDefault(entityId, 0.0),
+                AMBIENT_DAMAGE_INVULNERABILITY_SECONDS,
+                knockbackStrength,
+                attackerPosition == null ? null : new EntityDamageRules.KnockbackOrigin(attackerPosition.x, attackerPosition.y, attackerPosition.z)
         );
-        if (newHealth <= 0) {
+        DamageResult result = resolution.result();
+        if (!result.accepted()) {
+            return LocalEntityDamageResult.rejected(entityId, result.rejectionReason().name().toLowerCase(java.util.Locale.ROOT));
+        }
+        EntitySnapshot updated = result.updatedSnapshot();
+        if (result.killed()) {
             entities.remove(entityId);
             entityAnchors.remove(entityId);
             nextLocalEntityDamageAllowedAt.remove(entityId);
         } else {
             entities.put(entityId, track.update(updated, nowSeconds));
-            nextLocalEntityDamageAllowedAt.put(entityId, nowSeconds + AMBIENT_DAMAGE_INVULNERABILITY_SECONDS);
+            nextLocalEntityDamageAllowedAt.put(entityId, resolution.nextDamageAllowedAt());
         }
-        return LocalEntityDamageResult.accepted(entityId, current, updated, appliedDamage, newHealth <= 0);
+        return LocalEntityDamageResult.accepted(entityId, current, updated, result.amount(), result.killed());
     }
 
     public synchronized Optional<EntitySnapshot> feedLocalEntity(long entityId, int healAmount, Vector3f playerPosition, double nowSeconds) {
@@ -1189,6 +1174,249 @@ public final class ClientWorld {
         }
     }
 
+    private void tickLocalEntitiesStep(Vector3f playerPosition, double tickTimeSeconds) {
+        localEntityTick++;
+        tickLocalItemDrops(tickTimeSeconds);
+        List<Long> ids = new ArrayList<>(entities.keySet());
+        ids.sort(Long::compare);
+        for (Long entityId : ids) {
+            EntityTrack track = entities.get(entityId);
+            if (track == null) {
+                continue;
+            }
+            EntitySnapshot current = track.current();
+            if (isOwnPlayerSnapshot(current)
+                    || current.health() <= 0
+                    || ItemDropType.isTypeKey(current.typeKey())
+                    || EntitySnapshot.STATE_PROJECTILE.equals(current.stateKey())) {
+                continue;
+            }
+            EntitySnapshot anchor = entityAnchors.computeIfAbsent(entityId, ignored -> current);
+            EntitySnapshot moved = moveLocalAmbient(anchor, current, playerPosition, localEntityTick);
+            EntityPhysicsProfile profile = EntityPhysicsProfile.forType(current.typeKey());
+            List<EntitySnapshot> neighbors = localSeparationNeighbors(entityId);
+            moved = EntityPhysics.applyImpulseMotion(current, moved, profile);
+            moved = EntityPhysics.applySeparation(current, moved, neighbors);
+            EntityPhysics.MoveResult moveResult = EntityPhysics.sweepWithSlide(
+                    current,
+                    moved,
+                    (from, candidate) -> canMoveLocalEntity(from, candidate)
+                            && !EntityPhysics.overlapsAny(candidate, neighbors, profile.separationPadding())
+            );
+            entities.put(entityId, track.update(moveResult.snapshot(), tickTimeSeconds));
+        }
+    }
+
+    private void tickLocalItemDrops(double tickTimeSeconds) {
+        if (localItemDrops.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>(localItemDrops.keySet());
+        ids.sort(Long::compare);
+        for (Long entityId : ids) {
+            LocalItemDrop drop = localItemDrops.get(entityId);
+            if (drop == null) {
+                continue;
+            }
+            if (drop.expired(tickTimeSeconds)) {
+                localItemDrops.remove(entityId);
+                entities.remove(entityId);
+                continue;
+            }
+            LocalItemDrop updated = drop.tick(tickTimeSeconds);
+            localItemDrops.put(entityId, updated);
+            EntityTrack track = entities.get(entityId);
+            EntitySnapshot snapshot = updated.snapshot();
+            entities.put(entityId, track == null
+                    ? EntityTrack.single(snapshot, tickTimeSeconds)
+                    : track.update(snapshot, tickTimeSeconds));
+        }
+    }
+
+    private List<EntitySnapshot> localSeparationNeighbors(long entityId) {
+        List<EntitySnapshot> neighbors = new ArrayList<>(entities.size());
+        for (EntityTrack track : entities.values()) {
+            EntitySnapshot snapshot = track.current();
+            if (snapshot.entityId() != entityId && !isOwnPlayerSnapshot(snapshot) && snapshot.health() > 0) {
+                neighbors.add(snapshot);
+            }
+        }
+        return neighbors;
+    }
+
+    private boolean canMoveLocalEntity(EntitySnapshot current, EntitySnapshot candidate) {
+        if (current == null || candidate == null || !current.typeKey().equals(candidate.typeKey())) {
+            return false;
+        }
+        if (!entityPlacementClear(candidate)) {
+            return false;
+        }
+        double dx = candidate.x() - current.x();
+        double dy = candidate.y() - current.y();
+        double dz = candidate.z() - current.z();
+        double maxDistance = Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz)));
+        int steps = Math.max(1, (int) Math.ceil(maxDistance / ENTITY_PATH_MAX_STEP));
+        for (int i = 1; i <= steps; i++) {
+            double t = (double) i / steps;
+            EntitySnapshot sample = new EntitySnapshot(
+                    candidate.entityId(),
+                    candidate.typeKey(),
+                    candidate.ownerPlayerId(),
+                    current.x() + dx * t,
+                    current.y() + dy * t,
+                    current.z() + dz * t,
+                    candidate.yaw(),
+                    candidate.pitch(),
+                    candidate.health(),
+                    candidate.stateKey(),
+                    candidate.velocityX(),
+                    candidate.velocityY(),
+                    candidate.velocityZ()
+            );
+            if (!entityPlacementClear(sample)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean entityPlacementClear(EntitySnapshot snapshot) {
+        if (snapshot == null || world.findChunk(ChunkPos.fromBlock(floor(snapshot.x()), floor(snapshot.z()))).isEmpty()) {
+            return false;
+        }
+        EntityBounds bounds = EntityBounds.forType(snapshot.typeKey());
+        CollisionShapeCache.CollisionCheck collision = collisionShapeCache.collidesEntity(
+                bounds,
+                snapshot.x(),
+                EntityBounds.baseY(snapshot),
+                snapshot.z()
+        );
+        if (collision.collides() || collision.blockedByMissingChunk()) {
+            return false;
+        }
+        EntityPhysicsProfile profile = EntityPhysicsProfile.forType(snapshot.typeKey());
+        if (profile.ignoresTerrainSupport()) {
+            return true;
+        }
+        int supportX = floor(snapshot.x());
+        int supportY = floor(EntityBounds.baseY(snapshot) - 0.08);
+        int supportZ = floor(snapshot.z());
+        if (!world.dimension().containsY(supportY)) {
+            return false;
+        }
+        short supportId = world.blockId(supportX, supportY, supportZ);
+        if (FluidBlocks.isWater(supportId)) {
+            return profile.acceptsWaterPlacement();
+        }
+        return supportId != Blocks.AIR && world.blockType(supportId).collidable();
+    }
+
+    private EntitySnapshot moveLocalAmbient(EntitySnapshot anchor, EntitySnapshot current, Vector3f playerPosition, long tick) {
+        if (EntitySnapshot.STATE_FOLLOW.equals(current.stateKey()) && playerPosition != null) {
+            return followLocalAmbient(current, playerPosition);
+        }
+        FleeTarget threat = fleeTargetFor(current, playerPosition);
+        if (threat != null) {
+            return fleeLocalAmbient(anchor, current, threat);
+        }
+        double radius = localWanderRadius(anchor.typeKey());
+        double phase = tick * localPhaseSpeed(anchor.typeKey()) + (anchor.entityId() & 0xFFFFL) * 0.013;
+        double x = anchor.x() + Math.cos(phase) * radius;
+        double z = anchor.z() + Math.sin(phase * 0.83) * radius;
+        double y = anchor.y() + localVerticalOffset(anchor.typeKey(), phase);
+        return new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                x,
+                y,
+                z,
+                yawToward(current.x(), current.z(), x, z),
+                current.pitch(),
+                current.health(),
+                localStateFor(current.typeKey(), tick, current.entityId()),
+                0.0,
+                0.0,
+                0.0
+        );
+    }
+
+    private FleeTarget fleeTargetFor(EntitySnapshot current, Vector3f playerPosition) {
+        if (playerPosition == null) {
+            return null;
+        }
+        double radius = localFleeRadius(current.typeKey());
+        if (radius <= 0.0) {
+            return null;
+        }
+        double dx = current.x() - playerPosition.x;
+        double dz = current.z() - playerPosition.z;
+        double distanceSquared = dx * dx + dz * dz;
+        if (distanceSquared <= radius * radius
+                || (EntitySnapshot.STATE_FLEE.equals(current.stateKey()) && distanceSquared <= radius * radius * 4.0)) {
+            return new FleeTarget(playerPosition.x, playerPosition.z);
+        }
+        return null;
+    }
+
+    private EntitySnapshot followLocalAmbient(EntitySnapshot current, Vector3f playerPosition) {
+        double dx = playerPosition.x - current.x();
+        double dz = playerPosition.z - current.z();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        double step = distance <= 1.6 ? 0.0 : Math.min(localFollowSpeed(current.typeKey()), distance - 1.6);
+        double x = distance <= 0.0001 ? current.x() : current.x() + dx / distance * step;
+        double z = distance <= 0.0001 ? current.z() : current.z() + dz / distance * step;
+        return new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                x,
+                current.y(),
+                z,
+                distance <= 0.0001 ? current.yaw() : yawToward(current.x(), current.z(), playerPosition.x, playerPosition.z),
+                current.pitch(),
+                current.health(),
+                EntitySnapshot.STATE_FOLLOW,
+                0.0,
+                0.0,
+                0.0
+        );
+    }
+
+    private EntitySnapshot fleeLocalAmbient(EntitySnapshot anchor, EntitySnapshot current, FleeTarget threat) {
+        double dx = current.x() - threat.x();
+        double dz = current.z() - threat.z();
+        double distance = Math.sqrt(dx * dx + dz * dz);
+        double yawRadians = Math.toRadians(current.yaw());
+        double awayX = distance <= 0.0001 ? Math.cos(yawRadians) : dx / distance;
+        double awayZ = distance <= 0.0001 ? Math.sin(yawRadians) : dz / distance;
+        double x = current.x() + awayX * localFleeSpeed(current.typeKey());
+        double z = current.z() + awayZ * localFleeSpeed(current.typeKey());
+        double maxAnchorDistance = localFleeMaxDistance(current.typeKey());
+        double ax = x - anchor.x();
+        double az = z - anchor.z();
+        double anchorDistance = Math.sqrt(ax * ax + az * az);
+        if (anchorDistance > maxAnchorDistance && anchorDistance > 0.0001) {
+            x = anchor.x() + ax / anchorDistance * maxAnchorDistance;
+            z = anchor.z() + az / anchorDistance * maxAnchorDistance;
+        }
+        return new EntitySnapshot(
+                current.entityId(),
+                current.typeKey(),
+                current.ownerPlayerId(),
+                x,
+                current.y(),
+                z,
+                (float) Math.toDegrees(Math.atan2(awayZ, awayX)),
+                current.pitch(),
+                current.health(),
+                EntitySnapshot.STATE_FLEE,
+                0.0,
+                0.0,
+                0.0
+        );
+    }
+
     private void ensurePreviewAround(ChunkPos center, int radius) {
         ensurePreviewAround(center, radius, Integer.MAX_VALUE, Double.POSITIVE_INFINITY);
     }
@@ -1241,6 +1469,106 @@ public final class ClientWorld {
         seedSpawnEntities();
     }
 
+    private void drainGeneratedPreviewChunks(int maxApplyChunks, double maxMilliseconds) {
+        int limit = Math.max(0, maxApplyChunks);
+        if (limit == 0 || completedPreviewChunks.isEmpty()) {
+            return;
+        }
+        long startNanos = System.nanoTime();
+        long budgetNanos = Double.isFinite(maxMilliseconds) && maxMilliseconds > 0.0
+                ? (long) (maxMilliseconds * 1_000_000.0)
+                : Long.MAX_VALUE;
+        List<ChunkPos> applied = new ArrayList<>();
+        while (applied.size() < limit && !completedPreviewChunks.isEmpty()) {
+            if (!applied.isEmpty() && System.nanoTime() - startNanos >= budgetNanos) {
+                break;
+            }
+            GeneratedChunk generated = completedPreviewChunks.removeFirst();
+            pendingPreviewChunks.remove(generated.pos());
+            if (streamingCenter != null
+                    && ChunkStreamingRings.distance(streamingCenter, generated.pos()) > streamingRadius + 1) {
+                continue;
+            }
+            if (world.findChunk(generated.pos()).isPresent()) {
+                continue;
+            }
+            world.putChunk(generated.chunk());
+            collisionShapeCache.invalidateChunk(generated.pos());
+            buildQueue.recordGeneration(generated.generationMilliseconds());
+            spawnAmbientEntities(generated.pos());
+            applied.add(generated.pos());
+        }
+        if (!applied.isEmpty()) {
+            long lightingStartNanos = System.nanoTime();
+            lightEngine.rebuildChunkLighting(world, applied);
+            buildQueue.recordLighting((System.nanoTime() - lightingStartNanos) / 1_000_000.0);
+            for (ChunkPos pos : applied) {
+                markGeneratedChunkDirty(pos);
+            }
+        }
+    }
+
+    private void schedulePreviewChunkGeneration(ChunkPos center, int radius, int maxNewChunks) {
+        if (closed || maxNewChunks <= 0) {
+            return;
+        }
+        List<ChunkPos> missing = missingPreviewPositions(center, Math.max(0, radius));
+        int limit = Math.min(missing.size(), Math.max(0, maxNewChunks));
+        for (int i = 0; i < limit; i++) {
+            ChunkPos pos = missing.get(i);
+            if (!pendingPreviewChunks.add(pos)) {
+                continue;
+            }
+            try {
+                chunkGenerationExecutor.execute(() -> generatePreviewChunkAsync(pos));
+            } catch (RejectedExecutionException ignored) {
+                pendingPreviewChunks.remove(pos);
+            }
+        }
+    }
+
+    private List<ChunkPos> missingPreviewPositions(ChunkPos center, int radius) {
+        List<ChunkPos> missing = new ArrayList<>();
+        for (int z = center.z() - radius; z <= center.z() + radius; z++) {
+            for (int x = center.x() - radius; x <= center.x() + radius; x++) {
+                ChunkPos pos = new ChunkPos(x, z);
+                if (world.findChunk(pos).isPresent() || pendingPreviewChunks.contains(pos)) {
+                    continue;
+                }
+                missing.add(pos);
+            }
+        }
+        missing.sort(Comparator
+                .comparingInt((ChunkPos pos) -> square(pos.x() - center.x()) + square(pos.z() - center.z()))
+                .thenComparingInt(ChunkPos::x)
+                .thenComparingInt(ChunkPos::z));
+        return missing;
+    }
+
+    private void generatePreviewChunkAsync(ChunkPos pos) {
+        try {
+            long generationStartNanos = System.nanoTime();
+            Chunk chunk = new Chunk(pos, DimensionSettings.OVERWORLD);
+            new OverworldGenerator(seed).generate(chunk);
+            GeneratedChunk generated = new GeneratedChunk(
+                    pos,
+                    chunk,
+                    (System.nanoTime() - generationStartNanos) / 1_000_000.0
+            );
+            synchronized (this) {
+                if (!closed) {
+                    completedPreviewChunks.addLast(generated);
+                } else {
+                    pendingPreviewChunks.remove(pos);
+                }
+            }
+        } catch (RuntimeException error) {
+            synchronized (this) {
+                pendingPreviewChunks.remove(pos);
+            }
+        }
+    }
+
     private void markGeneratedChunkDirty(ChunkPos pos) {
         enqueueDirty(pos, false);
         enqueueDirtyIfLoaded(new ChunkPos(pos.x() + 1, pos.z()), false);
@@ -1257,7 +1585,7 @@ public final class ClientWorld {
 
     private void spawnAmbientEntities(ChunkPos pos) {
         for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnForChunk(seed, generator, pos)) {
-            entities.putIfAbsent(snapshot.entityId(), EntityTrack.single(snapshot, 0.0));
+            putLocalAmbientIfAbsent(snapshot, 0.0);
         }
     }
 
@@ -1265,10 +1593,17 @@ public final class ClientWorld {
         if (spawnEntitiesSeeded) {
             return;
         }
-        for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnAroundSpawn(seed, 1)) {
-            entities.putIfAbsent(snapshot.entityId(), EntityTrack.single(snapshot, 0.0));
+        for (EntitySnapshot snapshot : AmbientEntitySpawner.spawnAroundSpawn(seed, 2)) {
+            putLocalAmbientIfAbsent(snapshot, 0.0);
         }
         spawnEntitiesSeeded = true;
+    }
+
+    private void putLocalAmbientIfAbsent(EntitySnapshot snapshot, double nowSeconds) {
+        if (entities.putIfAbsent(snapshot.entityId(), EntityTrack.single(snapshot, nowSeconds)) == null
+                && !ItemDropType.isTypeKey(snapshot.typeKey())) {
+            entityAnchors.put(snapshot.entityId(), snapshot);
+        }
     }
 
     private static double distanceSquared(Vector3f center, int x, int y, int z) {
@@ -1299,6 +1634,7 @@ public final class ClientWorld {
                 .collect(java.util.stream.Collectors.toSet());
         activeCampfires.keySet().removeIf(pos -> !loadedPositions.contains(ChunkPos.fromBlock(pos.x(), pos.z())));
         campfireStatuses.keySet().removeIf(pos -> !loadedPositions.contains(ChunkPos.fromBlock(pos.x(), pos.z())));
+        localItemDrops.values().removeIf(drop -> !loadedPositions.contains(ChunkPos.fromBlock(floor(drop.x()), floor(drop.z()))));
         entities.entrySet().removeIf(entry -> {
             EntitySnapshot snapshot = entry.getValue().current();
             if (ownPlayerId != null && ownPlayerId.equals(snapshot.ownerPlayerId())) {
@@ -1523,6 +1859,215 @@ public final class ClientWorld {
         return world.findChunk(pos)
                 .flatMap(Chunk::terrainCache)
                 .orElseGet(() -> generator.terrainCacheForChunk(pos));
+    }
+
+    private long nextLocalRuntimeEntityId() {
+        while (entities.containsKey(nextLocalRuntimeEntityId)) {
+            nextLocalRuntimeEntityId++;
+        }
+        return nextLocalRuntimeEntityId++;
+    }
+
+    private double dropGroundY(double x, double y, double z) {
+        int blockX = floor(x);
+        int blockZ = floor(z);
+        int startY = Math.min(world.dimension().maxYExclusive() - 1, Math.max(world.dimension().minY(), floor(y)));
+        for (int blockY = startY; blockY >= world.dimension().minY(); blockY--) {
+            if (world.blockType(world.blockId(blockX, blockY, blockZ)).collidable()) {
+                return blockY + 1.0;
+            }
+        }
+        return y;
+    }
+
+    private static double localDropLaunchVelocity(String itemKey, long entityId, int axis) {
+        long hash = (itemKey == null ? 0 : itemKey.hashCode()) * 31L + entityId * 17L + axis * 97L;
+        double normalized = Math.floorMod(hash, 200L) / 100.0 - 1.0;
+        return normalized * 0.34;
+    }
+
+    private static float yawToward(double fromX, double fromZ, double toX, double toZ) {
+        return (float) Math.toDegrees(Math.atan2(toZ - fromZ, toX - fromX));
+    }
+
+    private static double localWanderRadius(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:firefly_swarm" -> 1.7;
+            case "voxel:forest_bunny" -> 1.35;
+            case "voxel:little_boar" -> 1.15;
+            case "voxel:moss_snail" -> 0.50;
+            default -> 0.95;
+        };
+    }
+
+    private static double localPhaseSpeed(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:moss_snail" -> 0.022;
+            case "voxel:cozy_sheep" -> 0.040;
+            case "voxel:forest_bunny" -> 0.066;
+            case "voxel:firefly_swarm" -> 0.078;
+            default -> 0.048;
+        };
+    }
+
+    private static double localVerticalOffset(String typeKey, double phase) {
+        if ("voxel:firefly_swarm".equals(typeKey)) {
+            return Math.sin(phase * 1.4) * 0.35;
+        }
+        if ("voxel:forest_bunny".equals(typeKey)) {
+            return Math.max(0.0, Math.sin(phase * 2.0)) * 0.18;
+        }
+        return 0.0;
+    }
+
+    private static double localFleeRadius(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:moss_snail" -> 2.4;
+            case "voxel:cozy_sheep", "voxel:forest_bunny" -> 3.8;
+            case "voxel:little_boar" -> 2.8;
+            default -> 3.2;
+        };
+    }
+
+    private static double localFleeSpeed(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:moss_snail" -> 0.045;
+            case "voxel:forest_bunny" -> 0.18;
+            case "voxel:little_boar" -> 0.115;
+            default -> 0.085;
+        };
+    }
+
+    private static double localFleeMaxDistance(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:forest_bunny" -> 8.0;
+            case "voxel:moss_snail" -> 3.0;
+            default -> 5.5;
+        };
+    }
+
+    private static double localFollowSpeed(String typeKey) {
+        return switch (typeKey) {
+            case "voxel:moss_snail" -> 0.035;
+            case "voxel:forest_bunny" -> 0.12;
+            case "voxel:little_boar" -> 0.075;
+            default -> 0.065;
+        };
+    }
+
+    private static String localStateFor(String typeKey, long tick, long entityId) {
+        if ("voxel:firefly_swarm".equals(typeKey)) {
+            return EntitySnapshot.STATE_WANDER;
+        }
+        if ("voxel:cozy_sheep".equals(typeKey) && Math.floorMod(tick + entityId, 140L) < 70L) {
+            return EntitySnapshot.STATE_GRAZE;
+        }
+        if ("voxel:moss_snail".equals(typeKey) && Math.floorMod(tick + entityId, 180L) < 125L) {
+            return EntitySnapshot.STATE_WANDER;
+        }
+        return Math.floorMod(tick + entityId, 120L) < 78L ? EntitySnapshot.STATE_WANDER : EntitySnapshot.STATE_IDLE;
+    }
+
+    public record LocalEntityDamageResult(
+            long entityId,
+            boolean accepted,
+            boolean killed,
+            EntitySnapshot target,
+            EntitySnapshot updated,
+            int appliedDamage,
+            int remainingHealth,
+            String rejectionReason
+    ) {
+        static LocalEntityDamageResult accepted(
+                long entityId,
+                EntitySnapshot target,
+                EntitySnapshot updated,
+                int appliedDamage,
+                boolean killed
+        ) {
+            return new LocalEntityDamageResult(entityId, true, killed, target, updated, appliedDamage, updated.health(), "");
+        }
+
+        static LocalEntityDamageResult rejected(long entityId, String reason) {
+            return new LocalEntityDamageResult(entityId, false, false, null, null, 0, 0, reason == null ? "" : reason);
+        }
+    }
+
+    public record LocalItemPickup(long entityId, String itemKey, int count, double x, double y, double z, double distanceSquared) {
+    }
+
+    private record GeneratedChunk(ChunkPos pos, Chunk chunk, double generationMilliseconds) {
+    }
+
+    private record FleeTarget(double x, double z) {
+    }
+
+    private record LocalItemDrop(
+            long entityId,
+            String itemKey,
+            int count,
+            double x,
+            double y,
+            double z,
+            double groundY,
+            double velocityX,
+            double velocityY,
+            double velocityZ,
+            double createdAtSeconds
+    ) {
+        LocalItemDrop tick(double nowSeconds) {
+            double nextVelocityX = velocityX * 0.92;
+            double nextVelocityY = velocityY - 18.0 * LOCAL_ENTITY_TICK_SECONDS;
+            double nextVelocityZ = velocityZ * 0.92;
+            double nextX = x + nextVelocityX * LOCAL_ENTITY_TICK_SECONDS;
+            double nextY = y + nextVelocityY * LOCAL_ENTITY_TICK_SECONDS;
+            double nextZ = z + nextVelocityZ * LOCAL_ENTITY_TICK_SECONDS;
+            if (nextY <= groundY) {
+                nextY = groundY;
+                nextVelocityY = Math.abs(nextVelocityY) > 0.08 ? -nextVelocityY * 0.22 : 0.0;
+                nextVelocityX *= 0.72;
+                nextVelocityZ *= 0.72;
+            }
+            return new LocalItemDrop(
+                    entityId,
+                    itemKey,
+                    count,
+                    nextX,
+                    nextY,
+                    nextZ,
+                    groundY,
+                    nextVelocityX,
+                    nextVelocityY,
+                    nextVelocityZ,
+                    createdAtSeconds
+            );
+        }
+
+        boolean canPickup(double nowSeconds) {
+            return nowSeconds - createdAtSeconds >= LOCAL_ITEM_PICKUP_DELAY_SECONDS;
+        }
+
+        boolean expired(double nowSeconds) {
+            return nowSeconds - createdAtSeconds >= LOCAL_ITEM_DESPAWN_SECONDS;
+        }
+
+        EntitySnapshot snapshot() {
+            return new EntitySnapshot(
+                    entityId,
+                    ItemDropType.typeKey(itemKey),
+                    null,
+                    x,
+                    y,
+                    z,
+                    (float) Math.floorMod(entityId * 37L, 360L),
+                    0.0f,
+                    1,
+                    EntitySnapshot.STATE_IDLE,
+                    velocityX,
+                    velocityY,
+                    velocityZ
+            );
+        }
     }
 
     public record MeshBuild(ChunkPos pos, ChunkMesh mesh) {

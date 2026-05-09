@@ -253,10 +253,13 @@ Chunk-Load/Unload soll vorhersehbar und stutterarm sein.
 - ~~Lighting fuer neu generierte Preview-Batches wird zusammengefasst.~~ Neue Chunks werden als Batch beleuchtet und als ein Light-Job gemessen, statt pro Chunk mehrere Full-Rebuilds zu starten.
 - ~~Preview-Chunkgen loest keine Remesh-Kaskade mehr fuer noch ungeladene Nachbarn aus.~~ Neue Preview-Chunks markieren nur sich selbst und bereits geladene kardinale Nachbarn dirty.
 - ~~Layer-Meshing ueberspringt leere Render-Layer.~~ `ChunkRenderLayerPresence` scannt Chunk-Sections einmal und verhindert Opaque/Cutout/Translucent-Builds, wenn ein Layer im Chunk nicht vorkommt.
+- ~~Runtime-Preview-Chunkgen vom Game/Render-Thread loesen.~~ `ClientWorld.streamPreviewAround(...)` erzeugt fehlende Singleplayer-Preview-Chunks auf einem dedizierten Daemon-Worker, wendet fertige Chunks pro Frame begrenzt an und verwirft veraltete Ergebnisse ausserhalb des aktuellen Streaming-Rings.
+- ~~Singleplayer-Entity-/Drop-Tick in die World-Phase integrieren.~~ Lokale Ambient-Entities laufen, folgen/fiehen, bekommen Knockback und lokale Item-Drops werden als echte Entity-Snapshots mit Pickup-Delay weitergetickt.
 - Verifikation:
   - `./gradlew :client:test --tests dev.voxelgame.client.viewmodel.LoadingScreenViewModelTest --tests dev.voxelgame.client.GameClientUiLayoutTest --tests dev.voxelgame.client.world.ClientWorldSpawnTest --no-daemon --max-workers=1`
   - `./gradlew :client:test --tests dev.voxelgame.client.GameSettingsTest --tests dev.voxelgame.client.EngineFrameStatsTest --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --no-daemon --max-workers=1`
   - `./gradlew :client:test --tests dev.voxelgame.client.world.ClientWorldMeshInvalidationTest --tests dev.voxelgame.client.GameClientUiLayoutTest --no-daemon --max-workers=1 -PadventuraTestRunId=world_chunk_melee_ui_3`
+  - `./gradlew.bat :client:test --tests dev.voxelgame.client.world.ClientWorldEntityTest :common:test --tests dev.voxelgame.common.entity.AmbientEntitySpawnerTest --tests dev.voxelgame.common.world.OverworldGeneratorTest`
 
 ### Akzeptanz
 
@@ -1205,9 +1208,10 @@ Alle moment-to-moment interactions laufen langfristig ueber denselben serverauto
 - `BlockInteractAction`: harvestables, campfire fuel, storage open, station inspect.
 - `FeedEntityAction`: favorite food, daily cap, cooldown, friendship state, reject reasons.
 - ~~`MeleeAttackAction`: range, damage source, item-driven damage/cooldown/knockback, durability cost and drops.~~
-- `MeleeAttackAction`: no-kill creature rules and full ActionRuntime result object remain open.
+- ~~`MeleeAttackAction`: no-kill creature rules.~~ `CreatureCombatRules` schuetzt Cozy-/Hint-/Comfort-Creatures in Melee-, Projectile- und Damage-Resolver-Pfaden; full ActionRuntime result object remains open.
 - `ProjectileShootAction`: already first slice; extend to ammo, charge, bows, thrown items, cooldown data.
-- `CraftAction`: inventory/workbench/forge recipe validation, missing station, transaction id.
+- ~~`CraftAction`: inventory/workbench/forge recipe validation, missing station, transaction id.~~
+- `CraftAction`: full ActionRuntime result object, stable reject reason keys, gameplay events and affected-slot diagnostics remain open.
 - `CookAction`: campfire/cooking pot/forge jobs, fuel/heat/time/output claims.
 - `SleepAction`: sleeping mat, night, comfort, shelter, danger, multiplayer readiness.
 - `RepairUpgradeAction`: tool repair, durability, future rare upgrades.
@@ -1219,6 +1223,17 @@ Alle moment-to-moment interactions laufen langfristig ueber denselben serverauto
 - Mineral-Schwerter sind als langlebige Items und Forge-Recipes registriert; der spaetere ActionRuntime-Slice muss diesen Contract serverautoritativ fuer Range, DamageSource, Durability und GameplayEvents verwenden.
 - `MeleeAttackRules` erweitert den Common-Contract um Reichweite, Ziel-Akzeptanz, Tool-/Hand-Fallback und Durability-Kosten; `ServerConnectionHandler` nutzt diesen Contract fuer autoritative Entity-Attacks.
 - Verifikation: `WeaponItemRulesTest`, `MeleeAttackRulesTest`, `ItemRegistryDataTest.mineralSwordItemsAreDurableWeaponsWithCanonicalAliases`, `CraftingRecipeTest.mineralSwordsExtendWorkbenchAndForgeProgression`.
+
+### Erreicht 2026-05-09
+
+- `CraftingRecipe.maxCraftable(...)` liefert den Common-Contract fuer Batch-Crafting bis 64 und beruecksichtigt Ingredients, Output-Kapazitaet und den vollen-Inventar-Edge-Case, bei dem ein groesserer Batch erst Platz freiraeumt.
+- `ServerConnectionHandler` validiert `CraftRequest.count` vor der Mutation explizit und lehnt Partial-Batches ohne Inventarveraenderung ab.
+- Verifikation: `CraftingRecipeTest.maxCraftableRespectsIngredientsCapAndOutputCapacity`, `ServerConnectionHandlerTest.craftRequestRejectsPartialBatchWithoutMutatingInventory`, `HotbarTest.multiCraftUsesMaxCraftCountAndConsumesBatchAtomically`.
+- `EntityDamageRules` zieht Melee-/Ambient-Damage, Invulnerability und Knockback aus Server-/Client-Sonderlogik in einen Common-Resolver.
+- `ServerConnectionHandler` sendet Damage-/Pickup-GameplayEvents aus Attack- und Item-Claim-Pfaden; Entity-Drops wurden fuer Little Boar und Dune Crawler erweitert.
+- Item-Drop-Despawn laeuft serverseitig ueber `DroppedItemEntity.DESPAWN_TICKS` und lokal im Singleplayer ueber den `ClientWorld`-Drop-Lifecycle.
+- `CreatureCombatRules` verhindert, dass Cozy-/Hint-/Comfort-Creatures durch Spieler-Melee oder Spieler-Projektile zu Combat-Farmen werden; attackierbare Resource-/Rare-Danger-Creatures bleiben explizit freigegeben.
+- Verifikation: `EntityDamageRulesTest`, `CreatureCombatRulesTest`, `MeleeAttackRulesTest`, `ProjectileDamageRulesTest`, `EntityDropsTest`, `ServerEntityTrackerTest`, `ServerConnectionHandlerTest`, `ClientWorldEntityTest`.
 
 ### Engine Requirements
 

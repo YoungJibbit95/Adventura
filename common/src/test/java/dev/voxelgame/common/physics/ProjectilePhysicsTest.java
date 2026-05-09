@@ -64,7 +64,7 @@ class ProjectilePhysicsTest {
     @Tag("physicsRegression")
     void nearerBlockImpactWinsOverFartherEntityHit() {
         ProjectileState arrow = arrow(0.0, 80.45, 0.5, 30.0, 0.0, 0.0);
-        EntitySnapshot sheep = new EntitySnapshot(42L, "voxel:cozy_sheep", null, 2.3, 80.0, 0.5, 0.0f, 0.0f, 10);
+        EntitySnapshot crawler = new EntitySnapshot(42L, "voxel:dune_crawler", null, 2.3, 80.0, 0.5, 0.0f, 0.0f, 10);
 
         ProjectileHit hit = ProjectilePhysics.step(
                 arrow,
@@ -73,7 +73,7 @@ class ProjectilePhysicsTest {
                 (fromX, fromY, fromZ, toX, toY, toZ, bounds) -> BlockCollisionShape.FULL
                         .raycastProjectile(fromX, fromY, fromZ, toX, toY, toZ, bounds, 1, 80, 0),
                 (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
-                List.of(sheep)
+                List.of(crawler)
         );
 
         assertEquals(ProjectileHit.Type.BLOCK, hit.type());
@@ -85,7 +85,7 @@ class ProjectilePhysicsTest {
     @Tag("physicsRegression")
     void sweptProjectileHitsEntityBetweenSamples() {
         ProjectileState arrow = arrow(0.0, 80.45, 0.0, 36.0, 0.0, 0.0);
-        EntitySnapshot sheep = new EntitySnapshot(42L, "voxel:cozy_sheep", null, 1.8, 80.0, 0.0, 0.0f, 0.0f, 10);
+        EntitySnapshot crawler = new EntitySnapshot(42L, "voxel:dune_crawler", null, 1.8, 80.0, 0.0, 0.0f, 0.0f, 10);
 
         ProjectileHit hit = ProjectilePhysics.step(
                 arrow,
@@ -93,7 +93,7 @@ class ProjectilePhysicsTest {
                 ProjectilePhysicsConfig.arrow(),
                 (x, y, z, bounds) -> false,
                 (ProjectilePhysics.WaterQuery) (x, y, z) -> false,
-                List.of(sheep)
+                List.of(crawler)
         );
 
         assertEquals(ProjectileHit.Type.ENTITY, hit.type());

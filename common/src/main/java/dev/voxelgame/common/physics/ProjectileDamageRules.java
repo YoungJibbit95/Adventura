@@ -2,6 +2,7 @@ package dev.voxelgame.common.physics;
 
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
+import dev.voxelgame.common.gameplay.CreatureCombatRules;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -27,6 +28,9 @@ public final class ProjectileDamageRules {
         }
         if (target.health() <= 0) {
             return HitDecision.rejected(Reason.DEAD);
+        }
+        if (projectile.ownerPlayerId() != null && CreatureCombatRules.blocksPlayerDamage(target)) {
+            return HitDecision.rejected(Reason.PROTECTED_CREATURE);
         }
         return HitDecision.allow();
     }
@@ -62,7 +66,8 @@ public final class ProjectileDamageRules {
         OWNER,
         PROJECTILE,
         ITEM_DROP,
-        DEAD
+        DEAD,
+        PROTECTED_CREATURE
     }
 
     public enum ProjectileObjectRule {

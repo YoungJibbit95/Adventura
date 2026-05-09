@@ -197,6 +197,10 @@ public final class Hotbar {
         return inventory.removeFromSlot(selectedIndex, 1);
     }
 
+    public synchronized ItemStack selectedStack() {
+        return inventory.slot(selectedIndex);
+    }
+
     public synchronized boolean useSelectedFood(PlayerStats stats) {
         ItemStack stack = inventory.slot(selectedIndex);
         if (stack.isEmpty()) {
@@ -219,6 +223,15 @@ public final class Hotbar {
         return items.requireById(stack.itemId()).isFood();
     }
 
+    public synchronized int selectedFoodHealValue() {
+        ItemStack stack = inventory.slot(selectedIndex);
+        if (stack.isEmpty()) {
+            return 0;
+        }
+        ItemType item = items.requireById(stack.itemId());
+        return item.isFood() ? Math.max(1, item.healValue()) : 0;
+    }
+
     public synchronized float selectedBreakMultiplier(BlockType target) {
         return InteractionRules.breakMultiplier(inventory.slot(selectedIndex), items, target);
     }
@@ -230,6 +243,29 @@ public final class Hotbar {
     public synchronized void damageSelectedTool(BlockType target) {
         int amount = InteractionRules.toolDamage(inventory.slot(selectedIndex), items, target);
         inventory.damageSlot(selectedIndex, amount, items);
+    }
+
+    public synchronized void damageSelectedItem(int amount) {
+        inventory.damageSlot(selectedIndex, amount, items);
+    }
+
+    public synchronized boolean canAddItem(String itemKey, int count) {
+        return items.findByKey(itemKey)
+                .map(item -> inventory.canAdd(item.id(), count, items))
+                .orElse(false);
+    }
+
+    public synchronized boolean addItemFully(String itemKey, int count) {
+        return items.findByKey(itemKey)
+                .map(item -> {
+                    if (!inventory.canAdd(item.id(), count, items)) {
+                        return false;
+                    }
+                    inventory.add(item.id(), count, items);
+                    discoveredItems.add(item.id());
+                    return true;
+                })
+                .orElse(false);
     }
 
     public synchronized boolean addItem(String itemKey, int count) {
@@ -260,12 +296,28 @@ public final class Hotbar {
         return crafted;
     }
 
+    public synchronized boolean craft(CraftingRecipe recipe, CraftingStationType stationType, int count) {
+        boolean crafted = recipe.craft(inventory, items, stationType, count);
+        if (crafted) {
+            discoveredItems.add(recipe.result().itemId());
+        }
+        return crafted;
+    }
+
     public synchronized boolean canCraft(CraftingRecipe recipe) {
         return recipe.canCraft(inventory, items);
     }
 
     public synchronized boolean canCraft(CraftingRecipe recipe, CraftingStationType stationType) {
         return recipe.canCraft(inventory, items, stationType);
+    }
+
+    public synchronized boolean canCraft(CraftingRecipe recipe, CraftingStationType stationType, int count) {
+        return recipe.canCraft(inventory, items, stationType, count);
+    }
+
+    public synchronized int maxCraftCount(CraftingRecipe recipe, CraftingStationType stationType, int cap) {
+        return recipe.maxCraftable(inventory, items, stationType, cap);
     }
 
     public synchronized Optional<List<Integer>> inputSlotsFor(CraftingRecipe recipe) {

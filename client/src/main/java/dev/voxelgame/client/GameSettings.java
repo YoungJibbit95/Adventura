@@ -41,6 +41,11 @@ public final class GameSettings {
     private int fieldOfViewDegrees = 72;
     private int mouseSensitivityPercent = 100;
     private int uiScalePercent = 100;
+    private int masterVolumePercent = 100;
+    private int musicVolumePercent = 80;
+    private int ambienceVolumePercent = 85;
+    private int sfxVolumePercent = 100;
+    private int uiVolumePercent = 90;
     private boolean fogEnabled = true;
     private boolean ambientOcclusionEnabled = true;
     private boolean softShadowsEnabled = true;
@@ -148,6 +153,46 @@ public final class GameSettings {
 
     public int uiScalePercent() {
         return uiScalePercent;
+    }
+
+    public int masterVolumePercent() {
+        return masterVolumePercent;
+    }
+
+    public int musicVolumePercent() {
+        return musicVolumePercent;
+    }
+
+    public int ambienceVolumePercent() {
+        return ambienceVolumePercent;
+    }
+
+    public int sfxVolumePercent() {
+        return sfxVolumePercent;
+    }
+
+    public int uiVolumePercent() {
+        return uiVolumePercent;
+    }
+
+    public double masterVolume() {
+        return volumePercentToGain(masterVolumePercent);
+    }
+
+    public double musicVolume() {
+        return volumePercentToGain(musicVolumePercent);
+    }
+
+    public double ambienceVolume() {
+        return volumePercentToGain(ambienceVolumePercent);
+    }
+
+    public double sfxVolume() {
+        return volumePercentToGain(sfxVolumePercent);
+    }
+
+    public double uiVolume() {
+        return volumePercentToGain(uiVolumePercent);
     }
 
     public boolean fogEnabled() {
@@ -291,6 +336,26 @@ public final class GameSettings {
         uiScalePercent = clamp(value, 80, 150);
     }
 
+    public void setMasterVolumePercent(int value) {
+        masterVolumePercent = clamp(value, 0, 100);
+    }
+
+    public void setMusicVolumePercent(int value) {
+        musicVolumePercent = clamp(value, 0, 100);
+    }
+
+    public void setAmbienceVolumePercent(int value) {
+        ambienceVolumePercent = clamp(value, 0, 100);
+    }
+
+    public void setSfxVolumePercent(int value) {
+        sfxVolumePercent = clamp(value, 0, 100);
+    }
+
+    public void setUiVolumePercent(int value) {
+        uiVolumePercent = clamp(value, 0, 100);
+    }
+
     public void applyPreset(RenderPreset preset) {
         renderDistanceChunks = clamp(preset.renderDistanceChunks(), 2, 18);
         previewRadiusChunks = clamp(preset.previewRadiusChunks(), 1, 8);
@@ -351,6 +416,26 @@ public final class GameSettings {
 
     public void adjustUiScale(int delta) {
         setUiScalePercent(uiScalePercent + delta);
+    }
+
+    public void adjustMasterVolume(int delta) {
+        setMasterVolumePercent(masterVolumePercent + delta);
+    }
+
+    public void adjustMusicVolume(int delta) {
+        setMusicVolumePercent(musicVolumePercent + delta);
+    }
+
+    public void adjustAmbienceVolume(int delta) {
+        setAmbienceVolumePercent(ambienceVolumePercent + delta);
+    }
+
+    public void adjustSfxVolume(int delta) {
+        setSfxVolumePercent(sfxVolumePercent + delta);
+    }
+
+    public void adjustUiVolume(int delta) {
+        setUiVolumePercent(uiVolumePercent + delta);
     }
 
     public void toggleFog() {
@@ -471,6 +556,10 @@ public final class GameSettings {
             factor = 0.80;
         }
         return clamp(baseMilliseconds * factor, 0.5, baseMilliseconds);
+    }
+
+    private static double volumePercentToGain(int percent) {
+        return clamp(percent, 0, 100) / 100.0;
     }
 
     private static int chunkGenerationChunksForPreset(RenderPreset preset) {

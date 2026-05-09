@@ -247,6 +247,22 @@ class ServerEntityTrackerTest {
     }
 
     @Test
+    void itemDropsDespawnAfterLifecycleBudget() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        DroppedItemEntity drop = tracker.spawnItemDrop("voxel:moss_clump", new ItemStack((short) 68, 1), 4.5, 80.0, 4.5, 0L);
+
+        tracker.tickAmbient(DroppedItemEntity.DESPAWN_TICKS - 1L);
+        assertTrue(tracker.snapshot(drop.entityId()).isPresent());
+        assertEquals(1, tracker.itemDropCount());
+
+        tracker.tickAmbient(DroppedItemEntity.DESPAWN_TICKS);
+
+        assertTrue(tracker.snapshot(drop.entityId()).isEmpty());
+        assertEquals(0, tracker.itemDropCount());
+        assertEquals(1, tracker.lastAmbientTickStats().expiredItemDrops());
+    }
+
+    @Test
     void itemDropClaimRemovesDropOnlyOnce() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         DroppedItemEntity drop = tracker.spawnItemDrop("voxel:moss_clump", new ItemStack((short) 68, 1), 4.5, 80.0, 4.5, 0L);
@@ -290,7 +306,7 @@ class ServerEntityTrackerTest {
         UUID playerId = UUID.randomUUID();
         tracker.registerPlayer(playerId);
         tracker.updatePlayer(playerId, 3.5, 80.0, 4.5, 0.0f, 0.0f);
-        EntitySnapshot ambient = new EntitySnapshot(750L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        EntitySnapshot ambient = new EntitySnapshot(750L, "voxel:moss_snail", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
         tracker.addAmbient(ambient);
 
         DamageResult result = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.0);
@@ -306,7 +322,7 @@ class ServerEntityTrackerTest {
     void damageAmbientRejectsInvulnerabilityWindow() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         UUID playerId = UUID.randomUUID();
-        EntitySnapshot ambient = new EntitySnapshot(751L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        EntitySnapshot ambient = new EntitySnapshot(751L, "voxel:moss_snail", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
         tracker.addAmbient(ambient);
 
         DamageResult first = tracker.damageAmbient(ambient.entityId(), 3, DamageSource.playerMelee(playerId), 1.0);
@@ -318,6 +334,20 @@ class ServerEntityTrackerTest {
         assertEquals(DamageResult.RejectionReason.INVULNERABLE, second.rejectionReason());
         assertTrue(third.accepted());
         assertEquals(4, tracker.snapshot(ambient.entityId()).orElseThrow().health());
+    }
+
+    @Test
+    void damageAmbientRejectsPlayerDamageAgainstProtectedCozyCreatures() {
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        UUID playerId = UUID.randomUUID();
+        EntitySnapshot sheep = new EntitySnapshot(753L, "voxel:cozy_sheep", null, 4.5, 80.0, 4.5, 0.0f, 0.0f, 10);
+        tracker.addAmbient(sheep);
+
+        DamageResult result = tracker.damageAmbient(sheep.entityId(), 3, DamageSource.playerMelee(playerId), 1.0);
+
+        assertFalse(result.accepted());
+        assertEquals(DamageResult.RejectionReason.PROTECTED_CREATURE, result.rejectionReason());
+        assertEquals(10, tracker.snapshot(sheep.entityId()).orElseThrow().health());
     }
 
     @Test
@@ -339,7 +369,7 @@ class ServerEntityTrackerTest {
     void arrowProjectilesUseSnapshotsAndDamageAmbientHits() {
         ServerEntityTracker tracker = new ServerEntityTracker();
         UUID owner = UUID.randomUUID();
-        EntitySnapshot target = new EntitySnapshot(800L, "voxel:cozy_sheep", null, 4.0, 80.0, 0.0, 0.0f, 0.0f, 10);
+        EntitySnapshot target = new EntitySnapshot(800L, "voxel:dune_crawler", null, 4.0, 80.0, 0.0, 0.0f, 0.0f, 10);
         tracker.addAmbient(target);
         ProjectileState arrow = tracker.spawnArrowProjectile(owner, 0.0, 80.45, 0.0, 1.0, 0.0, 0.0);
 
@@ -407,15 +437,15 @@ class ServerEntityTrackerTest {
         UUID playerId = UUID.randomUUID();
         tracker.registerPlayer(playerId);
         tracker.updatePlayer(playerId, 0.0, 81.62, 0.0, 0.0f, 0.0f);
-        EntitySnapshot sheep = new EntitySnapshot(900L, "voxel:cozy_sheep", null, 1.0, 80.0, 1.0, 0.0f, 0.0f, 10);
-        tracker.addAmbient(sheep);
+        EntitySnapshot snail = new EntitySnapshot(900L, "voxel:moss_snail", null, 1.0, 80.0, 1.0, 0.0f, 0.0f, 10);
+        tracker.addAmbient(snail);
 
-        tracker.damageAmbient(sheep.entityId(), 1, playerId, 0.5);
+        tracker.damageAmbient(snail.entityId(), 1, playerId, 0.5);
         tracker.tickAmbient(1L, (current, candidate) -> candidate.x() <= 1.15);
 
-        EntitySnapshot slid = tracker.snapshot(sheep.entityId()).orElseThrow();
+        EntitySnapshot slid = tracker.snapshot(snail.entityId()).orElseThrow();
         assertEquals(1.0, slid.x(), 0.2);
-        assertTrue(slid.z() > sheep.z());
+        assertTrue(slid.z() > snail.z());
         assertEquals(0.0, slid.velocityX(), 0.001);
         assertTrue(slid.velocityZ() > 0.0);
     }

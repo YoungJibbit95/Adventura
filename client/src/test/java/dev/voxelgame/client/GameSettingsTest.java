@@ -24,6 +24,11 @@ class GameSettingsTest {
         settings.setMeshBuildBudgetMilliseconds(99.0);
         settings.setGpuUploadBudgetMilliseconds(99.0);
         settings.setParticleQuality(99.0);
+        settings.setMasterVolumePercent(999);
+        settings.setMusicVolumePercent(999);
+        settings.setAmbienceVolumePercent(999);
+        settings.setSfxVolumePercent(999);
+        settings.setUiVolumePercent(999);
 
         assertEquals(100, settings.fieldOfViewDegrees());
         assertEquals(40, settings.mouseSensitivityPercent());
@@ -36,18 +41,34 @@ class GameSettingsTest {
         assertEquals(16.0, settings.meshBuildBudgetMilliseconds(), 0.001);
         assertEquals(16.0, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(1.0, settings.particleQuality(), 0.001);
+        assertEquals(100, settings.masterVolumePercent());
+        assertEquals(100, settings.musicVolumePercent());
+        assertEquals(100, settings.ambienceVolumePercent());
+        assertEquals(100, settings.sfxVolumePercent());
+        assertEquals(100, settings.uiVolumePercent());
 
         settings.adjustUiScale(-1000);
         settings.adjustMeshBuildBudgetMilliseconds(-1000.0);
         settings.adjustChunkGenerationBudgetMilliseconds(-1000.0);
         settings.adjustGpuUploadBudgetMilliseconds(-1000.0);
         settings.adjustParticleQuality(-1000.0);
+        settings.adjustMasterVolume(-1000);
+        settings.adjustMusicVolume(-1000);
+        settings.adjustAmbienceVolume(-1000);
+        settings.adjustSfxVolume(-1000);
+        settings.adjustUiVolume(-1000);
 
         assertEquals(80, settings.uiScalePercent());
         assertEquals(0.5, settings.meshBuildBudgetMilliseconds(), 0.001);
         assertEquals(0.5, settings.chunkGenerationBudgetMilliseconds(), 0.001);
         assertEquals(0.5, settings.gpuUploadBudgetMilliseconds(), 0.001);
         assertEquals(0.25, settings.particleQuality(), 0.001);
+        assertEquals(0, settings.masterVolumePercent());
+        assertEquals(0, settings.musicVolumePercent());
+        assertEquals(0, settings.ambienceVolumePercent());
+        assertEquals(0, settings.sfxVolumePercent());
+        assertEquals(0, settings.uiVolumePercent());
+        assertEquals(0.0, settings.masterVolume(), 0.001);
     }
 
     @Test

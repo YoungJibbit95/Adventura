@@ -27,6 +27,24 @@ class EntityDropsTest {
     }
 
     @Test
+    void littleBoarDropsLeatherAndOptionalForageDeterministically() {
+        List<EntityDrops.Drop> drops = EntityDrops.dropsFor("voxel:little_boar", 11L);
+
+        assertEquals("voxel:leather_strip", drops.getFirst().itemKey());
+        assertEquals(1, drops.getFirst().count());
+        assertEquals(drops, EntityDrops.dropsFor("voxel:little_boar", 11L));
+    }
+
+    @Test
+    void duneCrawlerDropsLeatherAndOptionalOreDeterministically() {
+        List<EntityDrops.Drop> drops = EntityDrops.dropsFor("voxel:dune_crawler", 17L);
+
+        assertEquals("voxel:leather_strip", drops.getFirst().itemKey());
+        assertEquals(1, drops.getFirst().count());
+        assertEquals(drops, EntityDrops.dropsFor("voxel:dune_crawler", 17L));
+    }
+
+    @Test
     void unrelatedAmbientEntitiesDoNotDropItemsYet() {
         assertEquals(List.of(), EntityDrops.dropsFor("voxel:forest_bunny", 3L));
     }

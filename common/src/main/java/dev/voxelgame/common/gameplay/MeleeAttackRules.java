@@ -67,6 +67,9 @@ public final class MeleeAttackRules {
         if (attackerPlayerId != null && attackerPlayerId.equals(target.ownerPlayerId())) {
             return TargetDecision.rejected(RejectionReason.OWNED_OR_SELF);
         }
+        if (CreatureCombatRules.blocksPlayerDamage(target)) {
+            return TargetDecision.rejected(RejectionReason.PROTECTED_CREATURE);
+        }
         return TargetDecision.allow();
     }
 
@@ -75,7 +78,8 @@ public final class MeleeAttackRules {
         DEAD,
         PROJECTILE,
         ITEM_DROP,
-        OWNED_OR_SELF
+        OWNED_OR_SELF,
+        PROTECTED_CREATURE
     }
 
     public record AttackProfile(

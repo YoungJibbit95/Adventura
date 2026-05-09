@@ -2,7 +2,9 @@ package dev.voxelgame.common.item;
 
 import dev.voxelgame.common.registry.Registry;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public record CraftingRecipe(
@@ -68,6 +70,31 @@ public record CraftingRecipe(
             }
         }
         return true;
+    }
+
+    public int maxCraftable(Inventory inventory, Registry<ItemType> items, CraftingStationType availableStation, int maxCount) {
+        Objects.requireNonNull(inventory, "inventory");
+        Objects.requireNonNull(items, "items");
+        if (maxCount < 1 || !isAvailableAt(availableStation)) {
+            return 0;
+        }
+        int upperBound = maxCount;
+        Map<Short, Integer> requiredByItem = new HashMap<>();
+        for (Ingredient ingredient : ingredients) {
+            requiredByItem.merge(ingredient.itemId(), ingredient.count(), Integer::sum);
+        }
+        for (Map.Entry<Short, Integer> required : requiredByItem.entrySet()) {
+            upperBound = Math.min(upperBound, inventory.count(required.getKey()) / required.getValue());
+        }
+        if (upperBound <= 0) {
+            return 0;
+        }
+        for (int count = upperBound; count >= 1; count--) {
+            if (canCraft(inventory, items, availableStation, count)) {
+                return count;
+            }
+        }
+        return 0;
     }
 
     public boolean craft(Inventory inventory, Registry<ItemType> items) {

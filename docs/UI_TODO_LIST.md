@@ -83,25 +83,29 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 ## Offen
 
-- Recipe Book verbessern.
+- ~~Recipe Book verbessern.~~
+  Erledigt: 2026-05-05, Inventory-Crafting rendert Rezepte jetzt als Hoehen-bewusste Liste mit Suchfeld, Kategoriechips, Statuszeile und separatem Detailpanel statt als 3x3-Minecraft-Gitter.
 - Unlock-Historie anzeigen.
 - locked recipes klar erklären.
 - Rezept-Suche weiter verbessern.
 - Filter speichern.
-- fehlende Station prominent anzeigen.
-- fehlende Zutaten gruppiert anzeigen.
-- craft count controls:
-  - craft 1
-  - craft 5
-  - craft max
+- ~~fehlende Station prominent anzeigen.~~
+  Erledigt: 2026-05-05, Rezeptliste und Detailpanel zeigen Station/Status direkt pro Rezept; fehlende Stationen triggern weiter die serverkompatible Failure-Message.
+- ~~fehlende Zutaten gruppiert anzeigen.~~
+  Erledigt: 2026-05-05, Rezeptdetails zeigen Zutaten als vertikale Liste mit Icon, Name und owned/required Count.
+- ~~craft count controls:~~
+  Erledigt: 2026-05-09, Crafting-Detailpanel bietet Craft 1, x5 und Max; Max nutzt Common-`CraftingRecipe.maxCraftable(...)`, sendet `CraftRequest.count` online und deaktiviert Batch-Crafting fuer Timed Station Jobs.
+  - ~~craft 1~~
+  - ~~craft 5~~
+  - ~~craft max~~
 - Rezeptdetails anzeigen:
-  - Name
-  - Output
-  - Zutaten
-  - Station
-  - Kategorie
+  - ~~Name~~
+  - ~~Output~~
+  - ~~Zutaten~~
+  - ~~Station~~
+  - ~~Kategorie~~
   - Unlock Source
-  - Crafting Time
+  - ~~Crafting Time~~
   - Beschreibung
 
 ## Akzeptanz
@@ -285,15 +289,15 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 - ~~Bloom/Glow~~
 - ~~VSync~~
 - ~~UI Scale~~
-- Controls Overview
+- ~~Controls Overview~~
 
 ## Neu
 
-- Master Volume
-- Music Volume
-- Ambience Volume
-- SFX Volume
-- UI Volume
+- ~~Master Volume~~
+- ~~Music Volume~~
+- ~~Ambience Volume~~
+- ~~SFX Volume~~
+- ~~UI Volume~~
 - ~~Particle Quality~~
 - ~~Graphics Presets:~~
   - ~~Low~~
@@ -313,14 +317,21 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 ## Akzeptanz
 
-- Settings sind nicht überladen.
-- ~~wichtige Grafikoptionen helfen Low-End-PCs.~~ Settings zeigen jetzt Chunk-/Mesh-/GPU-Budgets, Render Debug, AO, Soft Shadows, Fog, Bloom, Water, Simple Water, Greedy Meshing, Particles und Presets kompakt in zwei Spalten.
+- ~~Settings sind nicht überladen.~~ Settings nutzen jetzt eine Kategorienleiste fuer Graphics, Performance, Interface, Audio und Debug statt zwei ueberladener Mischspalten.
+- ~~wichtige Grafikoptionen helfen Low-End-PCs.~~ Settings zeigen jetzt Chunk-/Mesh-/GPU-Budgets, Render Debug, AO, Soft Shadows, Fog, Bloom, Water, Simple Water, Greedy Meshing, Particles und Presets kompakt und thematisch gruppiert.
 - Keybinds sind auffindbar.
 
 ### Erreicht 2026-05-05
 
 - Settings-Layout verdichtet und um Performance-/Grafiksteuerung fuer Chunkgen-Zeit, Mesh-Zeit, GPU-Upload, Render-Debug, Wasser, HUD/Debug und Greedy Meshing erweitert.
 - Verifikation: `GameClientUiLayoutTest.settingsLayoutKeepsPresetControlsAndBackButtonSeparated`.
+
+### Erreicht 2026-05-09
+
+- Settings-Screen in Kategorien fuer Graphics, Performance, Interface, Audio und Debug umgebaut; lange Mischspalten wurden durch eine moderne Pixel-Panel-Seitenleiste mit kompakten Detailgruppen ersetzt.
+- Audio-Settings fuer Master, Music, Ambience, SFX und UI sind im `GameSettings`-Modell und im `GameAudio`-Mix angebunden; stumme Kanaele unterdruecken neue Cue-Ausgabe.
+- Interface-Settings zeigen HUD-Modus, Chat, Debug, UI-Scale, Mausgeschwindigkeit und Controls-Uebersicht in einem eigenen Bereich.
+- Verifikation: `GameClientUiLayoutTest`, `GameSettingsTest`, `GameAudioTest`.
 
 ---
 
@@ -330,10 +341,12 @@ Die UI soll cozy, klar, pixel-art-kompatibel und mausfreundlich werden. Sie soll
 
 ### Offen
 
-- Singleplayer.
-- Join Server.
-- Settings.
-- Quit.
+- ~~Singleplayer.~~
+- ~~Join Server.~~
+- ~~Settings.~~
+- ~~Quit.~~
+  Erledigt: 2026-05-05, das Main Menu nutzt jetzt ein responsives Modern-Pixel-Panel mit Titel, Statuszeile, Icon-Buttons und einer eigenen stimmungsvollen Adventura-Hintergrundszene.
+  Verifikation: `GameClientUiLayoutTest.mainMenuLayoutKeepsButtonsAndStatusInsideViewport`, `./gradlew.bat :client:test --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=main_menu_recode_client_1`.
 - last world shortcut optional.
 - seed field klar.
 - connection error state.
@@ -496,6 +509,7 @@ Dieser Block ergänzt die vorhandenen UI-Featurelisten um die Architektur, die n
 ### Erreicht 2026-05-05
 
 - ~~Settings, Inventory und Crafting auf einen gemeinsamen Modern-Pixel-Look anheben.~~ Settings-Sektionen, Presets, Toggles, Inventory-Panels/Slots, Crafting-Filter, Suche und Rezeptzeilen verwenden jetzt dieselben runden Fallback-Primitives mit Schatten, Inset-Layern und Pixel-Highlights.
+- ~~Inventory/Crafting-Overlap bei kleinen Viewports und hoher UI-Scale beheben.~~ CraftingScreenLayout trennt Recipe-Liste/Detailpanel und Inventory-Panel mit kompakter Inventory-Skalierung; `GameClientUiLayoutTest` prueft die Nicht-Ueberlappung.
 - Verifikation: `./gradlew.bat :client:test --tests dev.voxelgame.client.GameClientUiLayoutTest --tests dev.voxelgame.client.GameSettingsTest --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=platform_ui_2`; `./gradlew.bat buildGame --no-daemon --max-workers=1 --console=plain -PadventuraTestRunId=platform_ui_build_1`.
 
 ### Akzeptanz
@@ -693,10 +707,11 @@ Die UI hat bereits Inventory/Crafting/Journal/Settings/Storage-Ansaetze, Sprite-
 ### Aufgaben
 
 - Main menu:
-  - singleplayer worlds.
-  - join server.
-  - settings.
-  - quit.
+  - ~~singleplayer worlds.~~
+  - ~~join server.~~
+  - ~~settings.~~
+  - ~~quit.~~
+  - Erledigt: 2026-05-05, Main-Menu-Entry/Server/Settings/Quit sind im neuen responsive Main Menu sichtbar, klickbar und layout-getestet.
 - Pause menu:
   - resume.
   - settings.

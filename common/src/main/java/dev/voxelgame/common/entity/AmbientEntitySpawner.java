@@ -76,10 +76,14 @@ public final class AmbientEntitySpawner {
 
     private static void addSpawnAnchors(long seed, OverworldGenerator generator, List<EntitySnapshot> snapshots) {
         addAnchor(seed, generator, snapshots, 12, 10, "voxel:cozy_sheep", 10);
+        addAnchor(seed, generator, snapshots, 9, 18, "voxel:cozy_sheep", 10);
         addAnchor(seed, generator, snapshots, -7, 13, "voxel:forest_bunny", 6);
+        addAnchor(seed, generator, snapshots, -11, 5, "voxel:forest_bunny", 6);
         addAnchor(seed, generator, snapshots, 18, -5, "voxel:little_boar", 12);
         addAnchor(seed, generator, snapshots, 4, 23, "voxel:moss_snail", 6);
+        addAnchor(seed, generator, snapshots, -4, 20, "voxel:moss_snail", 6);
         addAnchor(seed, generator, snapshots, 16, 17, "voxel:firefly_swarm", 4);
+        addAnchor(seed, generator, snapshots, -12, 18, "voxel:firefly_swarm", 4);
     }
 
     private static void addAnchor(long seed, OverworldGenerator generator, List<EntitySnapshot> snapshots, int x, int z, String type, int health) {

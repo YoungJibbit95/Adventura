@@ -2,12 +2,14 @@ package dev.voxelgame.client.world;
 
 import dev.voxelgame.client.render.ChunkMesh;
 import dev.voxelgame.common.entity.EntitySnapshot;
+import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClientWorldEntityTest {
     @Test
@@ -148,5 +150,54 @@ class ClientWorldEntityTest {
 
         assertEquals(1, visible.size());
         assertEquals(2L, visible.getFirst().entityId());
+    }
+
+    @Test
+    void localEntityDamageAppliesKnockbackAndHealth() {
+        ClientWorld world = new ClientWorld(1L);
+        world.applyEntitySnapshots(List.of(
+                new EntitySnapshot(9L, "voxel:moss_snail", null, 3.0, 80.0, 0.0, 0.0f, 0.0f, 6)
+        ), 1.0);
+
+        ClientWorld.LocalEntityDamageResult result = world.damageLocalEntity(
+                9L,
+                2,
+                0.5,
+                new Vector3f(0.0f, 80.0f, 0.0f),
+                2.0
+        );
+
+        assertTrue(result.accepted());
+        assertEquals(4, result.remainingHealth());
+        EntitySnapshot updated = world.visibleEntities(2.3).getFirst();
+        assertEquals(4, updated.health());
+        assertTrue(updated.velocityX() > 0.0);
+        assertEquals(EntitySnapshot.STATE_FLEE, updated.stateKey());
+    }
+
+    @Test
+    void localItemDropsBecomePickupClaimsAfterDelay() {
+        ClientWorld world = new ClientWorld(1L);
+
+        world.spawnLocalItemDrop("voxel:moss_clump", 2, 4.0, 80.0, 4.0, 10.0);
+
+        assertEquals(0, world.localItemDropsNear(new Vector3f(4.0f, 80.0f, 4.0f), 1.5, 10.1).size());
+        List<ClientWorld.LocalItemPickup> ready = world.localItemDropsNear(new Vector3f(4.0f, 80.0f, 4.0f), 1.5, 10.5);
+        assertEquals(1, ready.size());
+        assertEquals("voxel:moss_clump", ready.getFirst().itemKey());
+        assertEquals(2, ready.getFirst().count());
+        assertTrue(world.claimLocalItemDrop(ready.getFirst().entityId()).isPresent());
+        assertEquals(0, world.visibleEntities(10.6).size());
+    }
+
+    @Test
+    void localItemDropsExpireAfterLifecycleBudget() {
+        ClientWorld world = new ClientWorld(1L);
+
+        world.spawnLocalItemDrop("voxel:moss_clump", 1, 4.0, 80.0, 4.0, 10.0);
+        world.tickLocalEntities(new Vector3f(4.0f, 80.0f, 4.0f), 610.2);
+
+        assertEquals(0, world.localItemDropsNear(new Vector3f(4.0f, 80.0f, 4.0f), 2.0, 610.2).size());
+        assertEquals(0, world.visibleEntities(610.2).size());
     }
 }

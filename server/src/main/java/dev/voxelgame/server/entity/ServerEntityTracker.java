@@ -3,6 +3,7 @@ package dev.voxelgame.server.entity;
 import dev.voxelgame.common.entity.AmbientEntitySpawner;
 import dev.voxelgame.common.entity.DamageResult;
 import dev.voxelgame.common.entity.DamageSource;
+import dev.voxelgame.common.entity.EntityDamageRules;
 import dev.voxelgame.common.entity.EntityBounds;
 import dev.voxelgame.common.entity.EntitySnapshot;
 import dev.voxelgame.common.entity.ItemDropType;
@@ -428,50 +429,27 @@ public final class ServerEntityTracker {
 
     public DamageResult damageAmbient(long entityId, int damageAmount, DamageSource source, double nowSeconds, double knockbackStrength) {
         Objects.requireNonNull(source, "source");
-        if (damageAmount <= 0) {
-            return DamageResult.rejected(entityId, DamageResult.RejectionReason.INVALID_AMOUNT);
-        }
         EntitySnapshot current = ambientEntities.get(entityId);
-        if (current == null) {
-            return DamageResult.rejected(entityId, DamageResult.RejectionReason.UNKNOWN_TARGET);
-        }
         boolean enforceCooldown = Double.isFinite(nowSeconds);
-        if (enforceCooldown && nowSeconds < nextAmbientDamageAllowedAt.getOrDefault(entityId, 0.0)) {
-            return DamageResult.rejected(entityId, DamageResult.RejectionReason.INVULNERABLE);
-        }
-        int newHealth = Math.max(0, current.health() - damageAmount);
-        int appliedDamage = current.health() - newHealth;
         EntitySnapshot attacker = source.attackerPlayerId() == null ? null : players.get(source.attackerPlayerId());
-
-        double knockbackX = 0.0;
-        double knockbackZ = 0.0;
-        if (attacker != null) {
-            double dx = current.x() - attacker.x();
-            double dz = current.z() - attacker.z();
-            double distance = Math.sqrt(dx * dx + dz * dz);
-            if (distance > 0.0001) {
-                knockbackX = (dx / distance) * knockbackStrength;
-                knockbackZ = (dz / distance) * knockbackStrength;
-            }
+        EntityDamageRules.DamageResolution resolution = EntityDamageRules.resolveAmbientDamage(
+                entityId,
+                current,
+                damageAmount,
+                source,
+                nowSeconds,
+                nextAmbientDamageAllowedAt.getOrDefault(entityId, 0.0),
+                AMBIENT_DAMAGE_INVULNERABILITY_SECONDS,
+                knockbackStrength,
+                attacker == null ? null : EntityDamageRules.originFrom(attacker)
+        );
+        DamageResult result = resolution.result();
+        if (!result.accepted()) {
+            return result;
         }
 
-        EntitySnapshot updated = new EntitySnapshot(
-                current.entityId(),
-                current.typeKey(),
-                current.ownerPlayerId(),
-                current.x(),
-                current.y(),
-                current.z(),
-                current.yaw(),
-                current.pitch(),
-                newHealth,
-                newHealth <= 0 ? EntitySnapshot.STATE_IDLE : EntitySnapshot.STATE_FLEE,
-                knockbackX,
-                0.1,
-                knockbackZ
-        );
-
-        if (newHealth <= 0) {
+        EntitySnapshot updated = result.updatedSnapshot();
+        if (result.killed()) {
             ambientEntities.remove(entityId);
             ambientAnchors.remove(entityId);
             followTargets.remove(entityId);
@@ -479,11 +457,11 @@ public final class ServerEntityTracker {
         } else {
             ambientEntities.put(entityId, updated);
             if (enforceCooldown) {
-                nextAmbientDamageAllowedAt.put(entityId, nowSeconds + AMBIENT_DAMAGE_INVULNERABILITY_SECONDS);
+                nextAmbientDamageAllowedAt.put(entityId, resolution.nextDamageAllowedAt());
             }
         }
 
-        return DamageResult.accepted(entityId, appliedDamage, newHealth <= 0, updated, knockbackX, 0.1, knockbackZ);
+        return result;
     }
 
     public List<EntitySnapshot> tickAmbient(long tick) {
@@ -500,17 +478,18 @@ public final class ServerEntityTracker {
         Objects.requireNonNull(fluidQuery, "fluidQuery");
         long startNanos = System.nanoTime();
         if (ambientEntities.isEmpty()) {
-            List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick, fluidQuery);
+            ItemDropTickResult itemDropTick = tickItemDrops(tick, fluidQuery);
             lastAmbientTickStats = new AmbientTickStats(
                     0,
                     0,
                     0,
                     0,
-                    itemDropUpdates.size(),
-                    itemDropUpdates.size(),
+                    itemDropTick.updated().size(),
+                    itemDropTick.expired(),
+                    itemDropTick.updated().size(),
                     System.nanoTime() - startNanos
             );
-            return itemDropUpdates;
+            return itemDropTick.updated();
         }
         List<EntitySnapshot> updated = new ArrayList<>(ambientEntities.size() + itemDrops.size());
         int activeAmbient = 0;
@@ -551,14 +530,15 @@ public final class ServerEntityTracker {
             ambientEntities.put(entry.getKey(), moved);
             updated.add(moved);
         }
-        List<EntitySnapshot> itemDropUpdates = tickItemDrops(tick, fluidQuery);
-        updated.addAll(itemDropUpdates);
+        ItemDropTickResult itemDropTick = tickItemDrops(tick, fluidQuery);
+        updated.addAll(itemDropTick.updated());
         lastAmbientTickStats = new AmbientTickStats(
                 ambientEntities.size(),
                 activeAmbient,
                 parkedAmbient,
                 blockedMoves,
-                itemDropUpdates.size(),
+                itemDropTick.updated().size(),
+                itemDropTick.expired(),
                 updated.size(),
                 System.nanoTime() - startNanos
         );
@@ -658,17 +638,23 @@ public final class ServerEntityTracker {
         ambientAnchors.put(snapshot.entityId(), snapshot);
     }
 
-    private List<EntitySnapshot> tickItemDrops(long tick) {
+    private ItemDropTickResult tickItemDrops(long tick) {
         return tickItemDrops(tick, (x, y, z) -> FluidPhysics.air());
     }
 
-    private List<EntitySnapshot> tickItemDrops(long tick, FluidPhysics.FluidQuery fluidQuery) {
+    private ItemDropTickResult tickItemDrops(long tick, FluidPhysics.FluidQuery fluidQuery) {
         if (itemDrops.isEmpty()) {
-            return List.of();
+            return ItemDropTickResult.EMPTY;
         }
+        int expired = 0;
         for (Long entityId : itemDropIds()) {
             DroppedItemEntity drop = itemDrops.get(entityId);
             if (drop != null) {
+                if (drop.expired(tick)) {
+                    itemDrops.remove(entityId);
+                    expired++;
+                    continue;
+                }
                 itemDrops.put(entityId, drop.tick(tick, fluidQuery));
             }
         }
@@ -682,7 +668,7 @@ public final class ServerEntityTracker {
                 updated.add(drop.snapshot());
             }
         }
-        return updated;
+        return new ItemDropTickResult(List.copyOf(updated), expired);
     }
 
     private void separateItemDrops() {
@@ -765,6 +751,10 @@ public final class ServerEntityTracker {
         return itemDrops.keySet().stream()
                 .sorted()
                 .toList();
+    }
+
+    private record ItemDropTickResult(List<EntitySnapshot> updated, int expired) {
+        private static final ItemDropTickResult EMPTY = new ItemDropTickResult(List.of(), 0);
     }
 
     private static double launchVelocity(String itemKey, int axis) {
@@ -978,10 +968,11 @@ public final class ServerEntityTracker {
             int parkedAmbient,
             int blockedAmbientMoves,
             int itemDropUpdates,
+            int expiredItemDrops,
             int emittedSnapshots,
             long durationNanos
     ) {
-        public static final AmbientTickStats EMPTY = new AmbientTickStats(0, 0, 0, 0, 0, 0, 0L);
+        public static final AmbientTickStats EMPTY = new AmbientTickStats(0, 0, 0, 0, 0, 0, 0, 0L);
 
         public AmbientTickStats {
             ambientTotal = Math.max(0, ambientTotal);
@@ -989,6 +980,7 @@ public final class ServerEntityTracker {
             parkedAmbient = Math.max(0, parkedAmbient);
             blockedAmbientMoves = Math.max(0, blockedAmbientMoves);
             itemDropUpdates = Math.max(0, itemDropUpdates);
+            expiredItemDrops = Math.max(0, expiredItemDrops);
             emittedSnapshots = Math.max(0, emittedSnapshots);
             durationNanos = Math.max(0L, durationNanos);
         }

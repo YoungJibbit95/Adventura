@@ -89,6 +89,12 @@ Spieler soll zuverlässig sicher starten.
 
 `OverworldGenerator.safeSpawnPoint()` scannt deterministisch Spawn-Kandidaten um den Startbereich, bevorzugt Cozy Meadow, Flower Fields und Lakeside, erzwingt soliden Support, freie Headroom-/Player-Bounds, keinen Wasserstart, keine blockierende Decoration/Structure-Spalte und Nähe zu Starter-Ressourcen. Der Spawn-Punkt wird als Common-Datenprodukt genutzt; `ClientWorld.spawnPosition()` hängt daran. Smoke-Seed-Tests validieren sicheren Spawn, Starter-Ressourcen-Nähe und keine gefährliche Ambient-Entity direkt am Spawn.
 
+### Status 2026-05-05
+
+- ~~Spawn wirkt leer und zu wenig heimelig.~~ Starter-Chunk bekommt zusaetzliche sichtbare Comfort-/Deko-Anker wie Flower Pot, Lantern, Woven Rug und Garden Fence; `AmbientEntitySpawner` setzt mehr garantierte Cozy-Creature-Anker um Spawn.
+- ~~Ambient-Spawns sind zu duenn fuer Alpha-Erkundung.~~ Region-Budgets und Biome-Chancen wurden fuer friedliche Tiere und Firefly-Swarms angehoben, ohne die deterministische Region-Budget-Regel aufzugeben.
+- Verifikation: `./gradlew.bat :client:test --tests dev.voxelgame.client.world.ClientWorldEntityTest :common:test --tests dev.voxelgame.common.entity.AmbientEntitySpawnerTest --tests dev.voxelgame.common.world.OverworldGeneratorTest`
+
 ### Akzeptanz
 
 - Spawn ist bei allen Smoke-Test-Seeds sicher.
@@ -615,27 +621,30 @@ Core progression darf nicht vom Glueck eines Seeds abhaengen.
 
 ### Aufgaben
 
-- Define route guarantees around spawn:
-  - starter supplies within short radius.
-  - first food within short radius.
-  - campfire/storage route near campsite or meadow.
-  - pine/workbench route within early exploration range.
-  - lakeside/cooking route within mid exploration range.
-  - highlands/forge route within mid exploration range.
-  - old ruins or mushroom grove route within adventure range.
-- Add `ProgressionRouteReport`:
-  - nearest biome by key.
-  - nearest required resource cluster.
-  - nearest relevant structure.
-  - distance bands.
-  - missing route warnings.
-- Add seed-table checks:
-  - at least 10 fixed smoke seeds.
-  - at least 100 generated route-report seeds in unit/integration suite if runtime allows.
-- Add debug command or report output:
-  - `/routeprogression`.
-  - route report in worldgen tool.
-  - links to `WORLD_SMOKE_TESTS.md`.
+- ~~Define route guarantees around spawn:~~
+  - ~~starter supplies within short radius.~~
+  - ~~first food within short radius.~~
+  - ~~campfire/storage route near campsite or meadow.~~
+  - ~~pine/workbench route within early exploration range.~~
+  - ~~lakeside/cooking route within mid exploration range.~~
+  - ~~highlands/forge route within mid exploration range.~~
+  - ~~old ruins or mushroom grove route within adventure range.~~
+- ~~Add `ProgressionRouteReport`:~~
+  - ~~nearest biome by key.~~
+  - ~~nearest required resource cluster.~~
+  - ~~nearest relevant structure.~~
+  - ~~distance bands.~~
+  - ~~missing route warnings.~~
+- ~~Add seed-table checks:~~
+  - ~~at least 10 fixed smoke seeds.~~
+  - ~~at least 100 generated route-report seeds in unit/integration suite if runtime allows.~~
+- ~~Add debug command or report output:~~
+  - ~~/routeprogression.~~
+  - ~~route report in worldgen tool.~~
+  - ~~links to `WORLD_SMOKE_TESTS.md`.~~
+
+Erledigt: 2026-05-05, `OverworldGenerator` hat feste, organisch gerandete Route-Anker fuer Pine/Workbench, Lakeside/Cooking, Highlands/Forge, Old-Ruins/Mushroom-Adventure plus garantierte Strukturanker; `ProgressionRouteReport` bewertet Spawn-Routen mit Biome-, Resource-, Structure-, Distance-Band- und Warning-Daten. `/routeprogression` gibt den Report im Ingame-Chat aus, `./gradlew.bat :tools:run --args="route-report 1337"` erzeugt denselben Report als Tooling-Ausgabe fuer QA/Smoke.
+Verifikation: `ProgressionRouteReportTest.routeReportCompletesCoreRoutesForFixedSmokeSeeds`, `ProgressionRouteReportTest.routeReportCanScanOneHundredGeneratedSeedsWithinRouteContracts`, `ProgressionRouteReportTest.routeReportFormatsDebuggableSummaryLines`.
 
 ### Akzeptanz
 

@@ -4,6 +4,7 @@ import dev.voxelgame.common.block.BlockType;
 import dev.voxelgame.common.block.Blocks;
 import dev.voxelgame.common.item.CraftingRecipe;
 import dev.voxelgame.common.item.CraftingRecipes;
+import dev.voxelgame.common.item.CraftingStationType;
 import dev.voxelgame.common.item.ItemStack;
 import dev.voxelgame.common.item.Items;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,26 @@ class HotbarTest {
 
         assertEquals(Blocks.TORCH, hotbar.selectedPlaceBlockId().orElseThrow());
         assertTrue(hotbar.selectedLabel().contains("x3"));
+    }
+
+    @Test
+    void multiCraftUsesMaxCraftCountAndConsumesBatchAtomically() {
+        Hotbar hotbar = new Hotbar();
+        List<ItemStack> slots = new ArrayList<>(Collections.nCopies(36, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(itemId("voxel:skyroot_log"), 3));
+        hotbar.applySnapshot(slots);
+        CraftingRecipe planks = hotbar.recipes().stream()
+                .filter(recipe -> recipe.key().equals("voxel:skyroot_planks"))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals(3, hotbar.maxCraftCount(planks, CraftingStationType.INVENTORY, 64));
+        assertTrue(hotbar.craft(planks, CraftingStationType.INVENTORY, 2));
+
+        assertEquals(1, hotbar.itemCount(itemId("voxel:skyroot_log")));
+        assertEquals(8, hotbar.itemCount(itemId("voxel:skyroot_planks")));
+        assertEquals(1, hotbar.maxCraftCount(planks, CraftingStationType.INVENTORY, 64));
+        assertFalse(hotbar.canCraft(planks, CraftingStationType.INVENTORY, 2));
     }
 
     @Test

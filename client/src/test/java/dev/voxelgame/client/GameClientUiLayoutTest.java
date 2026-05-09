@@ -51,6 +51,13 @@ class GameClientUiLayoutTest {
     }
 
     @Test
+    void mainMenuLayoutKeepsButtonsAndStatusInsideViewport() {
+        assertMainMenuLayoutFits(360, 280, 2.0f);
+        assertMainMenuLayoutFits(640, 480, 1.5f);
+        assertMainMenuLayoutFits(1280, 720, 2.0f);
+    }
+
+    @Test
     void loadingBarFillUsesProgressOrIndeterminateAnimation() {
         assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.streamingSpawn(3, 4), 0.0) >= 0.75);
         assertTrue(GameClient.loadingBarFill(LoadingScreenViewModel.boot(), 0.0) >= 0.18);
@@ -90,6 +97,23 @@ class GameClientUiLayoutTest {
         assertTrue(layout.border() > 0.0f);
     }
 
+    private static void assertMainMenuLayoutFits(int width, int height, float uiScale) {
+        GameClient.MainMenuLayout layout = GameClient.mainMenuLayout(width, height, uiScale);
+
+        assertTrue(layout.panelX() >= 0.0f);
+        assertTrue(layout.panelY() >= 0.0f);
+        assertTrue(layout.panelX() + layout.panelWidth() <= width + 0.01f);
+        assertTrue(layout.bottom() <= height + 0.01f);
+        assertTrue(layout.buttonX() >= layout.panelX());
+        assertTrue(layout.buttonX() + layout.buttonWidth() <= layout.panelX() + layout.panelWidth() + 0.01f);
+        assertTrue(BitmapFont.textWidth("ADVENTURA", layout.titleScale()) <= layout.panelWidth() - 24.0f + 0.01f);
+        assertTrue(layout.subtitleY() > layout.titleY());
+        assertTrue(layout.firstButtonY() > layout.subtitleY());
+        assertTrue(layout.buttonY(3) + layout.buttonHeight() < layout.statusY());
+        assertTrue(layout.statusY() + BitmapFont.textHeight(layout.statusScale()) <= layout.bottom() + 0.01f);
+        assertTrue(layout.scale() >= 0.50f);
+    }
+
     private static void assertSettingsLayoutFits(int width, int height) {
         GameClient.SettingsScreenLayout layout = GameClient.settingsScreenLayout(width, height);
 
@@ -115,7 +139,14 @@ class GameClientUiLayoutTest {
         assertTrue(BitmapFont.textWidth("CRAFTING", layout.titleScale()) <= width - layout.margin() * 2.0f + 0.01f);
         assertTrue(layout.hintY() > layout.titleY());
         assertTrue(layout.tabsY() < layout.contentY());
-        assertTrue(layout.inventoryY() > layout.contentY());
+        assertTrue(layout.recipeListX() >= layout.x());
+        assertTrue(layout.recipeListX() + layout.recipeListWidth() <= layout.x() + layout.contentWidth() + 0.01f);
+        if (layout.recipeDetailsWidth() > 0.0f) {
+            assertTrue(layout.recipeDetailsX() > layout.recipeListX());
+            assertTrue(layout.recipeDetailsX() + layout.recipeDetailsWidth() <= layout.x() + layout.contentWidth() + 0.01f);
+        }
+        assertTrue(layout.craftingPanelHeight() >= 128.0f);
+        assertTrue(layout.craftingPanelBottom() < layout.inventoryY());
         assertTrue(layout.titleY() >= 0.0f);
         assertTrue(layout.inventoryY() < height);
     }

@@ -49,6 +49,7 @@ public record DamageResult(
         NONE,
         INVALID_AMOUNT,
         UNKNOWN_TARGET,
-        INVULNERABLE
+        INVULNERABLE,
+        PROTECTED_CREATURE
     }
 }

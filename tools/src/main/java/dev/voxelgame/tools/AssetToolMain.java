@@ -1,5 +1,7 @@
 package dev.voxelgame.tools;
 
+import dev.voxelgame.common.world.gen.ProgressionRouteReport;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -11,6 +13,7 @@ public final class AssetToolMain {
         if (args.length == 0) {
             System.out.println("Usage: ./gradlew :tools:run --args=\"validate-assets <asset-pack-dir>\"");
             System.out.println("Usage: ./gradlew :tools:run --args=\"atlas-report [asset-root]\"");
+            System.out.println("Usage: ./gradlew :tools:run --args=\"route-report [seed]\"");
             return;
         }
         if ("validate-assets".equals(args[0])) {
@@ -21,6 +24,11 @@ public final class AssetToolMain {
         if ("atlas-report".equals(args[0])) {
             Path assetRoot = args.length > 1 ? Path.of(args[1]) : defaultAssetRoot();
             System.out.print(AssetAtlasReport.generate(assetRoot).format());
+            return;
+        }
+        if ("route-report".equals(args[0])) {
+            long seed = args.length > 1 ? Long.parseLong(args[1]) : 1337L;
+            System.out.print(ProgressionRouteReport.aroundSpawn(seed).format());
             return;
         }
         throw new IllegalArgumentException("Unknown tool command: " + args[0]);

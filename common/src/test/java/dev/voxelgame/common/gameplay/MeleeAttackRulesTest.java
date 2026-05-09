@@ -50,6 +50,10 @@ class MeleeAttackRulesTest {
         assertFalse(MeleeAttackRules.canAttack(playerId, new EntitySnapshot(1L, "voxel:player", playerId, 0.0, 80.0, 0.0, 0.0f, 0.0f, 20)).accepted());
         assertFalse(MeleeAttackRules.canAttack(playerId, new EntitySnapshot(2L, ItemDropType.typeKey("voxel:moss_clump"), null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 1)).accepted());
         assertFalse(MeleeAttackRules.canAttack(playerId, new EntitySnapshot(3L, "voxel:arrow_projectile", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 1, EntitySnapshot.STATE_PROJECTILE, 0.0, 0.0, 0.0)).accepted());
+        assertEquals(
+                MeleeAttackRules.RejectionReason.PROTECTED_CREATURE,
+                MeleeAttackRules.canAttack(playerId, new EntitySnapshot(4L, "voxel:cozy_sheep", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10)).reason()
+        );
         assertTrue(MeleeAttackRules.canAttack(playerId, new EntitySnapshot(4L, "voxel:little_boar", null, 0.0, 80.0, 0.0, 0.0f, 0.0f, 10)).accepted());
     }
 }

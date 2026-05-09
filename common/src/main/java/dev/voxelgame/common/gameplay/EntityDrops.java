@@ -9,6 +9,10 @@ import java.util.Objects;
 public final class EntityDrops {
     private static final long MOSS_SNAIL_SLIME_SALT = 0x5A1E5BEEL;
     private static final int MOSS_SNAIL_SLIME_CHANCE_PERCENT = 25;
+    private static final long LITTLE_BOAR_MUSHROOM_SALT = 0xB0A2B0A2L;
+    private static final int LITTLE_BOAR_MUSHROOM_CHANCE_PERCENT = 35;
+    private static final long DUNE_CRAWLER_COPPER_SALT = 0xC0A7710DL;
+    private static final int DUNE_CRAWLER_COPPER_CHANCE_PERCENT = 40;
 
     private EntityDrops() {
     }
@@ -27,6 +31,8 @@ public final class EntityDrops {
         }
         return switch (typeKey) {
             case "voxel:moss_snail" -> mossSnailDrops(entityId);
+            case "voxel:little_boar" -> littleBoarDrops(entityId);
+            case "voxel:dune_crawler" -> duneCrawlerDrops(entityId);
             default -> List.of();
         };
     }
@@ -36,6 +42,24 @@ public final class EntityDrops {
         drops.add(new Drop("voxel:moss_clump", 1));
         if (rareRoll(entityId, MOSS_SNAIL_SLIME_SALT, MOSS_SNAIL_SLIME_CHANCE_PERCENT)) {
             drops.add(new Drop("voxel:slime_drop", 1));
+        }
+        return List.copyOf(drops);
+    }
+
+    private static List<Drop> littleBoarDrops(long entityId) {
+        List<Drop> drops = new ArrayList<>();
+        drops.add(new Drop("voxel:leather_strip", 1));
+        if (rareRoll(entityId, LITTLE_BOAR_MUSHROOM_SALT, LITTLE_BOAR_MUSHROOM_CHANCE_PERCENT)) {
+            drops.add(new Drop("voxel:mushroom", 1));
+        }
+        return List.copyOf(drops);
+    }
+
+    private static List<Drop> duneCrawlerDrops(long entityId) {
+        List<Drop> drops = new ArrayList<>();
+        drops.add(new Drop("voxel:leather_strip", 1));
+        if (rareRoll(entityId, DUNE_CRAWLER_COPPER_SALT, DUNE_CRAWLER_COPPER_CHANCE_PERCENT)) {
+            drops.add(new Drop("voxel:raw_copper", 1));
         }
         return List.copyOf(drops);
     }

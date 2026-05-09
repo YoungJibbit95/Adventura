@@ -188,6 +188,11 @@ class OverworldGeneratorTest {
         assertStarterResource(generator, chunk, 6, 14, Blocks.SUN_BLOOM);
         assertStarterResource(generator, chunk, 10, 13, Blocks.RED_MUSHROOM);
         assertStarterResource(generator, chunk, 14, 14, Blocks.MUSHROOM_CLUSTER);
+        assertStarterResource(generator, chunk, 1, 14, Blocks.FLOWER_POT);
+        assertStarterResource(generator, chunk, 9, 15, Blocks.LANTERN);
+        assertStarterResource(generator, chunk, 11, 15, Blocks.WOVEN_RUG);
+        assertStarterResource(generator, chunk, 12, 15, Blocks.GARDEN_FENCE);
+        assertStarterResource(generator, chunk, 13, 15, Blocks.GARDEN_FENCE);
     }
 
     private static void assertStarterResource(OverworldGenerator generator, Chunk chunk, int x, int z, short blockId) {

@@ -438,11 +438,12 @@ Akzeptanz:
 
 Ablauf:
 
-1. Vom Spawn aus Pine Forest, Lakeside, Highlands und Old Ruins oder Mushroom Grove erreichen.
-2. Jeweils einen relevanten Resource-/Structure-/Creature-Trigger ausloesen.
-3. Erste Ruine entdecken.
-4. Rare Find looten.
-5. Reconnect/restart.
+1. Vor dem Loslaufen `/routeprogression` oder `./gradlew.bat :tools:run --args="route-report 1337"` ausfuehren und pruefen, dass alle Core-Routen `OK` sind.
+2. Vom Spawn aus Pine Forest, Lakeside, Highlands und Old Ruins oder Mushroom Grove erreichen.
+3. Jeweils einen relevanten Resource-/Structure-/Creature-Trigger ausloesen.
+4. Erste Ruine entdecken.
+5. Rare Find looten.
+6. Reconnect/restart.
 
 Akzeptanz:
 

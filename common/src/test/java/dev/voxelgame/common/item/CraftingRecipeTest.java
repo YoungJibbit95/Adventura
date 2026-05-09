@@ -56,6 +56,27 @@ class CraftingRecipeTest {
     }
 
     @Test
+    void maxCraftableRespectsIngredientsCapAndOutputCapacity() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        List<CraftingRecipe> recipes = CraftingRecipes.createDefaultRecipes(items);
+        CraftingRecipe planks = recipeByKey(recipes, "voxel:skyroot_planks");
+        short logs = items.requireByKey("voxel:skyroot_log").id();
+
+        Inventory ingredientLimited = new Inventory(3);
+        ingredientLimited.add(logs, 3, items);
+
+        assertEquals(3, planks.maxCraftable(ingredientLimited, items, CraftingStationType.INVENTORY, 64));
+        assertEquals(2, planks.maxCraftable(ingredientLimited, items, CraftingStationType.INVENTORY, 2));
+
+        Inventory fullUntilBatchConsumesStack = new Inventory(1);
+        fullUntilBatchConsumesStack.setSlot(0, new ItemStack(logs, 2));
+
+        assertFalse(planks.canCraft(fullUntilBatchConsumesStack, items, CraftingStationType.INVENTORY, 1));
+        assertTrue(planks.canCraft(fullUntilBatchConsumesStack, items, CraftingStationType.INVENTORY, 2));
+        assertEquals(2, planks.maxCraftable(fullUntilBatchConsumesStack, items, CraftingStationType.INVENTORY, 64));
+    }
+
+    @Test
     void craftsPlanksAndSticks() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         Inventory inventory = new Inventory(10);

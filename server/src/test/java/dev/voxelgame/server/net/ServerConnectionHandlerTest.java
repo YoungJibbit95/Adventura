@@ -69,6 +69,25 @@ class ServerConnectionHandlerTest {
     }
 
     @Test
+    void craftRequestRejectsPartialBatchWithoutMutatingInventory() throws Exception {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L));
+        try {
+            Inventory inventory = inventory(channel);
+            inventory.clear();
+            inventory.setSlot(0, new ItemStack(items.requireByKey("voxel:skyroot_log").id(), 1));
+
+            channel.writeInbound(new GamePacket.CraftRequest("voxel:skyroot_planks", 2, false, 0, 0, 0));
+
+            List<ItemStack> slots = readLastInventory(channel);
+            assertEquals(1, count(slots, items, "voxel:skyroot_log"));
+            assertEquals(0, count(slots, items, "voxel:skyroot_planks"));
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
     void craftRequestAcceptsLegacyRecipeAlias() {
         Registry<ItemType> items = Items.createDefaultRegistry();
         EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L));
@@ -1568,14 +1587,22 @@ class ServerConnectionHandlerTest {
     void entityInteractAttackDamagesReachableAmbientEntity() {
         ServerWorld world = new ServerWorld(123L);
         ServerEntityTracker tracker = new ServerEntityTracker();
-        EntitySnapshot target = reachableAmbientTarget();
+        EntitySnapshot target = reachableAttackableTarget();
         tracker.addAmbient(target);
         EmbeddedChannel channel = loggedInChannel(world, tracker);
         try {
             channel.writeInbound(new GamePacket.EntityInteract(target.entityId(), 8, GamePacket.EntityInteract.Action.ATTACK));
 
-            EntityInteractResponse response = readEntityInteractResponse(channel);
+            EntityInteractEventsResponse response = readEntityInteractEventsResponse(channel);
             assertFalse(response.hasEntitySnapshots());
+            GameplayEvent.Damage damage = response.events().stream()
+                    .filter(GameplayEvent.Damage.class::isInstance)
+                    .map(GameplayEvent.Damage.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(target.entityId(), damage.entityId());
+            assertEquals(3, damage.amount());
+            assertEquals("player_melee", damage.sourceKey());
             GamePacket.EntitySnapshots snapshots = flushEntitySnapshots(world, tracker, channel);
             EntitySnapshot updated = snapshots.snapshots().stream()
                     .filter(snapshot -> snapshot.entityId() == target.entityId())
@@ -1584,6 +1611,25 @@ class ServerConnectionHandlerTest {
             assertEquals(target.health() - 3, updated.health());
             assertEquals(EntitySnapshot.STATE_FLEE, updated.stateKey());
             assertTrue(updated.velocityX() != 0.0 || updated.velocityZ() != 0.0);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
+    }
+
+    @Test
+    void entityInteractAttackRejectsProtectedCozyCreature() {
+        Registry<ItemType> items = Items.createDefaultRegistry();
+        ServerEntityTracker tracker = new ServerEntityTracker();
+        EntitySnapshot target = reachableAmbientTarget();
+        tracker.addAmbient(target);
+        EmbeddedChannel channel = loggedInChannel(new ServerWorld(123L), tracker);
+        try {
+            channel.writeInbound(new GamePacket.EntityInteract(target.entityId(), 8, GamePacket.EntityInteract.Action.ATTACK));
+
+            EntityInteractResponse response = readEntityInteractResponse(channel);
+            assertFalse(response.hasEntitySnapshots());
+            assertEquals(target.health(), tracker.snapshot(target.entityId()).orElseThrow().health());
+            assertEquals(1, count(response.inventory().slots(), items, "voxel:stone_pickaxe"));
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -1768,9 +1814,17 @@ class ServerConnectionHandlerTest {
         try {
             channel.writeInbound(new GamePacket.PlayerMove(8.5, 120.0, 8.5, 0.0f, 0.0f, false));
 
-            List<ItemStack> slots = readLastInventory(channel);
+            InventoryAndGameplayEvents response = readInventoryAndGameplayEvents(channel);
+            List<ItemStack> slots = response.inventory().slots();
             assertEquals(1, count(slots, items, "voxel:moss_clump"));
             assertEquals(0, tracker.itemDropCount());
+            GameplayEvent.Pickup pickup = response.events().stream()
+                    .filter(GameplayEvent.Pickup.class::isInstance)
+                    .map(GameplayEvent.Pickup.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals("voxel:moss_clump", pickup.itemKey());
+            assertEquals(1, pickup.count());
         } finally {
             channel.finishAndReleaseAll();
         }
@@ -2959,6 +3013,29 @@ class ServerConnectionHandlerTest {
         return new EntityInteractResponse(inventory, entitySnapshots);
     }
 
+    private static EntityInteractEventsResponse readEntityInteractEventsResponse(EmbeddedChannel channel) {
+        GamePacket.InventorySnapshot inventory = null;
+        GamePacket.EntitySnapshots entitySnapshots = null;
+        List<GameplayEvent> events = new ArrayList<>();
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.InventorySnapshot snapshot) {
+                inventory = snapshot;
+            } else if (outbound instanceof GamePacket.EntitySnapshots snapshots) {
+                entitySnapshots = snapshots;
+            } else if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events.addAll(gameplayEvents.events());
+            }
+        }
+        if (inventory == null) {
+            throw new AssertionError("Expected inventory snapshot");
+        }
+        if (events.isEmpty()) {
+            throw new AssertionError("Expected gameplay event batch");
+        }
+        return new EntityInteractEventsResponse(inventory, entitySnapshots, List.copyOf(events));
+    }
+
     private static GamePacket.ProjectileImpact readLastProjectileImpact(EmbeddedChannel channel) {
         GamePacket.ProjectileImpact impact = null;
         Object outbound;
@@ -3033,6 +3110,26 @@ class ServerConnectionHandlerTest {
             throw new AssertionError("Expected gameplay event batch");
         }
         return events;
+    }
+
+    private static InventoryAndGameplayEvents readInventoryAndGameplayEvents(EmbeddedChannel channel) {
+        GamePacket.InventorySnapshot inventory = null;
+        List<GameplayEvent> events = new ArrayList<>();
+        Object outbound;
+        while ((outbound = channel.readOutbound()) != null) {
+            if (outbound instanceof GamePacket.InventorySnapshot snapshot) {
+                inventory = snapshot;
+            } else if (outbound instanceof GamePacket.GameplayEvents gameplayEvents) {
+                events.addAll(gameplayEvents.events());
+            }
+        }
+        if (inventory == null) {
+            throw new AssertionError("Expected inventory snapshot");
+        }
+        if (events.isEmpty()) {
+            throw new AssertionError("Expected gameplay event batch");
+        }
+        return new InventoryAndGameplayEvents(inventory, List.copyOf(events));
     }
 
     private static StatsAndGameplayEvents readStatsAndGameplayEvents(EmbeddedChannel channel) {
@@ -3206,6 +3303,20 @@ class ServerConnectionHandlerTest {
         );
     }
 
+    private static EntitySnapshot reachableAttackableTarget() {
+        return new EntitySnapshot(
+                9003L,
+                "voxel:moss_snail",
+                null,
+                9.5,
+                120.0,
+                8.5,
+                0.0f,
+                0.0f,
+                10
+        );
+    }
+
     private static double playerEyeY(EntitySnapshot target) {
         return target.y() + PlayerBounds.DEFAULT.eyeHeight();
     }
@@ -3362,5 +3473,18 @@ class ServerConnectionHandlerTest {
         boolean hasEntitySnapshots() {
             return entitySnapshots != null;
         }
+    }
+
+    private record EntityInteractEventsResponse(
+            GamePacket.InventorySnapshot inventory,
+            GamePacket.EntitySnapshots entitySnapshots,
+            List<GameplayEvent> events
+    ) {
+        boolean hasEntitySnapshots() {
+            return entitySnapshots != null;
+        }
+    }
+
+    private record InventoryAndGameplayEvents(GamePacket.InventorySnapshot inventory, List<GameplayEvent> events) {
     }
 }
