@@ -51,7 +51,12 @@ public final class BlockTextureAtlas implements AutoCloseable {
     public static final String ASSET_BLOCKS_TEXTURE_ROOT = "assets/game/blocks/";
     public static final String ASSET_DROP_TEXTURE_ROOT = "assets/game/";
     public static final int TILE_PADDING_PIXELS = 1;
-    public static final int MAX_TILE_CONTENT_SIZE = 256;
+    public static final int BLOCK_TEXTURE_SIZE = 16;
+    /**
+     * Compatibility alias. Block atlas tiles are intentionally fixed at the native 16x16 art resolution.
+     */
+    @Deprecated
+    public static final int MAX_TILE_CONTENT_SIZE = BLOCK_TEXTURE_SIZE;
     public static final float UV_INSET_PIXELS = 0.5f;
     public static final String ATLAS_FILTER_MODE = "nearest-no-mip";
     public static final String ATLAS_RESAMPLE_MODE = "nearest-upscale-bilinear-downscale";
@@ -216,11 +221,10 @@ public final class BlockTextureAtlas implements AutoCloseable {
         if (imagesByPath.isEmpty()) {
             return AtlasBuild.empty();
         }
-        int largestSourceTexture = imagesByPath.values().stream()
-                .mapToInt(image -> Math.max(image.getWidth(), image.getHeight()))
-                .max()
-                .orElse(16);
-        int tileContentSize = Math.min(largestSourceTexture, MAX_TILE_CONTENT_SIZE);
+        // Block art is authored for a fixed 16x16 pixel grid. Legacy or accidentally oversized
+        // source files are normalized here instead of allowing one large PNG to inflate the
+        // entire GPU atlas (for example, a 1254x1254 source previously forced 256x256 tiles).
+        int tileContentSize = BLOCK_TEXTURE_SIZE;
         AtlasLayout layout = AtlasLayout.forTextureCount(imagesByPath.size(), tileContentSize);
         BufferedImage atlas = new BufferedImage(layout.atlasWidth(), layout.atlasHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = atlas.createGraphics();

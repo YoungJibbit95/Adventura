@@ -404,6 +404,8 @@ Runtime settings include render distance, preview radius, FOV, mouse sensitivity
 
 Game assets live in [`client/src/main/resources/assets/game/`](client/src/main/resources/assets/game/).
 
+Block face textures are authored for a **16x16** pixel grid. The runtime atlas always normalizes block sources to 16x16 as a safety net, so an accidentally oversized PNG cannot inflate every atlas tile. Keep source block textures at 16x16 anyway: oversized files still waste repository, distribution and decode memory even though the GPU atlas is protected.
+
 | Asset | Used for |
 | --- | --- |
 | `blocks_tiles_sheet.png` | Terrain and block-like item fallback sprites. |
