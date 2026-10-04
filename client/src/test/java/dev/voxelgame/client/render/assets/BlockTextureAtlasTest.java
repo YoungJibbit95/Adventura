@@ -124,7 +124,7 @@ class BlockTextureAtlasTest {
         assertEquals(BlockTextureAtlas.UV_INSET_PIXELS, report.uvInsetPixels(), 0.0001f);
         assertEquals(BlockTextureAtlas.ATLAS_FILTER_MODE, report.filterMode());
         assertEquals(BlockTextureAtlas.INDIVIDUAL_ASSET_EDGE_CLEANUP_MODE, report.edgeCleanupMode());
-        assertTrue(report.tileContentSize() <= BlockTextureAtlas.MAX_TILE_CONTENT_SIZE);
+        assertEquals(BlockTextureAtlas.BLOCK_TEXTURE_SIZE, report.tileContentSize());
         assertTrue(report.textureCount() > 0);
         assertTrue(report.materialCount() > Blocks.LAVA);
         assertEquals(BlockTextureAtlas.MAX_BLOCK_ID, report.materialCapacity());
@@ -193,6 +193,21 @@ class BlockTextureAtlasTest {
         assertEquals(0xFFFFFFFF, padded.getRGB(3, 3));
         assertEquals(0xFFFF0000, padded.getRGB(1, 1));
         assertEquals(0xFFFFFFFF, padded.getRGB(2, 2));
+    }
+
+    @Test
+    void normalizesOversizedSourceTexturesToFixedBlockResolution() {
+        BufferedImage source = new BufferedImage(1254, 1254, BufferedImage.TYPE_INT_ARGB);
+
+        BufferedImage padded = BlockTextureAtlas.paddedTile(
+                source,
+                BlockTextureAtlas.BLOCK_TEXTURE_SIZE,
+                BlockTextureAtlas.TILE_PADDING_PIXELS
+        );
+
+        int expectedStride = BlockTextureAtlas.BLOCK_TEXTURE_SIZE + BlockTextureAtlas.TILE_PADDING_PIXELS * 2;
+        assertEquals(expectedStride, padded.getWidth());
+        assertEquals(expectedStride, padded.getHeight());
     }
 
     @Test
